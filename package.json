@@ -1,0 +1,16 @@
+{
+  "name": "yabadabadoo-server",
+  "version": "1.0.0",
+  "description": "A personal finanace server",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^17.4.2",
+    "yalls": "^0.7.0"
+  }
+}
