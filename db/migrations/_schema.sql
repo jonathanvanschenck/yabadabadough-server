@@ -12,13 +12,13 @@ CREATE TABLE funds (
 
     -- Can be null only if not tracked, see check below
     tracked           INTEGER NOT NULL CHECK (tracked IN (0,1)),
-    starting_date     TEXT,    -- 'YYYY-MM-DD'
-    starting_balance  INTEGER, -- 4 point decimal
+    start_date        TEXT,    -- 'YYYY-MM-DD'
+    start_balance     INTEGER, -- 4 point decimal
     balance           INTEGER, -- 4 point decimal
 
 
-    monthly_only    INTEGER NOT NULL DEFAULT 0
-                        CHECK (monthly_only IN (0,1)),
+    monthly           INTEGER NOT NULL DEFAULT 0
+                        CHECK (monthly IN (0,1)),
 
     color             TEXT,
 
@@ -26,25 +26,102 @@ CREATE TABLE funds (
     -- Meta data
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
-    -- Tracking requires that we have a balance
+    -- Tracking requires that we have a balance, and can't be montly
     CHECK (
         tracked = 0
         OR (
             balance IS NOT NULL
-            AND starting_date IS NOT NULL
-            AND starting_balance IS NOT NULL
+            AND start_date IS NOT NULL
+            AND start_balance IS NOT NULL
         )
     ),
-    -- monthly_onlys MUST have a parent into which their EOM balances flow
+    -- monthlys MUST have a parent into which their EOM balances flow
     CHECK (
-        monthly_only = 0 
+        monthly = 0 
         OR parent_id IS NOT NULL
+    ),
+    -- monthlys require tracking
+    CHECK (
+        monthly = 0
+        OR tracked = 1
     )
 ) STRICT;
 CREATE INDEX idx_funds_parent_id on funds(parent_id);
 CREATE INDEX idx_funds_tracked on funds(tracked);
 CREATE INDEX idx_funds_tracked_only on funds(tracked) WHERE tracked = 1;
-CREATE INDEX idx_funds_monthly_only on funds(monthly_only);
+CREATE INDEX idx_funds_monthly on funds(monthly);
+
+
+
+-- =====================================================
+-- BEFORE INSERT: Prevent cycles when creating new funds
+-- =====================================================
+DROP TRIGGER IF EXISTS funds_prevent_cycle_insert;
+
+CREATE TRIGGER funds_prevent_cycle_insert
+BEFORE INSERT ON funds
+FOR EACH ROW
+WHEN NEW.parent_id IS NOT NULL
+BEGIN
+    SELECT RAISE(ABORT, 'Insert would create a cycle in the fund hierarchy')
+    WHERE 
+        -- Prevent self-reference
+        NEW.parent_id = NEW.id
+
+        OR EXISTS (
+            WITH RECURSIVE ancestors(id, depth) AS (
+                -- Start from the proposed parent
+                SELECT parent_id, 1 AS depth
+                FROM funds
+                WHERE id = NEW.parent_id
+
+                UNION ALL
+
+                -- Walk up the tree
+                SELECT f.parent_id, a.depth + 1
+                FROM funds f
+                JOIN ancestors a ON f.id = a.id
+                WHERE a.depth < 50                    -- Safety limit
+            )
+            SELECT 1 FROM ancestors WHERE id = NEW.id
+        );
+END;
+
+
+-- =====================================================
+-- BEFORE UPDATE: Prevent cycles when changing parent_id
+-- =====================================================
+DROP TRIGGER IF EXISTS funds_prevent_cycle_update;
+
+CREATE TRIGGER funds_prevent_cycle_update
+BEFORE UPDATE OF parent_id ON funds
+FOR EACH ROW
+WHEN NEW.parent_id IS NOT NULL 
+  AND NEW.parent_id != OLD.parent_id
+BEGIN
+    SELECT RAISE(ABORT, 'Update would create a cycle in the fund hierarchy')
+    WHERE 
+        -- Prevent self-reference
+        NEW.parent_id = NEW.id
+
+        OR EXISTS (
+            WITH RECURSIVE ancestors(id, depth) AS (
+                -- Start from the proposed new parent
+                SELECT parent_id, 1 AS depth
+                FROM funds
+                WHERE id = NEW.parent_id
+
+                UNION ALL
+
+                -- Walk up the tree
+                SELECT f.parent_id, a.depth + 1
+                FROM funds f
+                JOIN ancestors a ON f.id = a.id
+                WHERE a.depth < 50                    -- Safety limit
+            )
+            SELECT 1 FROM ancestors WHERE id = NEW.id
+        );
+END;
 
 CREATE TABLE bank_statement_items (
     id                  INTEGER PRIMARY KEY,
@@ -140,8 +217,12 @@ CREATE TABLE transactions (
 
 
     -- Meta data
-    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
+    -- Transactions cannot be to themselves
+    CHECK (
+        source_fund_id <> target_fund_id
+    )
 ) STRICT;
 CREATE INDEX idx_transactions_source_fund_id ON transactions(source_fund_id);
 CREATE INDEX idx_transactions_target_fund_id ON transactions(target_fund_id);
