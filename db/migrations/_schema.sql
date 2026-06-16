@@ -182,13 +182,12 @@ CREATE TABLE fund_som_cachings (
 ) STRICT;
 CREATE INDEX idx_fund_som_cachings_fund_id ON fund_som_cachings(fund_id);
 CREATE INDEX idx_fund_som_cachings_date ON fund_som_cachings(date);
+
 CREATE TABLE transaction_groups (
     id                  INTEGER PRIMARY KEY,
+    date                TEXT NOT NULL, -- YYYY-MM-DD
     description         TEXT NOT NULL,
     note                TEXT,
-
-    -- Reference value for if this group has multiple transactions
-    split               INTEGER NOT NULL CHECK (split IN (0,1)),
 
     -- Not null if this group arose from a bank statement item
     statement_id        INTEGER REFERENCES bank_statement_items(id)
@@ -196,8 +195,19 @@ CREATE TABLE transaction_groups (
                             ON UPDATE CASCADE,
 
 
+    -- DENORMALIZED VALUES:
+    -- Reference value for if this group has multiple transactions
+    split               INTEGER NOT NULL CHECK (split IN (0,1)),
+    -- is intended as an allocation transaction
+    eom_cleanup         INTEGER NOT NULL DEFAULT '0' CHECK (eom_cleanup IN (0,1)),
+    -- is intended as an allocation transaction
+    allocation          INTEGER NOT NULL DEFAULT '0' CHECK (allocation IN (0,1)),
+
+    -- Meta
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
+CREATE INDEX idx_transaction_groups_split ON transaction_groups(split);
+CREATE INDEX idx_transaction_groups_allocation ON transaction_groups(allocation);
 CREATE INDEX idx_transaction_groups_statement_id ON transaction_groups(statement_id);
 
 CREATE TABLE transactions (
@@ -213,7 +223,6 @@ CREATE TABLE transactions (
                             ON UPDATE CASCADE,
 
     amount              INTEGER NOT NULL CHECK (amount > 0), -- 4 decimal
-    date                TEXT NOT NULL, -- YYYY-MM-DD
     description         TEXT NOT NULL,
     note                TEXT,
 
@@ -228,6 +237,8 @@ CREATE TABLE transactions (
                             ON DELETE RESTRICT
                             ON UPDATE CASCADE,
 
+    -- DENORMALIZED VALUES:
+    date                TEXT NOT NULL, -- YYYY-MM-DD, copied from parent for faster queries
 
     -- Meta data
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

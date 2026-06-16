@@ -60,6 +60,8 @@ Base class for all models with pattern:
 
 **Model methods**:
 - `static create(db, {...})`: Creates new record, returns model instance
+    - This method assumes inputs have been type checked, but the method will run consistency checks,
+      and then db-related conflict/missing resource checks in a transaction.
 - `static from_db(db, {...})`: Flexible query method with filtering
 - `static for_id(db, id)`: Retrieves single record by ID
 - `static from_row(row)`: Converts DB row to model instance
@@ -80,6 +82,7 @@ Base class for all models with pattern:
 - Container for one or more related transactions
 - May link to `bank_statement_items` via `statement_id`
 - Has `date` field (YYYY-MM-DD)
+- Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying
 
 **Transactions** (`transactions` table):
 - Moves money from `source_fund_id` to `target_fund_id`

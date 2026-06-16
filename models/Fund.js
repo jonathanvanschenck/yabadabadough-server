@@ -2,10 +2,6 @@
 const Base = require("./Base.js");
 
 const {
-    to_positive_int,
-} = require("../lib/parsers.js");
-
-const {
     ConflictError,
     ForeignKeyError
 } = require("../lib/db.js");
@@ -22,16 +18,17 @@ const {
 } = require("../lib/db.js").helpers;
 
 const SELECT_COLUMNS = [
-    "funds.id AS id",
-    "funds.name AS name",
-    "funds.parent_id AS parent_id",
-    "funds.start_date AS start_date",
-    "funds.start_balance AS start_balance",
-    "funds.tracked AS tracked",
-    "funds.balance AS balance",
-    "funds.monthly AS monthly",
-    "funds.color AS color",
-    "funds.created_at AS created_at",
+    "id",
+    "name",
+    "parent_id",
+    "start_date",
+    "start_balance",
+    "tracked",
+    "balance",
+    "monthly",
+    "color",
+    "last_som_cache_id",
+    "created_at",
 ];
 
 
@@ -89,7 +86,7 @@ module.exports = class Fund extends Base {
     static PREPARED_TRANSACTIONS = {}
 
     static ORDER_BY_MAP = {
-        "id": "funds.id",
+        "id": "id",
     }
 
     constructor({
