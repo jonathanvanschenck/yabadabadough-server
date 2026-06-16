@@ -86,7 +86,8 @@ module.exports = class TransactionGroup extends Base {
     static PREPARED_TRANSACTIONS = {}
 
     static ORDER_BY_MAP = {
-        "id": "transaction_groups.id"
+        "id": "transaction_groups.id",
+        "date": "transaction_groups.date"
     }
 
 
@@ -156,12 +157,91 @@ module.exports = class TransactionGroup extends Base {
     }
 
     static from_db(db, {
-        order_by = "id",
-        order_direction = "ASC",
+        date_after,  // YDate or null
+        date_before, // YDate or null
+        split,
+        allocation,
+        eom_cleanup,
+        statement_id,
+        description_like,
+        order_by = "date",
+        order_direction = "DESC",
         limit = 100,
-        offset =  0
+        offset = 0
     }={}) {
-        // TODO
+        const wheres = [];
+        const params = {};
+        const keys = [];
+
+        if ( date_after !== undefined ) {
+            wheres.push("transaction_groups.date > @date_after");
+            params.date_after = ydate2stmt(date_after);
+            keys.push("date_after");
+        }
+        if ( date_before !== undefined ) {
+            wheres.push("transaction_groups.date < @date_before");
+            params.date_before = ydate2stmt(date_before);
+            keys.push("date_before");
+        }
+        if ( split !== undefined ) {
+            wheres.push("transaction_groups.split = @split");
+            params.split = boolean2stmt(split);
+            keys.push("split");
+        }
+        if ( allocation !== undefined ) {
+            wheres.push("transaction_groups.allocation = @allocation");
+            params.allocation = boolean2stmt(allocation);
+            keys.push("allocation");
+        }
+        if ( eom_cleanup !== undefined ) {
+            wheres.push("transaction_groups.eom_cleanup = @eom_cleanup");
+            params.eom_cleanup = boolean2stmt(eom_cleanup);
+            keys.push("eom_cleanup");
+        }
+        if ( statement_id !== undefined ) {
+            wheres.push("transaction_groups.statement_id = @statement_id");
+            params.statement_id = statement_id;
+            keys.push("statement_id");
+        }
+        if ( description_like !== undefined ) {
+            wheres.push("transaction_groups.description LIKE @description_like");
+            params.description_like = "%" + description_like + "%";
+            keys.push("description_like");
+        }
+
+        let sql = `SELECT ${SELECT_COLUMNS.join(",\n    ")}\n`
+                + `FROM transaction_groups\n`
+                + `LEFT JOIN transactions ON transactions.group_id = transaction_groups.id\n`;
+
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
+        }
+
+        sql = sql + `GROUP BY ${GROUP_COLUMNS.map(c => "transaction_groups."+c).join(", ")}\n`;
+
+        if ( order_by !== null ) {
+            const _order_by = this.get_order_by_column_name(order_by);
+            const _order_direction = this.get_order_direction(order_direction);
+
+            sql = sql + `ORDER BY ${_order_by} ${_order_direction}\n`;
+
+            keys.push("order_by_"+order_by);
+            keys.push(_order_direction);
+        }
+        if ( limit !== null ) {
+            sql = sql + `LIMIT @limit OFFSET @offset\n`;
+            params.limit = limit;
+            params.offset = offset;
+            keys.push("limit");
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "from_db$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.all(params).map(row => this.from_row(row));
     }
 
 

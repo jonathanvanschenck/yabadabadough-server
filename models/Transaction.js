@@ -89,7 +89,8 @@ module.exports = class Transaction extends Base {
     static PREPARED_TRANSACTIONS = {}
 
     static ORDER_BY_MAP = {
-        "id": "id"
+        "id": "id",
+        "date": "date"
     }
 
 
@@ -160,46 +161,86 @@ module.exports = class Transaction extends Base {
     }
 
     static from_db(db, {
-        order_by = "id",
-        order_direction = "ASC",
+        source_fund_id,
+        target_fund_id,
+        involving_fund_id,
+        group_id,
+        date_after,  // YDate or null
+        date_before, // YDate or null
+        description_like,
+        order_by = "date",
+        order_direction = "DESC",
         limit = 100,
-        offset =  0
+        offset = 0
     }={}) {
         const wheres = [];
         const params = {};
         const keys = [];
 
-        // TODO
+        if ( source_fund_id !== undefined ) {
+            wheres.push("source_fund_id = @source_fund_id");
+            params.source_fund_id = source_fund_id;
+            keys.push("source_fund_id");
+        }
+        if ( target_fund_id !== undefined ) {
+            wheres.push("target_fund_id = @target_fund_id");
+            params.target_fund_id = target_fund_id;
+            keys.push("target_fund_id");
+        }
+        if ( involving_fund_id !== undefined ) {
+            wheres.push("(source_fund_id = @involving_fund_id OR target_fund_id = @involving_fund_id)");
+            params.involving_fund_id = involving_fund_id;
+            keys.push("involving_fund_id");
+        }
+        if ( group_id !== undefined ) {
+            wheres.push("group_id = @group_id");
+            params.group_id = group_id;
+            keys.push("group_id");
+        }
+        if ( date_after !== undefined ) {
+            wheres.push("date > @date_after");
+            params.date_after = ydate2stmt(date_after);
+            keys.push("date_after");
+        }
+        if ( date_before !== undefined ) {
+            wheres.push("date < @date_before");
+            params.date_before = ydate2stmt(date_before);
+            keys.push("date_before");
+        }
+        if ( description_like !== undefined ) {
+            wheres.push("description LIKE @description_like");
+            params.description_like = "%" + description_like + "%";
+            keys.push("description_like");
+        }
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
                 + `FROM transactions\n`;
         if ( wheres.length ) {
-            sql = sql + `WHERE\n\t${wheres.join("\n\tAND ")}\n`
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
         }
         if ( order_by !== null ) {
-            // Throws on back values
             const _order_by = this.get_order_by_column_name(order_by);
             const _order_direction = this.get_order_direction(order_direction);
 
-            sql = sql + `ORDER BY ${_order_by} ${_order_direction}\n`
+            sql = sql + `ORDER BY ${_order_by} ${_order_direction}\n`;
 
             keys.push("order_by_"+order_by);
             keys.push(_order_direction);
         }
         if ( limit !== null ) {
-            sql = sql + `LIMIT @limit OFFSET @offset\n`
+            sql = sql + `LIMIT @limit OFFSET @offset\n`;
             params.limit = limit;
             params.offset = offset;
-            keys.push("limit")
+            keys.push("limit");
         }
 
         const stmt = this.build_stmt(
-            db, 
+            db,
             "from_db$" + keys.join(":"),
             sql
         );
 
-        return stmt.all(params).map(row => this.from_row(row))
+        return stmt.all(params).map(row => this.from_row(row));
     }
 
     /**

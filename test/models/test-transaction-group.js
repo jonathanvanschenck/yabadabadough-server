@@ -310,4 +310,160 @@ describe("TransactionGroup Model", () => {
             expect(api_data.created_at).to.be.a("string");
         });
     });
+
+    describe("from_db()", () => {
+        let group1, group2, group3, group4;
+
+        beforeEach(() => {
+            // Create test data with various dates and properties
+            group1 = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Grocery shopping",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+
+            group2 = TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Split transaction",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas",
+                    }
+                ]
+            });
+
+            group3 = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Gas station",
+                source_fund_id: checking_fund.id,
+                target_fund_id: gas_fund.id,
+                amount: 50.00,
+            });
+
+            group4 = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-15"),
+                description: "More groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 75.00,
+            });
+        });
+
+        it("should return all groups with default ordering (date DESC)", () => {
+            const groups = TransactionGroup.from_db(db);
+
+            expect(groups).to.have.lengthOf(4);
+            expect(groups[0].id).to.equal(group4.id); // Most recent first
+            expect(groups[1].id).to.equal(group3.id);
+            expect(groups[2].id).to.equal(group2.id);
+            expect(groups[3].id).to.equal(group1.id);
+        });
+
+        it("should order by date ASC when specified", () => {
+            const groups = TransactionGroup.from_db(db, { order_direction: "ASC" });
+
+            expect(groups).to.have.lengthOf(4);
+            expect(groups[0].id).to.equal(group1.id); // Oldest first
+            expect(groups[1].id).to.equal(group2.id);
+            expect(groups[2].id).to.equal(group3.id);
+            expect(groups[3].id).to.equal(group4.id);
+        });
+
+        it("should filter by date_after", () => {
+            const groups = TransactionGroup.from_db(db, {
+                date_after: YDate.parse("2026-06-05"),
+            });
+
+            expect(groups).to.have.lengthOf(2);
+            expect(groups.map(g => g.id)).to.include.members([group3.id, group4.id]);
+        });
+
+        it("should filter by date_before", () => {
+            const groups = TransactionGroup.from_db(db, {
+                date_before: YDate.parse("2026-06-10"),
+            });
+
+            expect(groups).to.have.lengthOf(2);
+            expect(groups.map(g => g.id)).to.include.members([group1.id, group2.id]);
+        });
+
+        it("should filter by split", () => {
+            const groups = TransactionGroup.from_db(db, { split: true });
+
+            expect(groups).to.have.lengthOf(1);
+            expect(groups[0].id).to.equal(group2.id);
+            expect(groups[0].split).to.be.true;
+        });
+
+        it("should filter by non-split", () => {
+            const groups = TransactionGroup.from_db(db, { split: false });
+
+            expect(groups).to.have.lengthOf(3);
+            expect(groups.map(g => g.id)).to.include.members([group1.id, group3.id, group4.id]);
+        });
+
+        it("should filter by description_like", () => {
+            const groups = TransactionGroup.from_db(db, {
+                description_like: "grocer",
+            });
+
+            expect(groups).to.have.lengthOf(2);
+            expect(groups.map(g => g.id)).to.include.members([group1.id, group4.id]);
+        });
+
+        it("should combine multiple filters", () => {
+            const groups = TransactionGroup.from_db(db, {
+                date_after: YDate.parse("2026-06-01"),
+                date_before: YDate.parse("2026-06-12"),
+                split: false,
+            });
+
+            // date_after is >, not >=, so 2026-06-01 is excluded
+            // Only group3 (2026-06-10) matches: > 2026-06-01, < 2026-06-12, not split
+            expect(groups).to.have.lengthOf(1);
+            expect(groups[0].id).to.equal(group3.id);
+        });
+
+        it("should respect limit and offset", () => {
+            const page1 = TransactionGroup.from_db(db, {
+                limit: 2,
+                offset: 0,
+                order_direction: "ASC",
+            });
+
+            expect(page1).to.have.lengthOf(2);
+            expect(page1[0].id).to.equal(group1.id);
+            expect(page1[1].id).to.equal(group2.id);
+
+            const page2 = TransactionGroup.from_db(db, {
+                limit: 2,
+                offset: 2,
+                order_direction: "ASC",
+            });
+
+            expect(page2).to.have.lengthOf(2);
+            expect(page2[0].id).to.equal(group3.id);
+            expect(page2[1].id).to.equal(group4.id);
+        });
+
+        it("should return empty array when no results match", () => {
+            const groups = TransactionGroup.from_db(db, {
+                date_after: YDate.parse("2026-12-31"),
+            });
+
+            expect(groups).to.be.an("array");
+            expect(groups).to.have.lengthOf(0);
+        });
+    });
 });

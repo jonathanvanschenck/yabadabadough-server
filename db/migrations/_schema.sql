@@ -206,8 +206,10 @@ CREATE TABLE transaction_groups (
     -- Meta
     created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
+CREATE INDEX idx_transaction_groups_date ON transaction_groups(date);
 CREATE INDEX idx_transaction_groups_split ON transaction_groups(split);
 CREATE INDEX idx_transaction_groups_allocation ON transaction_groups(allocation);
+CREATE INDEX idx_transaction_groups_eom_cleanup ON transaction_groups(eom_cleanup);
 CREATE INDEX idx_transaction_groups_statement_id ON transaction_groups(statement_id);
 
 CREATE TABLE transactions (
