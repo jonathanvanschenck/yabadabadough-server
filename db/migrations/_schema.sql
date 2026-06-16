@@ -169,6 +169,19 @@ CREATE TABLE fund_eom_finalizations (
 CREATE INDEX idx_fund_eom_finalizations_fund_id ON fund_eom_finalizations(fund_id);
 CREATE INDEX idx_fund_eom_finalizations_date ON fund_eom_finalizations(date);
 
+CREATE TABLE fund_som_cachings (
+    id                  INTEGER PRIMARY KEY,
+    fund_id             INTEGER NOT NULL REFERENCES funds(id)
+                            ON DELETE RESTRICT
+                            ON UPDATE CASCADE,
+
+    date                TEXT NOT NULL, -- YYYY-MM-DD, last day of the month finalized
+    som_balance         INTEGER NOT NULL, -- 4 decimal, balance in fund at som
+
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+) STRICT;
+CREATE INDEX idx_fund_som_cachings_fund_id ON fund_som_cachings(fund_id);
+CREATE INDEX idx_fund_som_cachings_date ON fund_som_cachings(date);
 CREATE TABLE transaction_groups (
     id                  INTEGER PRIMARY KEY,
     description         TEXT NOT NULL,
@@ -235,11 +248,10 @@ CREATE INDEX idx_transactions_allocation_id ON transactions(allocation_id);
 
 -- Add column to funds now that fund_eom_finalizations exists
 ALTER TABLE funds
-    ADD COLUMN last_finalization_id INTEGER REFERENCES fund_eom_finalizations(id)
+    ADD COLUMN last_som_cache_id INTEGER REFERENCES fund_som_cachings(id)
         ON DELETE SET NULL
         ON UPDATE CASCADE;
-CREATE INDEX idx_funds_last_finalization_id ON funds(last_finalization_id);
-
+CREATE INDEX idx_funds_last_som_cache_id ON funds(last_som_cache_id);
 
 
 PRAGMA user_version = 1;

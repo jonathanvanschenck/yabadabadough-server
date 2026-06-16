@@ -102,6 +102,7 @@ module.exports = class Fund extends Base {
         balance,
         monthly,
         color,
+        last_som_cache_id,
         created_at,
     }={}) {
         super();
@@ -115,6 +116,7 @@ module.exports = class Fund extends Base {
         this.balance = balance;
         this.monthly = monthly;
         this.color = color;
+        this.last_som_cache_id = last_som_cache_id;
         this.created_at = created_at;
     }
 
@@ -153,6 +155,7 @@ module.exports = class Fund extends Base {
             balance: stmt2currency(row.balance),
             monthly: stmt2boolean(row.monthly),
             color: row.color,
+            last_som_cache_id: row.last_som_cache_id,
             created_at: stmt2datetime(row.created_at),
         });
     }
@@ -295,7 +298,7 @@ module.exports = class Fund extends Base {
 
         const id = result.lastInsertRowid;
 
-        // TODO : set any finalizations
+        // TODO: create initial SOM cache for tracked funds
 
         return this.for_id(db, id);
     }
