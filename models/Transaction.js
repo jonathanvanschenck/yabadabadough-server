@@ -61,6 +61,31 @@ module.exports = class Transaction extends Base {
             FROM allocations
             WHERE id = @id
         `,
+        net_transfer: `
+            SELECT
+                SUM(CASE WHEN target_fund_id = @fund_id THEN amount ELSE 0 END) -
+                SUM(CASE WHEN source_fund_id = @fund_id THEN amount ELSE 0 END)
+                AS net
+            FROM transactions
+            WHERE (target_fund_id = @fund_id OR source_fund_id = @fund_id)
+              AND EXISTS (SELECT 1 FROM funds WHERE id = @fund_id AND tracked = 1)
+              AND (@until IS NULL OR date <= @until)
+              AND (@since IS NULL OR date >= @since)
+        `,
+        net_transfers: `
+            SELECT
+                ids.value AS fund_id,
+                COALESCE(SUM(CASE WHEN target_fund_id = ids.value THEN amount ELSE 0 END), 0) -
+                COALESCE(SUM(CASE WHEN source_fund_id = ids.value THEN amount ELSE 0 END), 0) AS net
+            FROM json_each(@fund_ids) AS ids
+            LEFT JOIN funds ON funds.id = ids.value AND funds.tracked = 1
+            LEFT JOIN transactions
+                ON funds.id IS NOT NULL
+                AND (target_fund_id = ids.value OR source_fund_id = ids.value)
+                AND (@until IS NULL OR date <= @until)
+                AND (@since IS NULL OR date >= @since)
+            GROUP BY ids.value
+        `,
         create: `
             INSERT INTO transactions (
                 source_fund_id,
@@ -317,4 +342,26 @@ module.exports = class Transaction extends Base {
     }={}) { throw new Error("TODO") }
 
     delete() { throw new Error("TODO") }
+
+
+    static net_transfer(db, fund_id, { until, since }={}) {
+        return stmt2currency(this.get_stmt(db, "net_transfer").get({
+            fund_id,
+            until: ydate2stmt(until),
+            since: ydate2stmt(since)
+        })?.net ?? 0);
+    }
+
+    static net_transfers(db, fund_ids=[], { until, since }={}) {
+        return this.get_stmt(db, "net_transfers").all({
+            fund_ids: JSON.stringify(fund_ids),
+            until: ydate2stmt(until),
+            since: ydate2stmt(since)
+        }).map(row => {
+            return {
+                fund_id: row.fund_id,
+                net: stmt2currency(row.net)
+            };
+        })
+    }
 }

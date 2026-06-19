@@ -325,4 +325,212 @@ describe("Transaction Model", () => {
             expect(api_data.created_at).to.be.a("string");
         });
     });
+
+    describe("net_transfer()", () => {
+        it("should return 0 when there are no transactions", () => {
+            expect(Transaction.net_transfer(db, groceries_fund.id)).to.equal(0);
+        });
+
+        it("should return positive net for fund receiving money", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+
+            expect(Transaction.net_transfer(db, groceries_fund.id)).to.equal(100.00);
+            expect(Transaction.net_transfer(db, checking_fund.id)).to.equal(-100.00);
+        });
+
+        it("should accumulate across multiple transactions", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "More groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 60.00,
+            });
+
+            expect(Transaction.net_transfer(db, groceries_fund.id)).to.equal(160.00);
+            expect(Transaction.net_transfer(db, checking_fund.id)).to.equal(-160.00);
+        });
+
+        it("should filter by since (inclusive)", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Early",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Late",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 50.00,
+            });
+
+            // since 2026-06-10 includes the 06-10 transaction but not 06-01
+            expect(Transaction.net_transfer(db, groceries_fund.id, { since: YDate.parse("2026-06-10") })).to.equal(50.00);
+            // since 2026-06-01 includes both
+            expect(Transaction.net_transfer(db, groceries_fund.id, { since: YDate.parse("2026-06-01") })).to.equal(150.00);
+        });
+
+        it("should filter by until (inclusive)", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Early",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Late",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 50.00,
+            });
+
+            // until 2026-06-01 includes only the 06-01 transaction
+            expect(Transaction.net_transfer(db, groceries_fund.id, { until: YDate.parse("2026-06-01") })).to.equal(100.00);
+            // until 2026-06-10 includes both
+            expect(Transaction.net_transfer(db, groceries_fund.id, { until: YDate.parse("2026-06-10") })).to.equal(150.00);
+        });
+
+        it("should return 0 for non-tracked fund even with transactions", () => {
+            const untracked = Fund.create(db, { name: "Untracked", tracked: false });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Test",
+                source_fund_id: checking_fund.id,
+                target_fund_id: untracked.id,
+                amount: 100.00,
+            });
+
+            expect(Transaction.net_transfer(db, untracked.id)).to.equal(0);
+            expect(Transaction.net_transfer(db, checking_fund.id)).to.equal(-100.00);
+        });
+
+        it("should combine since and until to form a window", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Before window",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Inside window",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 50.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-20"),
+                description: "After window",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 25.00,
+            });
+
+            expect(Transaction.net_transfer(db, groceries_fund.id, {
+                since: YDate.parse("2026-06-05"),
+                until: YDate.parse("2026-06-15"),
+            })).to.equal(50.00);
+        });
+    });
+
+    describe("net_transfers()", () => {
+        it("should return net for multiple funds in one call", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Gas",
+                source_fund_id: checking_fund.id,
+                target_fund_id: gas_fund.id,
+                amount: 40.00,
+            });
+
+            const results = Transaction.net_transfers(db, [groceries_fund.id, gas_fund.id, checking_fund.id]);
+
+            const by_fund = Object.fromEntries(results.map(r => [r.fund_id, r.net]));
+            expect(by_fund[groceries_fund.id]).to.equal(100.00);
+            expect(by_fund[gas_fund.id]).to.equal(40.00);
+            expect(by_fund[checking_fund.id]).to.equal(-140.00);
+        });
+
+        it("should return 0 for a fund with no transactions", () => {
+            const results = Transaction.net_transfers(db, [groceries_fund.id]);
+
+            expect(results).to.have.lengthOf(1);
+            expect(results[0].fund_id).to.equal(groceries_fund.id);
+            expect(results[0].net).to.equal(0);
+        });
+
+        it("should apply date filters across all funds", () => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Early groceries",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-15"),
+                description: "Late gas",
+                source_fund_id: checking_fund.id,
+                target_fund_id: gas_fund.id,
+                amount: 40.00,
+            });
+
+            // Window covers only the groceries transaction
+            const results = Transaction.net_transfers(db, [groceries_fund.id, gas_fund.id], {
+                since: YDate.parse("2026-06-01"),
+                until: YDate.parse("2026-06-10"),
+            });
+
+            const by_fund = Object.fromEntries(results.map(r => [r.fund_id, r.net]));
+            expect(by_fund[groceries_fund.id]).to.equal(100.00);
+            expect(by_fund[gas_fund.id]).to.equal(0);
+        });
+
+        it("should return 0 for non-tracked fund even with transactions", () => {
+            const untracked = Fund.create(db, { name: "Untracked", tracked: false });
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Test",
+                source_fund_id: checking_fund.id,
+                target_fund_id: untracked.id,
+                amount: 100.00,
+            });
+
+            const results = Transaction.net_transfers(db, [untracked.id, checking_fund.id]);
+            const by_fund = Object.fromEntries(results.map(r => [r.fund_id, r.net]));
+            expect(by_fund[untracked.id]).to.equal(0);
+            expect(by_fund[checking_fund.id]).to.equal(-100.00);
+        });
+
+        it("should return empty array for empty fund list", () => {
+            const results = Transaction.net_transfers(db, []);
+            expect(results).to.be.an("array").with.lengthOf(0);
+        });
+    });
 });
