@@ -157,8 +157,8 @@ module.exports = class TransactionGroup extends Base {
     }
 
     static from_db(db, {
-        date_after,  // YDate or null
-        date_before, // YDate or null
+        since,  // YDate or null
+        until,  // YDate or null
         split,
         allocation,
         eom_cleanup,
@@ -173,15 +173,15 @@ module.exports = class TransactionGroup extends Base {
         const params = {};
         const keys = [];
 
-        if ( date_after !== undefined ) {
-            wheres.push("transaction_groups.date > @date_after");
-            params.date_after = ydate2stmt(date_after);
-            keys.push("date_after");
+        if ( since !== undefined ) {
+            wheres.push("transaction_groups.date >= @since");
+            params.since = ydate2stmt(since);
+            keys.push("since");
         }
-        if ( date_before !== undefined ) {
-            wheres.push("transaction_groups.date < @date_before");
-            params.date_before = ydate2stmt(date_before);
-            keys.push("date_before");
+        if ( until !== undefined ) {
+            wheres.push("transaction_groups.date <= @until");
+            params.until = ydate2stmt(until);
+            keys.push("until");
         }
         if ( split !== undefined ) {
             wheres.push("transaction_groups.split = @split");

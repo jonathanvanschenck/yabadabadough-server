@@ -380,22 +380,22 @@ describe("TransactionGroup Model", () => {
             expect(groups[3].id).to.equal(group4.id);
         });
 
-        it("should filter by date_after", () => {
+        it("should filter by since", () => {
             const groups = TransactionGroup.from_db(db, {
-                date_after: YDate.parse("2026-06-05"),
+                since: YDate.parse("2026-06-05"),
             });
 
-            expect(groups).to.have.lengthOf(2);
-            expect(groups.map(g => g.id)).to.include.members([group3.id, group4.id]);
+            expect(groups).to.have.lengthOf(3);
+            expect(groups.map(g => g.id)).to.include.members([group2.id, group3.id, group4.id]);
         });
 
-        it("should filter by date_before", () => {
+        it("should filter by until", () => {
             const groups = TransactionGroup.from_db(db, {
-                date_before: YDate.parse("2026-06-10"),
+                until: YDate.parse("2026-06-10"),
             });
 
-            expect(groups).to.have.lengthOf(2);
-            expect(groups.map(g => g.id)).to.include.members([group1.id, group2.id]);
+            expect(groups).to.have.lengthOf(3);
+            expect(groups.map(g => g.id)).to.include.members([group1.id, group2.id, group3.id]);
         });
 
         it("should filter by split", () => {
@@ -424,15 +424,14 @@ describe("TransactionGroup Model", () => {
 
         it("should combine multiple filters", () => {
             const groups = TransactionGroup.from_db(db, {
-                date_after: YDate.parse("2026-06-01"),
-                date_before: YDate.parse("2026-06-12"),
+                since: YDate.parse("2026-06-01"),
+                until: YDate.parse("2026-06-12"),
                 split: false,
             });
 
-            // date_after is >, not >=, so 2026-06-01 is excluded
-            // Only group3 (2026-06-10) matches: > 2026-06-01, < 2026-06-12, not split
-            expect(groups).to.have.lengthOf(1);
-            expect(groups[0].id).to.equal(group3.id);
+            // group1 (2026-06-01) + group3 (2026-06-10): both >= 06-01, <= 06-12, not split
+            expect(groups).to.have.lengthOf(2);
+            expect(groups.map(g => g.id)).to.include.members([group1.id, group3.id]);
         });
 
         it("should respect limit and offset", () => {
@@ -459,7 +458,7 @@ describe("TransactionGroup Model", () => {
 
         it("should return empty array when no results match", () => {
             const groups = TransactionGroup.from_db(db, {
-                date_after: YDate.parse("2026-12-31"),
+                since: YDate.parse("2026-12-31"),
             });
 
             expect(groups).to.be.an("array");

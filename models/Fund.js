@@ -167,8 +167,8 @@ module.exports = class Fund extends Base {
         ids,
         name,
         name_like,
-        started_after, // YDate or null
-        started_before, // YDate or null
+        started_since, // YDate or null
+        started_until, // YDate or null
         tracked,
         monthly,
         root,
@@ -202,15 +202,15 @@ module.exports = class Fund extends Base {
             params.name_like = "%" + name_like + "%";
             keys.push("name_like")
         }
-        if ( started_after !== undefined ) {
-            wheres.push("funds.start_date > @started_after");
-            params.started_after = ydate2stmt(started_after);
-            keys.push("started_after")
+        if ( started_since !== undefined ) {
+            wheres.push("funds.start_date >= @started_since");
+            params.started_since = ydate2stmt(started_since);
+            keys.push("started_since")
         }
-        if ( started_before !== undefined ) {
-            wheres.push("funds.start_date < @started_before");
-            params.started_before = ydate2stmt(started_before);
-            keys.push("started_before")
+        if ( started_until !== undefined ) {
+            wheres.push("funds.start_date <= @started_until");
+            params.started_until = ydate2stmt(started_until);
+            keys.push("started_until")
         }
         if ( tracked !== undefined ) {
             wheres.push("tracked = @tracked");

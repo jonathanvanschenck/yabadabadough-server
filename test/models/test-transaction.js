@@ -175,27 +175,27 @@ describe("Transaction Model", () => {
             });
         });
 
-        it("should filter by date_after", () => {
+        it("should filter by since", () => {
             const transactions = Transaction.from_db(db, {
-                date_after: YDate.parse("2026-06-05"),
+                since: YDate.parse("2026-06-05"),
             });
 
-            // group3 (1) + group4 (1) = 2 (excludes 2026-06-05 and before)
-            expect(transactions).to.have.lengthOf(2);
+            // group2 (2) + group3 (1) + group4 (1) = 4 (includes 2026-06-05)
+            expect(transactions).to.have.lengthOf(4);
             transactions.forEach(txn => {
-                expect(txn.date.toString() > "2026-06-05").to.be.true;
+                expect(txn.date.toString() >= "2026-06-05").to.be.true;
             });
         });
 
-        it("should filter by date_before", () => {
+        it("should filter by until", () => {
             const transactions = Transaction.from_db(db, {
-                date_before: YDate.parse("2026-06-10"),
+                until: YDate.parse("2026-06-10"),
             });
 
-            // group1 (1) + group2 (2) = 3 (excludes 2026-06-10 and after)
-            expect(transactions).to.have.lengthOf(3);
+            // group1 (1) + group2 (2) + group3 (1) = 4 (includes 2026-06-10)
+            expect(transactions).to.have.lengthOf(4);
             transactions.forEach(txn => {
-                expect(txn.date.toString() < "2026-06-10").to.be.true;
+                expect(txn.date.toString() <= "2026-06-10").to.be.true;
             });
         });
 
@@ -211,16 +211,15 @@ describe("Transaction Model", () => {
         it("should combine multiple filters", () => {
             const transactions = Transaction.from_db(db, {
                 involving_fund_id: groceries_fund.id,
-                date_after: YDate.parse("2026-06-01"),
-                date_before: YDate.parse("2026-06-10"),
+                since: YDate.parse("2026-06-01"),
+                until: YDate.parse("2026-06-10"),
             });
 
-            // Only group2 first txn matches:
-            // - involves groceries_fund
-            // - date is 2026-06-05 (> 06-01 and < 06-10)
-            expect(transactions).to.have.lengthOf(1);
-            expect(transactions[0].group_id).to.equal(group2.id);
-            expect(transactions[0].target_fund_id).to.equal(groceries_fund.id);
+            // group1 txn (2026-06-01) + group2 first txn (2026-06-05), both involving groceries_fund
+            expect(transactions).to.have.lengthOf(2);
+            transactions.forEach(txn => {
+                expect(txn.target_fund_id).to.equal(groceries_fund.id);
+            });
         });
 
         it("should respect limit and offset", () => {
@@ -245,7 +244,7 @@ describe("Transaction Model", () => {
 
         it("should return empty array when no results match", () => {
             const transactions = Transaction.from_db(db, {
-                date_after: YDate.parse("2026-12-31"),
+                since: YDate.parse("2026-12-31"),
             });
 
             expect(transactions).to.be.an("array");

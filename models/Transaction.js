@@ -165,8 +165,8 @@ module.exports = class Transaction extends Base {
         target_fund_id,
         involving_fund_id,
         group_id,
-        date_after,  // YDate or null
-        date_before, // YDate or null
+        since,  // YDate or null
+        until,  // YDate or null
         description_like,
         order_by = "date",
         order_direction = "DESC",
@@ -197,15 +197,15 @@ module.exports = class Transaction extends Base {
             params.group_id = group_id;
             keys.push("group_id");
         }
-        if ( date_after !== undefined ) {
-            wheres.push("date > @date_after");
-            params.date_after = ydate2stmt(date_after);
-            keys.push("date_after");
+        if ( since !== undefined ) {
+            wheres.push("date >= @since");
+            params.since = ydate2stmt(since);
+            keys.push("since");
         }
-        if ( date_before !== undefined ) {
-            wheres.push("date < @date_before");
-            params.date_before = ydate2stmt(date_before);
-            keys.push("date_before");
+        if ( until !== undefined ) {
+            wheres.push("date <= @until");
+            params.until = ydate2stmt(until);
+            keys.push("until");
         }
         if ( description_like !== undefined ) {
             wheres.push("description LIKE @description_like");
