@@ -166,19 +166,20 @@ describe("TransactionGroup Model", () => {
             }).to.throw("Must provide at least transaction");
         });
 
-        it("should throw error when transaction amount is zero", () => {
-            expect(() => {
-                TransactionGroup.create(db, {
-                    date: YDate.parse("2026-06-01"),
+        it("should allow zero-amount transactions at the model level", () => {
+            // Zero amounts are needed internally for eom_cleanup transactions;
+            // USER-facing positivity is enforced at the API layer, not here
+            const group = TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Zero amount",
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 0,
                     description: "Zero amount",
-                    transactions: [{
-                        source_fund_id: checking_fund.id,
-                        target_fund_id: groceries_fund.id,
-                        amount: 0,
-                        description: "Zero amount",
-                    }]
-                });
-            }).to.throw("Transaction amount must be positive");
+                }]
+            });
+            expect(group.transactions[0].amount).to.equal(0);
         });
 
         it("should throw error when transaction amount is negative", () => {
@@ -193,7 +194,96 @@ describe("TransactionGroup Model", () => {
                         description: "Negative amount",
                     }]
                 });
-            }).to.throw("Transaction amount must be positive");
+            }).to.throw("Transaction amount cannot be negative");
+        });
+
+        it("should throw error when the transaction predates a fund's start_date", () => {
+            const late_fund = Fund.create(db, {
+                name: "Late",
+                tracked: true,
+                start_date: YDate.parse("2026-03-15"),
+                start_balance: 0,
+            });
+
+            expect(() => {
+                TransactionGroup.create(db, {
+                    date: YDate.parse("2026-03-14"),
+                    description: "Too early",
+                    transactions: [{
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: late_fund.id,
+                        amount: 10.00,
+                        description: "Too early",
+                    }]
+                });
+            }).to.throw("Transaction predates the target fund's start_date");
+
+            expect(() => {
+                TransactionGroup.create(db, {
+                    date: YDate.parse("2026-03-14"),
+                    description: "Too early",
+                    transactions: [{
+                        source_fund_id: late_fund.id,
+                        target_fund_id: checking_fund.id,
+                        amount: 10.00,
+                        description: "Too early",
+                    }]
+                });
+            }).to.throw("Transaction predates the source fund's start_date");
+
+            // On the start date itself is fine
+            const group = TransactionGroup.create(db, {
+                date: YDate.parse("2026-03-15"),
+                description: "On start date",
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: late_fund.id,
+                    amount: 10.00,
+                    description: "On start date",
+                }]
+            });
+            expect(group).to.not.be.null;
+        });
+
+        it("should throw error when the group is dated in a finalized month", () => {
+            // No MonthFinalization model use here -- insert the row directly so this
+            // test only exercises the TransactionGroup guard
+            db.prepare(`
+                INSERT INTO month_finalizations (som_date, eom_date, sonm_date)
+                VALUES ('2026-05-01', '2026-05-31', '2026-06-01')
+            `).run();
+
+            // In the finalized month
+            expect(() => {
+                TransactionGroup.create_single(db, {
+                    date: YDate.parse("2026-05-10"),
+                    description: "In finalized month",
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 10.00,
+                });
+            }).to.throw("Cannot add a transaction group to a finalized month");
+
+            // Before the finalized month
+            expect(() => {
+                TransactionGroup.create_single(db, {
+                    date: YDate.parse("2026-04-10"),
+                    description: "Before finalized month",
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 10.00,
+                });
+            }).to.throw("Cannot add a transaction group to a finalized month");
+
+            // After the finalized month is fine
+            const group = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "After finalized month",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 10.00,
+            });
+            expect(group).to.not.be.null;
         });
 
         it("should throw error when source and target funds are the same", () => {

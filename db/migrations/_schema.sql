@@ -10,11 +10,13 @@ CREATE TABLE funds (
 
     -- finalization_id INTEGER, -- SEE Below for where this gets added
 
-    -- Can be null only if not tracked, see check below
+    -- Must be set if tracked, must be null if untracked, see check below
     tracked           INTEGER NOT NULL CHECK (tracked IN (0,1)),
     start_date        TEXT,    -- 'YYYY-MM-DD'
-    start_balance     INTEGER, -- 4 point decimal (Forward balence entering start_date)
-    balance           INTEGER, -- 4 point decimal (Current final balence including all transactions
+    start_balance     INTEGER, -- 4 point decimal (Forward balance entering start_date)
+    -- NOTE : there is intentionally no running `balance` column; balances are
+    --        always calculated from a cached finalization point (or the start
+    --        values) plus the net transactions since.
 
 
     monthly           INTEGER NOT NULL DEFAULT 0
@@ -26,14 +28,10 @@ CREATE TABLE funds (
     -- Meta data
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
-    -- Tracking requires that we have a balance, and can't be montly
+    -- Tracked funds MUST have start values; untracked funds MUST NOT
     CHECK (
-        tracked = 0
-        OR (
-            balance IS NOT NULL
-            AND start_date IS NOT NULL
-            AND start_balance IS NOT NULL
-        )
+        (tracked = 1 AND start_date IS NOT NULL AND start_balance IS NOT NULL)
+        OR (tracked = 0 AND start_date IS NULL AND start_balance IS NULL)
     ),
     -- monthlys MUST have a parent into which their EOM balances flow
     CHECK (
@@ -162,7 +160,10 @@ CREATE TABLE month_finalizations (
     eom_date            TEXT NOT NULL, -- YYYY-MM-DD
     sonm_date           TEXT NOT NULL, -- YYYY-MM-DD
 
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    -- A month may only be finalized once
+    UNIQUE (som_date)
 ) STRICT;
 CREATE INDEX idx_month_finalizations_eom_date ON month_finalizations(eom_date);
 CREATE INDEX idx_month_finalizations_som_date ON month_finalizations(som_date);
@@ -178,12 +179,21 @@ CREATE TABLE fund_finalizations (
                             ON UPDATE CASCADE,
 
     eom_balance         INTEGER NOT NULL, -- 4 decimal, balance in fund at eom, note this does NOT include the final transaction whereby budgets are cleaned up
-    sonm_balance        INTEGER NOT NULL, -- 4 decimal, balance in fund going into the start of the next month (e.g. DOES include fnial transactions what clean up budgets)
+    sonm_balance        INTEGER NOT NULL, -- 4 decimal, balance in fund going into the start of the next month (e.g. DOES include final transactions that clean up budgets)
 
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    -- DENORMALIZED VALUES:
+    -- Copied from parent month_finalizations row so cache lookups don't need a second join
+    sonm_date           TEXT NOT NULL, -- YYYY-MM-DD
+
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    -- A fund may only be finalized once per month
+    UNIQUE (month_id, fund_id)
 ) STRICT;
 CREATE INDEX idx_fund_finalizations_month_id ON fund_finalizations(month_id);
 CREATE INDEX idx_fund_finalizations_fund_id ON fund_finalizations(fund_id);
+-- For "latest cache point at-or-before date" lookups
+CREATE INDEX idx_fund_finalizations_fund_id_sonm_date ON fund_finalizations(fund_id, sonm_date);
 
 CREATE TABLE transaction_groups (
     id                  INTEGER PRIMARY KEY,
@@ -226,7 +236,11 @@ CREATE TABLE transactions (
                             ON DELETE RESTRICT
                             ON UPDATE CASCADE,
 
-    amount              INTEGER NOT NULL CHECK (amount > 0), -- 4 decimal
+    -- NOTE : zero amounts are allowed at the db level so that every monthly fund
+    --        gets an eom_cleanup transaction each finalized month (even at zero
+    --        balance). USERS should never create zero-amount transactions; that
+    --        is enforced at the API layer, not here.
+    amount              INTEGER NOT NULL CHECK (amount >= 0), -- 4 decimal
     description         TEXT NOT NULL,
     note                TEXT,
 

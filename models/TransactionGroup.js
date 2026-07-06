@@ -63,6 +63,13 @@ module.exports = class TransactionGroup extends Base {
             FROM bank_statement_items
             WHERE id = @id
         `,
+        // Inline (rather than requiring MonthFinalization) to avoid a circular require
+        month_is_finalized: `
+            SELECT 1
+            FROM month_finalizations
+            WHERE eom_date >= @date
+            LIMIT 1
+        `,
         create: `INSERT INTO transaction_groups (
             date,
             description,
@@ -311,7 +318,18 @@ module.exports = class TransactionGroup extends Base {
         if ( eom_cleanup ) for ( const transaction of transactions ) {
             if ( !transaction.eom_cleanup_id ) throw new Error("Missing eom cleanup id for allocation transaction group");
         }
-        
+
+        // Guard: no transaction groups may be added in (or before) a finalized
+        // month -- the month must be unfinalized first.
+        // NOTE : MonthFinalization intentionally bypasses this guard by calling
+        //        `_create` directly for the month's eom_cleanup group: that group
+        //        is dated inside the month being finalized, and it lands
+        //        atomically in the same sqlite transaction as the finalization
+        //        rows themselves.
+        if ( this.get_stmt(db, "month_is_finalized").get({ date: ydate2stmt(date) }) ) {
+            throw new ConflictError("Cannot add a transaction group to a finalized month");
+        }
+
         // TODO : more error checking?
 
         const transaction = this.build_transaction(db, "create", this._create.bind(this));

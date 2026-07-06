@@ -46,6 +46,13 @@ module.exports = class Transaction extends Base {
             FROM funds
             WHERE id = @id
         `,
+        fund_starts_after: `
+            SELECT 1
+            FROM funds
+            WHERE id = @id
+              AND tracked = 1
+              AND start_date > @date
+        `,
         group_exists: `
             SELECT 1
             FROM transaction_groups
@@ -53,7 +60,7 @@ module.exports = class Transaction extends Base {
         `,
         eom_cleanup_exists: `
             SELECT 1
-            FROM fund_eom_finalizations
+            FROM fund_finalizations
             WHERE id = @id
         `,
         allocation_exists: `
@@ -289,7 +296,10 @@ module.exports = class Transaction extends Base {
         if ( !group_id ) throw new Error("Missing group id");
         if ( !date ) throw new Error("Missing date");
         if ( source_fund_id == target_fund_id ) throw new ConflictError("Source and target funds cannot be the same")
-        if ( amount <= 0 ) throw new Error("Transaction amount must be positive");
+        // NOTE : zero amounts are allowed here so that eom_cleanup transactions
+        //        always exist for monthly funds (even at zero balance). USER
+        //        transactions must be positive; that is enforced at the API layer.
+        if ( amount < 0 ) throw new Error("Transaction amount cannot be negative");
         if ( !description ) throw new Error("Missing description");
 
         // Check foreign key constraints
@@ -298,6 +308,17 @@ module.exports = class Transaction extends Base {
         }
         if ( !this.get_stmt(db, "fund_exists").get({ id: target_fund_id }) ) {
             throw new ForeignKeyError("Target fund does not exist: " + target_fund_id);
+        }
+
+        // Transactions may not predate a tracked fund's start_date. This is what
+        // makes start_balance semantics (and the backdated fallback cache date on
+        // Fund) safe.
+        const _date = ydate2stmt(date);
+        if ( this.get_stmt(db, "fund_starts_after").get({ id: source_fund_id, date: _date }) ) {
+            throw new ConflictError("Transaction predates the source fund's start_date");
+        }
+        if ( this.get_stmt(db, "fund_starts_after").get({ id: target_fund_id, date: _date }) ) {
+            throw new ConflictError("Transaction predates the target fund's start_date");
         }
 
         // These checks are almost certainly unnecessary, since the caller will have
