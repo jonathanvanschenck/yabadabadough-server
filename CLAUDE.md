@@ -76,7 +76,7 @@ Base class for all models with pattern:
 - Triggers prevent cycles in hierarchy
 - `tracked=1` funds maintain running balance
 - `monthly=1` funds reset at end of month (requires parent_id and tracked=1)
-- `last_som_cache_id` references most recent start-of-month balance cache for rapid reconciliation
+- `finalization_id` references most recent start-of-next-month balance cache for rapid reconciliation
 
 **Transaction Groups** (`transaction_groups` table):
 - Container for one or more related transactions
@@ -93,16 +93,17 @@ Base class for all models with pattern:
 **Allocations** (`allocations` table):
 - Scheduled fund contributions
 
-**Fund SOM Cachings** (`fund_som_cachings` table):
-- Caches start-of-month balances for tracked funds
-- Enables rapid balance reconciliation when new transactions are inserted
-- Each record stores `som_balance` (4 decimal) at a specific `date` (first day of month)
-- Funds link to most recent cache via `funds.last_som_cache_id`
+**Month Finalizations** (`month_finalizations` table):
+- Is the parent of the Fund Finalizations for bucketing into a single month
+- Stores `som_date` (first day of month) for easy querying
+- Stores `eom_date` (last day of month) for easy querying
+- Stores `sonm_date` (first day of next month) for easy querying
 
-**Fund EOM Finalizations** (`fund_eom_finalizations` table):
-- Historical record of end-of-month balances for monthly funds
-- Stores `eom_balance` (4 decimal) at `date` (last day of month)
-- Used for historical reference rather than active reconciliation
+**Fund Finalizations** (`fund_finalizations` table):
+- Historical record of end-of-month (excluding monthly budget cleanups) and start-of-next-month balances
+- Stores `eom_balance` (4 decimal) at end of `eom_date` (last day of month) Note that the eom_balence does NOT include the final "reset montly-type funds to zero at end of month" transaction. In effect, the whole purpose of the eom_balance is to track surplus/loss in montly-type funds historically.
+- Stores `sonm_balance` (4 decimal) coming into `sonm_date` (last day of month) used for quicky reconcile a fund from a given starting point
+- The most recent has their id referenced on the funds table for rapid reconiliation
 
 ### YDate Class (`lib/YDate.js`)
 

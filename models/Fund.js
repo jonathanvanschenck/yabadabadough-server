@@ -1,6 +1,8 @@
 
 const Base = require("./Base.js");
 
+const Transaction = require("./Transaction.js");
+
 const {
     ConflictError,
     ForeignKeyError
@@ -18,17 +20,19 @@ const {
 } = require("../lib/db.js").helpers;
 
 const SELECT_COLUMNS = [
-    "id",
-    "name",
-    "parent_id",
-    "start_date",
-    "start_balance",
-    "tracked",
-    "balance",
-    "monthly",
-    "color",
-    "last_som_cache_id",
-    "created_at",
+    "funds.id AS id",
+    "funds.name AS name",
+    "funds.parent_id AS parent_id",
+    "funds.start_date AS start_date",
+    "funds.start_balance AS start_balance",
+    "funds.tracked AS tracked",
+    "funds.balance AS balance",
+    "funds.monthly AS monthly",
+    "funds.color AS color",
+    "funds.created_at AS created_at",
+    "funds.finalization_id AS finalization_id",
+    "fund_finalizations.eom_balance AS cached_balance",
+    "fund_finalizations.eom_date AS cached_date",
 ];
 
 
@@ -37,7 +41,9 @@ module.exports = class Fund extends Base {
         for_id: `
             SELECT ${SELECT_COLUMNS.join(", ")}
             FROM funds
-            WHERE id = @id
+            LEFT JOIN fund_finalizations
+                ON funds.finalization_id = fund_finalizations.id
+            WHERE funds.id = @id
         `,
         id_exists: `
             SELECT 1
@@ -99,7 +105,9 @@ module.exports = class Fund extends Base {
         balance,
         monthly,
         color,
-        last_som_cache_id,
+        finalization_id,
+        cached_balance,
+        cached_date,
         created_at,
     }={}) {
         super();
@@ -113,7 +121,9 @@ module.exports = class Fund extends Base {
         this.balance = balance;
         this.monthly = monthly;
         this.color = color;
-        this.last_som_cache_id = last_som_cache_id;
+        this.finalization_id = finalization_id;
+        this.calculate_balance = cached_balance;
+        this.calculate_date = cached_date;
         this.created_at = created_at;
     }
 
@@ -124,8 +134,15 @@ module.exports = class Fund extends Base {
             parent_id: this.parent_id,
 
             balance: this.balance,
-            start_date: this.start_date.toJSON(),
-            start_balance: this.start_balance,
+
+            start: {
+                date: this.start_date.toJSON(),
+                balance: this.start_balance,
+            },
+            cache: {
+                date: this.cached_date.toJSON(),
+                balance: this.cached_balance,
+            },
 
             status: {
                 tracked: this.tracked,
@@ -152,7 +169,7 @@ module.exports = class Fund extends Base {
             balance: stmt2currency(row.balance),
             monthly: stmt2boolean(row.monthly),
             color: row.color,
-            last_som_cache_id: row.last_som_cache_id,
+            finalization_id: row.finalization_id,
             created_at: stmt2datetime(row.created_at),
         });
     }
@@ -213,28 +230,31 @@ module.exports = class Fund extends Base {
             keys.push("started_until")
         }
         if ( tracked !== undefined ) {
-            wheres.push("tracked = @tracked");
+            wheres.push("funds.tracked = @tracked");
             params.tracked = boolean2stmt(tracked);
             keys.push("tracked");
         }
         if ( monthly !== undefined ) {
-            wheres.push("monthly = @monthly");
+            wheres.push("funds.monthly = @monthly");
             params.monthly = boolean2stmt(monthly);
             keys.push("monthly");
         }
         if ( root !== undefined ) {
             if ( root ) {
-                wheres.push("parent_id IS NULL");
+                wheres.push("funds.parent_id IS NULL");
                 keys.push("root");
             } else {
-                wheres.push("parent_id IS NOT NULL");
+                wheres.push("funds.parent_id IS NOT NULL");
                 keys.push("not_root");
             }
         }
 
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
-                + `FROM funds\n`;
+                + `FROM funds\n`
+                + `LEFT JOIN fund_finalizations\n`
+                + `  ON funds.finalization_id = fund_finalizations.id\n`;
+
         if ( wheres.length ) {
             sql = sql + `WHERE\n\t${wheres.join("\n\tAND ")}\n`
         }
@@ -295,7 +315,8 @@ module.exports = class Fund extends Base {
 
         const id = result.lastInsertRowid;
 
-        // TODO: create initial SOM cache for tracked funds
+        // TODO: check what the current finalized month is, and finalize
+        //       the fund up to that month
 
         return this.for_id(db, id);
     }
@@ -340,6 +361,36 @@ module.exports = class Fund extends Base {
         })
     }
 
+    // TODO : make this use cached values for better query efficieny
+    calculate_balance_on(db, date) {
+        if ( !this.tracked ) return 0;
+
+        const net = Transaction.net_transfer(db, this.id, {
+            since: this.start_date,
+            until: date,
+        });
+
+        return this.start_balance + net;
+    }
+
+    static finalize_month(db, month, { recursive=false }={}) {
+        const som = month.start_of_next_month();
+        const eom = month.end_of_month();
+
+
+        // TODO : check that last month was finalized for all
+        //        funds that had been started by then,
+        //        otherwise error -- unless recursive is true,
+        //        then recurse back and finalize that month first
+
+        // TODO
+    }
+
+    // For use in transaction
+    _finalize(db, month) {}
+
+    // For use in transaction
+    _unfinalize(db, month) {}
 
     update(db, {
         name,
