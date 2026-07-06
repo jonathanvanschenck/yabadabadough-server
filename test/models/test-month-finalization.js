@@ -23,6 +23,7 @@ describe("models/MonthFinalization.js", () => {
         checking = Fund.create(db, {
             name: "Checking",
             tracked: true,
+            pool: true,
             start_date: YDate.parse("2026-01-01"),
             start_balance: 1000,
         });
@@ -164,7 +165,7 @@ describe("models/MonthFinalization.js", () => {
             expect(reloaded.cached_date.toString()).to.equal("2026-02-01");
         });
 
-        it("handles nested monthly funds bottom-up", () => {
+        it("nested monthly funds each clean up directly to the pool", () => {
             // budget (monthly, child of checking) <- subbudget (monthly, child of budget)
             const budget = Fund.create(db, {
                 name: "Budget",
@@ -193,8 +194,9 @@ describe("models/MonthFinalization.js", () => {
             const ffs = FundFinalization.from_db(db, { month_id: month.id });
             const by_fund = new Map(ffs.map(ff => [ff.fund_id, ff]));
 
-            // Subbudget cleanup (30) flows into budget BEFORE budget's own
-            // cleanup, so budget's cleanup is 20 + 30 = 50 and both zero out
+            // No relaying: each monthly fund returns exactly its own eom
+            // balance straight to the pool (checking), skipping intermediate
+            // monthly parents -- and every monthly fund still zeroes out
             expect(by_fund.get(subbudget.id).eom_balance).to.equal(30);
             expect(by_fund.get(subbudget.id).sonm_balance).to.equal(0);
             expect(by_fund.get(budget.id).eom_balance).to.equal(20);
@@ -204,8 +206,41 @@ describe("models/MonthFinalization.js", () => {
 
             const group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
             const budget_txn = group.transactions.find(t => t.source_fund_id === budget.id);
-            expect(budget_txn.amount).to.equal(50);
+            expect(budget_txn.amount).to.equal(20);
             expect(budget_txn.target_fund_id).to.equal(checking.id);
+
+            const subbudget_txn = group.transactions.find(t => t.source_fund_id === subbudget.id);
+            expect(subbudget_txn.amount).to.equal(30);
+            expect(subbudget_txn.target_fund_id).to.equal(checking.id);
+        });
+
+        it("monthly funds under an untracked organizational fund clean up to the pool", () => {
+            // checking (pool) <- category (untracked) <- fun (monthly)
+            const category = Fund.create(db, {
+                name: "Category",
+                tracked: false,
+                parent_id: checking.id,
+            });
+            const fun = Fund.create(db, {
+                name: "Fun",
+                tracked: true,
+                monthly: true,
+                parent_id: category.id,
+                start_date: YDate.parse("2026-01-01"),
+                start_balance: 0,
+            });
+
+            transfer("2026-01-05", checking, fun, 75);
+
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+
+            const group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+            const fun_txn = group.transactions.find(t => t.source_fund_id === fun.id);
+            expect(fun_txn.amount).to.equal(75);
+            expect(fun_txn.target_fund_id).to.equal(checking.id);
+
+            expect(Fund.for_id(db, fun.id).cached_balance).to.equal(0);
+            expect(Fund.for_id(db, checking.id).cached_balance).to.equal(1000);
         });
 
         it("skips tracked funds that have not started yet", () => {
@@ -303,6 +338,17 @@ describe("models/MonthFinalization.js", () => {
             const reloaded = Fund.for_id(db, checking.id);
             expect(reloaded.cached_date.toString()).to.equal("2026-04-01");
             expect(reloaded.cached_balance).to.equal(850);
+        });
+
+        it("eom_cleanup groups cannot be deleted directly (only via unfinalize)", () => {
+            transfer("2026-01-05", checking, groceries, 200);
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+
+            // The finalized-month guard inherently covers cleanup groups,
+            // which only ever exist inside finalized months
+            const group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+            expect(() => group.delete(db))
+                .to.throw(ConflictError, "finalized month");
         });
 
         it("blocks new transaction groups in finalized months", () => {

@@ -304,36 +304,28 @@ module.exports = class MonthFinalization extends Base {
         }
 
         // ------------------------------------------------------------------
-        // Compute cleanup flows BOTTOM-UP through the fund hierarchy (deepest
-        // children first) so that a monthly parent's cleanup includes the
-        // cleanup inflows of its monthly children -- this guarantees
+        // Compute cleanup flows: every monthly fund returns exactly its own
+        // eom balance directly to its nearest POOL ancestor (no ordering, no
+        // relaying through intermediate monthly parents), which guarantees
         // sonm_balance = 0 for every monthly fund, even when nested.
         // ------------------------------------------------------------------
-        const by_id = new Map(funds.map(f => [f.id, f]));
-        const depth_of = (fund) => {
-            let depth = 0;
-            let parent_id = fund.parent_id;
-            while ( parent_id != null && by_id.has(parent_id) ) {
-                depth += 1;
-                parent_id = by_id.get(parent_id).parent_id;
-            }
-            return depth;
-        };
-
-        const monthly_funds = funds
-            .filter(f => f.monthly)
-            .sort((a, b) => depth_of(b) - depth_of(a));
+        const monthly_funds = funds.filter(f => f.monthly);
 
         const cleanup_flows = new Map(); // fund_id -> net cleanup flow (in - out)
-        const cleanups = []; // { fund, amount } where amount is signed (fund -> parent)
+        const cleanups = []; // { fund, pool, amount } where amount is signed (fund -> pool)
         for ( const fund of monthly_funds ) {
-            // The fund's balance at cleanup time: its eom balance plus any
-            // cleanup inflows already scheduled from its (deeper) children
-            const amount = eom_balances.get(fund.id) + (cleanup_flows.get(fund.id) ?? 0);
+            // Defensive: the Fund-layer invariant (monthly funds require a
+            // pool ancestor) should make this unreachable
+            const pool = fund.nearest_pool(db);
+            if ( !pool ) {
+                throw new ConflictError("Monthly fund has no pool ancestor: " + fund.name);
+            }
+
+            const amount = eom_balances.get(fund.id);
 
             cleanup_flows.set(fund.id, (cleanup_flows.get(fund.id) ?? 0) - amount);
-            cleanup_flows.set(fund.parent_id, (cleanup_flows.get(fund.parent_id) ?? 0) + amount);
-            cleanups.push({ fund, amount });
+            cleanup_flows.set(pool.id, (cleanup_flows.get(pool.id) ?? 0) + amount);
+            cleanups.push({ fund, pool, amount });
         }
 
         // ------------------------------------------------------------------
@@ -370,8 +362,8 @@ module.exports = class MonthFinalization extends Base {
         // Insert the single eom_cleanup transaction group for the month (if
         // any monthly funds were finalized). Every monthly fund gets exactly
         // one cleanup transaction, even at zero amount, so the record always
-        // exists. Direction depends on sign: surplus flows fund -> parent,
-        // deficit flows parent -> fund.
+        // exists. Direction depends on sign: surplus flows fund -> pool,
+        // deficit flows pool -> fund.
         //
         // NOTE : we intentionally call TransactionGroup._create (not .create)
         //        to bypass the finalized-month guard: this group is dated
@@ -387,14 +379,13 @@ module.exports = class MonthFinalization extends Base {
                 split: cleanups.length > 1,
                 eom_cleanup: true,
                 allocation: false,
-                transactions: cleanups.map(({ fund, amount }) => ({
-                    source_fund_id: amount >= 0 ? fund.id : fund.parent_id,
-                    target_fund_id: amount >= 0 ? fund.parent_id : fund.id,
+                transactions: cleanups.map(({ fund, pool, amount }) => ({
+                    source_fund_id: amount >= 0 ? fund.id : pool.id,
+                    target_fund_id: amount >= 0 ? pool.id : fund.id,
                     amount: Math.abs(amount),
                     description: "EOM cleanup: " + fund.name,
                     note: null,
                     eom_cleanup_id: finalization_ids.get(fund.id),
-                    allocation_id: null,
                 })),
             });
         }

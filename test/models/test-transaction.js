@@ -21,6 +21,7 @@ describe("Transaction Model", () => {
             name: "Checking",
             tracked: true,
             monthly: false,
+            pool: true,
             start_date: YDate.parse("2026-01-01"),
             start_balance: 1000.00,
         });

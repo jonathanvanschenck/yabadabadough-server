@@ -79,6 +79,7 @@ describe("models/Fund.js", () => {
             const pfund = Fund.create(db, {
                 name: "parent",
                 tracked: true,
+                pool: true,
                 start_date: YDate.parse("2026-01-01"),
             });
             const fund = Fund.create(db, {
@@ -95,6 +96,7 @@ describe("models/Fund.js", () => {
             expect(fund.start_date.toString()).to.equal("2026-01-01");
             expect(fund.start_balance).to.equal(0);
             expect(fund.monthly).to.equal(true);
+            expect(fund.pool).to.equal(false);
             expect(fund.parent_id).to.equal(pfund.id);
         });
 
@@ -331,6 +333,7 @@ describe("models/Fund.js", () => {
             checking = Fund.create(db, {
                 name: "Checking",
                 tracked: true,
+                pool: true,
                 start_date: YDate.parse("2026-01-01"),
                 start_balance: 1000,
             });
@@ -446,6 +449,7 @@ describe("models/Fund.js", () => {
             const parent = Fund.create(db, {
                 name: "parent",
                 tracked: true,
+                pool: true,
                 start_date: YDate.parse("2026-01-01"),
                 start_balance: 0,
             });
@@ -585,6 +589,274 @@ describe("models/Fund.js", () => {
             expect(results).to.have.length(3);
         })
 
+    });
+
+    describe("pool invariants", () => {
+        it("can create a pool fund", () => {
+            const fund = Fund.create(db, {
+                name: "Checking",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+                start_balance: 1000,
+            });
+            expect(fund.pool).to.equal(true);
+            expect(fund.to_api().status.pool).to.equal(true);
+        });
+
+        it("Consistency: pool requires tracking", () => {
+            expect(() => Fund.create(db, {
+                name: "test",
+                tracked: false,
+                pool: true, // Error!
+            })).to.throw("Cannot create a pool fund unless it is also tracked");
+        });
+
+        it("Consistency: pool excludes monthly", () => {
+            const parent = Fund.create(db, {
+                name: "parent",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            expect(() => Fund.create(db, {
+                name: "test",
+                tracked: true,
+                start_date: YDate.parse("2026-01-01"),
+                parent_id: parent.id,
+                monthly: true,
+                pool: true, // Error!
+            })).to.throw("Cannot create a fund that is both pool and monthly");
+        });
+
+        it("the db CHECK backstops the pool consistency rules", () => {
+            expect(() => db.prepare(`
+                INSERT INTO funds (name, tracked, monthly, pool)
+                VALUES ('bad', 0, 0, 1)
+            `).run()).to.throw(/CHECK/);
+        });
+
+        it("monthly funds require a pool ancestor, not just a parent", () => {
+            const plain = Fund.create(db, {
+                name: "plain parent",
+                tracked: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            expect(() => Fund.create(db, {
+                name: "test",
+                tracked: true,
+                start_date: YDate.parse("2026-01-01"),
+                monthly: true,
+                parent_id: plain.id, // No pool above -- Error!
+            })).to.throw(ConflictError, "Monthly funds require a pool ancestor");
+        });
+
+        it("the pool ancestor may sit above untracked organizational funds", () => {
+            const checking = Fund.create(db, {
+                name: "Checking",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+                start_balance: 1000,
+            });
+            const category = Fund.create(db, {
+                name: "Category",
+                tracked: false,
+                parent_id: checking.id,
+            });
+            const fun = Fund.create(db, {
+                name: "Fun",
+                tracked: true,
+                monthly: true,
+                parent_id: category.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+
+            const pool = fun.nearest_pool(db);
+            expect(pool.id).to.equal(checking.id);
+        });
+
+        it(".nearest_pool() finds the closest pool when nested", () => {
+            const outer = Fund.create(db, {
+                name: "Outer",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const inner = Fund.create(db, {
+                name: "Inner",
+                tracked: true,
+                pool: true,
+                parent_id: outer.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const leaf = Fund.create(db, {
+                name: "Leaf",
+                tracked: true,
+                parent_id: inner.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+
+            expect(leaf.nearest_pool(db).id).to.equal(inner.id);
+            expect(inner.nearest_pool(db).id).to.equal(outer.id);
+            expect(outer.nearest_pool(db)).to.equal(null);
+        });
+
+        it("a monthly fund cannot start before its pool ancestor", () => {
+            const late_pool = Fund.create(db, {
+                name: "Late pool",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-02-01"),
+            });
+            expect(() => Fund.create(db, {
+                name: "test",
+                tracked: true,
+                monthly: true,
+                parent_id: late_pool.id,
+                start_date: YDate.parse("2026-01-01"), // Before the pool -- Error!
+            })).to.throw(ConflictError, "cannot start before its pool ancestor");
+        });
+
+        it("Can get by pool from_db filter", () => {
+            Fund.create(db, {
+                name: "Checking",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            Fund.create(db, {
+                name: "Other",
+                tracked: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+
+            const pools = Fund.from_db(db, { pool: true });
+            expect(pools).to.have.length(1);
+            expect(pools[0].name).to.equal("Checking");
+        });
+    });
+
+    describe("pool orphan guards and history rules", () => {
+        let checking, groceries;
+        beforeEach(() => {
+            checking = Fund.create(db, {
+                name: "Checking",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+                start_balance: 1000,
+            });
+            groceries = Fund.create(db, {
+                name: "Groceries",
+                tracked: true,
+                monthly: true,
+                parent_id: checking.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+        });
+
+        it("rejects un-pooling a load-bearing pool", () => {
+            expect(() => checking.update(db, { pool: false }))
+                .to.throw(ConflictError, "would leave a monthly fund without a pool ancestor");
+        });
+
+        it("allows un-pooling when another pool ancestor exists above", () => {
+            const wallet = Fund.create(db, {
+                name: "Wallet",
+                tracked: true,
+                pool: true,
+                parent_id: checking.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const updated_groceries = Fund.for_id(db, groceries.id)
+                .update(db, { parent_id: wallet.id });
+            expect(updated_groceries.parent_id).to.equal(wallet.id);
+
+            // Checking still backs wallet's subtree... but wallet does the
+            // pooling now, so checking may stop being a pool
+            const updated = Fund.for_id(db, checking.id).update(db, { pool: false });
+            expect(updated.pool).to.equal(false);
+        });
+
+        it("rejects re-parenting a subtree out from under its pool", () => {
+            const homeless = Fund.create(db, {
+                name: "Homeless root",
+                tracked: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const mid = Fund.create(db, {
+                name: "Mid",
+                tracked: false,
+                parent_id: checking.id,
+            });
+            const fun = Fund.create(db, {
+                name: "Fun",
+                tracked: true,
+                monthly: true,
+                parent_id: mid.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+
+            // Moving mid (with monthly descendant fun) under a pool-less root
+            // would orphan fun
+            expect(() => Fund.for_id(db, mid.id).update(db, { parent_id: homeless.id }))
+                .to.throw(ConflictError, "would leave a monthly fund without a pool ancestor");
+            expect(Fund.for_id(db, fun.id).parent_id).to.equal(mid.id);
+        });
+
+        it("toggling pool is history-affecting", () => {
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+
+            expect(() => Fund.for_id(db, checking.id).update(db, { pool: false }))
+                .to.throw(ConflictError, "unfinalize back to the fund's start");
+        });
+
+        it("re-parenting a fund with a monthly descendant is history-affecting", () => {
+            const other = Fund.create(db, {
+                name: "Other pool",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const mid = Fund.create(db, {
+                name: "Mid",
+                tracked: true,
+                parent_id: checking.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const fun = Fund.create(db, {
+                name: "Fun",
+                tracked: true,
+                monthly: true,
+                parent_id: mid.id,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+
+            // mid is not monthly itself, but contains fun
+            expect(() => Fund.for_id(db, mid.id).update(db, { parent_id: other.id }))
+                .to.throw(ConflictError, "unfinalize back to the fund's start");
+            expect(Fund.for_id(db, fun.id).parent_id).to.equal(mid.id);
+        });
+
+        it("re-parenting a purely organizational fund is not history-affecting", () => {
+            const other = Fund.create(db, {
+                name: "Other pool",
+                tracked: true,
+                pool: true,
+                start_date: YDate.parse("2026-01-01"),
+            });
+            const org = Fund.create(db, {
+                name: "Organizational",
+                tracked: false,
+                parent_id: checking.id,
+            });
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+
+            const updated = Fund.for_id(db, org.id).update(db, { parent_id: other.id });
+            expect(updated.parent_id).to.equal(other.id);
+        });
     });
 
 });

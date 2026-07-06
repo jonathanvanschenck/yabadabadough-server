@@ -27,7 +27,7 @@ const SELECT_COLUMNS = [
     "description",
     "note",
     "eom_cleanup_id",
-    "allocation_id",
+    "allocation",
     "created_at",
 ];
 
@@ -61,11 +61,6 @@ module.exports = class Transaction extends Base {
         eom_cleanup_exists: `
             SELECT 1
             FROM fund_finalizations
-            WHERE id = @id
-        `,
-        allocation_exists: `
-            SELECT 1
-            FROM allocations
             WHERE id = @id
         `,
         net_transfer: `
@@ -103,7 +98,7 @@ module.exports = class Transaction extends Base {
                 description,
                 note,
                 eom_cleanup_id,
-                allocation_id
+                allocation
             ) VALUES (
                 @source_fund_id,
                 @target_fund_id,
@@ -113,8 +108,35 @@ module.exports = class Transaction extends Base {
                 @description,
                 @note,
                 @eom_cleanup_id,
-                @allocation_id
+                @allocation
             )
+        `,
+        delete: `
+            DELETE FROM transactions
+            WHERE id = @id
+        `,
+        delete_for_group: `
+            DELETE FROM transactions
+            WHERE group_id = @group_id
+        `,
+        // Allocation transactions in months that have NOT been finalized (the
+        // month_finalizations subquery is inlined -- rather than requiring
+        // MonthFinalization -- to avoid a circular require). Used by the Fund
+        // re-derivation hook: allocation sources are DERIVED from the current
+        // hierarchy, so unfinalized allocations get repointed when it changes.
+        unfinalized_allocations: `
+            SELECT id, source_fund_id, target_fund_id, date
+            FROM transactions
+            WHERE allocation = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM month_finalizations
+                WHERE eom_date >= transactions.date
+              )
+        `,
+        set_source: `
+            UPDATE transactions
+            SET source_fund_id = @source_fund_id
+            WHERE id = @id
         `,
     }
 
@@ -136,7 +158,7 @@ module.exports = class Transaction extends Base {
         description,
         note,
         eom_cleanup_id,
-        allocation_id,
+        allocation,
         created_at,
     }={}) {
         super();
@@ -149,7 +171,7 @@ module.exports = class Transaction extends Base {
         this.description = description;
         this.note = note;
         this.eom_cleanup_id = eom_cleanup_id;
-        this.allocation_id = allocation_id;
+        this.allocation = allocation;
         this.created_at = created_at;
     }
 
@@ -164,7 +186,7 @@ module.exports = class Transaction extends Base {
             description: this.description,
             note: this.note,
             eom_cleanup_id: this.eom_cleanup_id,
-            allocation_id: this.allocation_id,
+            allocation: this.allocation,
             created_at: this.created_at.toISOString(),
         };
     }
@@ -182,7 +204,7 @@ module.exports = class Transaction extends Base {
             description: row.description,
             note: row.note,
             eom_cleanup_id: row.eom_cleanup_id,
-            allocation_id: row.allocation_id,
+            allocation: stmt2boolean(row.allocation),
             created_at: stmt2datetime(row.created_at),
         });
     }
@@ -199,6 +221,7 @@ module.exports = class Transaction extends Base {
         group_id,
         since,  // YDate or null
         until,  // YDate or null
+        allocation,
         description_like,
         order_by = "date",
         order_direction = "DESC",
@@ -238,6 +261,11 @@ module.exports = class Transaction extends Base {
             wheres.push("date <= @until");
             params.until = ydate2stmt(until);
             keys.push("until");
+        }
+        if ( allocation !== undefined ) {
+            wheres.push("allocation = @allocation");
+            params.allocation = boolean2stmt(allocation);
+            keys.push("allocation");
         }
         if ( description_like !== undefined ) {
             wheres.push("description LIKE @description_like");
@@ -289,7 +317,7 @@ module.exports = class Transaction extends Base {
         note = null,
 
         eom_cleanup_id = null,
-        allocation_id = null,
+        allocation = false,
     }={}) {
         if ( !source_fund_id ) throw new Error("Missing source fund id");
         if ( !target_fund_id ) throw new Error("Missing target fund id");
@@ -330,9 +358,6 @@ module.exports = class Transaction extends Base {
         if ( eom_cleanup_id && !this.get_stmt(db, "eom_cleanup_exists").get({ id: eom_cleanup_id }) ) {
             throw new ForeignKeyError("EOM cleanup/finalization does not exist: " + eom_cleanup_id);
         }
-        if ( allocation_id && !this.get_stmt(db, "allocation_exists").get({ id: allocation_id }) ) {
-            throw new ForeignKeyError("Allocation does not exist: " + allocation_id);
-        }
         */
 
         const stmt = this.get_stmt(db, "create");
@@ -345,11 +370,41 @@ module.exports = class Transaction extends Base {
             description: description,
             note: note ?? null,
             eom_cleanup_id: eom_cleanup_id ?? null,
-            allocation_id: allocation_id ?? null,
+            allocation: boolean2stmt(allocation),
         });
     }
 
     static create() { throw new Error("You cannot directly create a transaction, please create via TransactionGroup.create(...)"); }
+
+    /**
+     * Only for use by TransactionGroup (inside its sqlite transactions);
+     * callers own the group-level bookkeeping (split, group deletion).
+     */
+    static _delete(db, id) {
+        this.get_stmt(db, "delete").run({ id });
+    }
+
+    /**
+     * Only for use by TransactionGroup._delete.
+     */
+    static _delete_for_group(db, group_id) {
+        this.get_stmt(db, "delete_for_group").run({ group_id });
+    }
+
+    /**
+     * Allocation transactions in unfinalized months, as raw rows
+     * ({ id, source_fund_id, target_fund_id, date }). Allocation sources are
+     * DERIVED from the current hierarchy: Fund._update uses this (with
+     * `_set_source`) to repoint them when the hierarchy changes. Finalized
+     * months are immutable and are never touched.
+     */
+    static _unfinalized_allocations(db) {
+        return this.get_stmt(db, "unfinalized_allocations").all();
+    }
+
+    static _set_source(db, { id, source_fund_id }={}) {
+        this.get_stmt(db, "set_source").run({ id, source_fund_id });
+    }
 
 
     /**

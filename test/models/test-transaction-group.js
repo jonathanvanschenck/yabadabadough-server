@@ -19,6 +19,7 @@ describe("TransactionGroup Model", () => {
             name: "Checking",
             tracked: true,
             monthly: false,
+            pool: true,
             start_date: YDate.parse("2026-01-01"),
             start_balance: 1000.00,
         });
@@ -262,7 +263,7 @@ describe("TransactionGroup Model", () => {
                     target_fund_id: groceries_fund.id,
                     amount: 10.00,
                 });
-            }).to.throw("Cannot add a transaction group to a finalized month");
+            }).to.throw("Cannot modify transaction groups in a finalized month");
 
             // Before the finalized month
             expect(() => {
@@ -273,7 +274,7 @@ describe("TransactionGroup Model", () => {
                     target_fund_id: groceries_fund.id,
                     amount: 10.00,
                 });
-            }).to.throw("Cannot add a transaction group to a finalized month");
+            }).to.throw("Cannot modify transaction groups in a finalized month");
 
             // After the finalized month is fine
             const group = TransactionGroup.create_single(db, {
@@ -344,6 +345,89 @@ describe("TransactionGroup Model", () => {
                     }]
                 });
             }).to.throw("Missing description");
+        });
+
+        it("should reject the reserved allocation/eom_cleanup flags", () => {
+            // These flags are managed by Allocation / MonthFinalization
+            expect(() => {
+                TransactionGroup.create(db, {
+                    date: YDate.parse("2026-06-01"),
+                    description: "Fake allocation",
+                    allocation: true,
+                    transactions: [{
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 100.00,
+                        description: "Fake allocation",
+                    }]
+                });
+            }).to.throw("Allocation groups may only be created via Allocation.set");
+
+            expect(() => {
+                TransactionGroup.create(db, {
+                    date: YDate.parse("2026-06-01"),
+                    description: "Fake cleanup",
+                    eom_cleanup: true,
+                    transactions: [{
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 100.00,
+                        description: "Fake cleanup",
+                    }]
+                });
+            }).to.throw("EOM cleanup groups may only be created via MonthFinalization.create");
+        });
+    });
+
+    describe("delete()", () => {
+        it("should delete the group and its transactions", () => {
+            const group = TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-03"),
+                description: "Doomed",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries portion",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas portion",
+                    }
+                ]
+            });
+
+            group.delete(db);
+
+            expect(TransactionGroup.for_id(db, group.id)).to.be.null;
+            const orphans = db.prepare(
+                "SELECT COUNT(*) AS n FROM transactions WHERE group_id = ?"
+            ).get(group.id);
+            expect(orphans.n).to.equal(0);
+        });
+
+        it("should refuse deleting groups in finalized months", () => {
+            const group = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-05-10"),
+                description: "About to be locked in",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 10.00,
+            });
+
+            // Insert the finalization row directly so this test only
+            // exercises the TransactionGroup guard
+            db.prepare(`
+                INSERT INTO month_finalizations (som_date, eom_date, sonm_date)
+                VALUES ('2026-05-01', '2026-05-31', '2026-06-01')
+            `).run();
+
+            expect(() => group.delete(db))
+                .to.throw("Cannot modify transaction groups in a finalized month");
+            expect(TransactionGroup.for_id(db, group.id)).to.not.be.null;
         });
     });
 

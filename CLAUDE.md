@@ -82,6 +82,13 @@ Base class for all models with pattern:
 - `instance.update(db, {...})`: Updates record
 - `instance.delete(db)`: Deletes record
 
+**SQL locality convention**: each model file owns ALL SQL against its table; cross-model
+operations go through (possibly internal `_`-prefixed) model methods, never inline SQL at the
+call site (e.g. Allocation edits groups only via `TransactionGroup._add_transaction` /
+`_remove_transaction`). The only sanctioned exception: small inline guard queries against
+*other* tables used solely to avoid circular requires (e.g. `month_is_finalized` in
+TransactionGroup, `finalized_months_since` in Fund).
+
 ### Schema Hierarchy
 
 **Funds** (`funds` table):
@@ -89,29 +96,59 @@ Base class for all models with pattern:
 - Triggers prevent cycles in hierarchy
 - `tracked=1` funds have `start_date`/`start_balance` (untracked funds must not); there is no
   stored running balance — balances are calculated from the cache point plus net transfers since
-- `monthly=1` funds reset at end of month (requires parent_id and tracked=1)
+- `monthly=1` funds reset at end of month (requires parent_id, tracked=1, and a pool ancestor)
+- `pool=1` funds are the source/sink of money for their descendants: allocations draw from the
+  nearest pool ancestor, and monthly funds return their EOM balances directly to it (skipping
+  intermediate non-pool funds). Pools require tracked=1 and monthly=0 (db CHECK). The "every
+  monthly fund has a pool ancestor" invariant is hierarchy-global, enforced at the model layer
+  on every fund create/update (plus: a monthly fund may not start before its pool ancestor).
+  `fund.nearest_pool(db)` resolves the ancestor
 - `finalization_id` references the most recent fund finalization; the model-level "cache"
   (`cached_date`/`cached_balance`) falls back to the start values (backdated to the first of the
   month) when the fund has never been finalized, so callers always have one place to look
-- History-affecting fields (`start_date`, `start_balance`, `tracked`, `monthly`, a monthly fund's
-  `parent_id`) are immutable while any finalizations exist (`fund.assert_unfinalized`)
+- History-affecting fields (`start_date`, `start_balance`, `tracked`, `monthly`, `pool`, and the
+  `parent_id` of any fund that is or contains a monthly fund) are immutable while any
+  finalizations exist (`fund.assert_unfinalized`)
 
 **Transaction Groups** (`transaction_groups` table):
 - Container for one or more related transactions
 - May link to `bank_statement_items` via `statement_id`
 - Has `date` field (YYYY-MM-DD)
-- Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying
+- Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying; the
+  `allocation`/`eom_cleanup` flags are reserved for the internal Allocation / MonthFinalization
+  paths — public `create` rejects them (at most one of the two, db CHECK)
+- `group.delete(db)` removes a group and its transactions; the only guard is the finalized-month
+  check (which inherently protects eom_cleanup groups — they only exist inside finalized months).
+  `TransactionGroup.assert_month_unfinalized(db, date)` is the shared guard helper
 
 **Transactions** (`transactions` table):
 - Moves money from `source_fund_id` to `target_fund_id`
 - Belongs to `transaction_groups` via `group_id`
-- May link to `allocations` (via `allocation_id`) or `fund_finalizations` (via `eom_cleanup_id`)
-- Date denormalized from group for query performance
+- May link to `fund_finalizations` (via `eom_cleanup_id`)
+- Date and `allocation` flag denormalized from group for query performance; a partial unique
+  index on `(target_fund_id, date) WHERE allocation = 1` backstops
+  one-allocation-per-fund-per-month
 - Zero amounts are allowed at the db/model level (needed for eom_cleanup transactions); USER
   transactions must be positive, enforced at the API layer
 
-**Allocations** (`allocations` table):
-- Scheduled fund contributions
+**Allocations** (`models/Allocation.js` — intentionally NO table):
+- A start-of-month transfer into a fund ("monthly" budgets and progressive saving), created
+  immediately as a real transaction — no trigger step, no second copy of the amount
+- Each month has at most ONE allocation transaction group (`allocation = 1`, dated the first of
+  the month) holding one transaction per allocated fund; created lazily on the month's first
+  allocation, deleted when the last is removed, `split` kept in sync
+- The money comes from the target's nearest pool ancestor. `source_fund_id` is DERIVED, never
+  snapshotted: hierarchy changes repoint allocations in unfinalized months
+  (`Fund._rederive_allocation_sources`, which also rejects changes that would orphan one);
+  finalized months keep their historical routing
+- Managed exclusively through `Allocation.set` / `remove` / `for_month` / `for_fund` /
+  `copy_month({ from, to, on_conflict: "error"|"merge"|"overwrite" })`; the model owns no table
+  SQL — it composes TransactionGroup/Transaction methods
+- Targets must be tracked, started by the first of the month (a fund starting mid-month cannot
+  receive an allocation for that month — hard error by design; use an ordinary transaction group
+  or backdate `start_date` to the 1st), and have a pool ancestor that has also started (pools
+  under pools may receive allocations)
+- Finalized months are immutable: allocations there cannot be set/removed/overwritten
 
 **Month Finalizations** (`month_finalizations` table, `models/MonthFinalization.js`):
 - Is the parent of the Fund Finalizations for bucketing into a single month
@@ -121,13 +158,21 @@ Base class for all models with pattern:
   months as a whole, never on individual funds. Months finalize contiguously (oldest first);
   `recursive: true` auto-finalizes intervening months
 - Finalizing computes each tracked fund's eom balance, inserts one `eom_cleanup` transaction group
-  zeroing every monthly fund into its parent (bottom-up through the hierarchy, so nested monthly
-  parents include child inflows), and repoints `funds.finalization_id`
+  zeroing every monthly fund directly into its nearest pool ancestor (no ordering or relaying —
+  each monthly fund moves exactly its own eom balance, even when monthly funds nest), and
+  repoints `funds.finalization_id`
 - `month.unfinalize(db)` reverses this, strictly LIFO (latest month only), and repoints funds at
   their previous finalization
 - Once a month is finalized, no transaction groups may be added in (or before) it
 - The server intentionally does NOT restrict finalizing the current/future month (timezone
   complications); a premature finalization can be unfinalized
+
+**Future direction — hierarchy restructuring / snapshotting** (not supported today): routing
+(pool flags, parents of monthly funds) is currently write-once against history — changing it
+requires unfinalizing all the way back and rewriting history as if the hierarchy had always
+looked that way. Eventually we want point-in-time hierarchy changes ("X stops being a pool as of
+month M") without rewriting earlier months, applied consistently to finalizations and
+allocations.
 
 **Fund Finalizations** (`fund_finalizations` table, `models/FundFinalization.js`):
 - Historical record of end-of-month (excluding monthly budget cleanups) and start-of-next-month

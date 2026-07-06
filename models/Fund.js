@@ -28,6 +28,7 @@ const SELECT_COLUMNS = [
     "funds.start_balance AS start_balance",
     "funds.tracked AS tracked",
     "funds.monthly AS monthly",
+    "funds.pool AS pool",
     "funds.color AS color",
     "funds.created_at AS created_at",
     "funds.finalization_id AS finalization_id",
@@ -78,6 +79,7 @@ module.exports = class Fund extends Base {
                 start_balance,
                 tracked,
                 monthly,
+                pool,
                 color
             ) VALUES (
                 @name,
@@ -86,8 +88,58 @@ module.exports = class Fund extends Base {
                 @start_balance,
                 @tracked,
                 @monthly,
+                @pool,
                 @color
             )
+        `,
+        // The nearest pool at-or-above the given fund. To find a fund's
+        // nearest pool ANCESTOR, start from its parent_id
+        nearest_pool_from: `
+            WITH RECURSIVE chain(id, depth) AS (
+                SELECT @id, 0
+                UNION ALL
+                SELECT f.parent_id, c.depth + 1
+                FROM funds f
+                JOIN chain c ON f.id = c.id
+                WHERE f.parent_id IS NOT NULL
+                  AND c.depth < 50 -- Safety limit
+            )
+            SELECT funds.id AS id, funds.start_date AS start_date
+            FROM chain
+            JOIN funds ON funds.id = chain.id
+            WHERE funds.pool = 1
+            ORDER BY chain.depth ASC
+            LIMIT 1
+        `,
+        // Global invariant check: every monthly fund must have a pool
+        // ancestor. `pooled` is the set of funds at-or-below a pool; monthly
+        // funds cannot themselves be pools, so membership means "has a pool
+        // ancestor"
+        monthly_without_pool: `
+            WITH RECURSIVE pooled(id) AS (
+                SELECT id FROM funds WHERE pool = 1
+                UNION
+                SELECT f.id FROM funds f JOIN pooled ON f.parent_id = pooled.id
+            )
+            SELECT funds.id AS id, funds.name AS name
+            FROM funds
+            WHERE funds.monthly = 1
+              AND funds.id NOT IN (SELECT id FROM pooled)
+            LIMIT 1
+        `,
+        // Whether the fund or any fund below it is monthly (used to decide
+        // if a parent change affects cleanup-routing history)
+        has_monthly_descendant: `
+            WITH RECURSIVE subtree(id) AS (
+                SELECT @id
+                UNION
+                SELECT f.id FROM funds f JOIN subtree ON f.parent_id = subtree.id
+            )
+            SELECT 1
+            FROM funds
+            WHERE funds.monthly = 1
+              AND funds.id IN (SELECT id FROM subtree)
+            LIMIT 1
         `,
         cache_before: `
             SELECT sonm_balance, sonm_date
@@ -130,6 +182,7 @@ module.exports = class Fund extends Base {
                 start_balance = @start_balance,
                 tracked = @tracked,
                 monthly = @monthly,
+                pool = @pool,
                 color = @color
             WHERE id = @id
         `,
@@ -153,6 +206,7 @@ module.exports = class Fund extends Base {
         start_balance,
         tracked,
         monthly,
+        pool,
         color,
         finalization_id,
         cached_balance,
@@ -168,6 +222,7 @@ module.exports = class Fund extends Base {
         this.start_date = start_date;
         this.start_balance = start_balance;
         this.monthly = monthly;
+        this.pool = pool;
         this.color = color;
         this.finalization_id = finalization_id;
         this.cached_balance = cached_balance;
@@ -195,6 +250,7 @@ module.exports = class Fund extends Base {
             status: {
                 tracked: this.tracked,
                 monthly: this.monthly,
+                pool: this.pool,
                 root: !this.parent_id
             },
 
@@ -231,6 +287,7 @@ module.exports = class Fund extends Base {
             start_balance,
             tracked,
             monthly: stmt2boolean(row.monthly),
+            pool: stmt2boolean(row.pool),
             color: row.color,
             finalization_id: row.finalization_id,
             cached_balance,
@@ -253,6 +310,7 @@ module.exports = class Fund extends Base {
         started_until, // YDate or null
         tracked,
         monthly,
+        pool,
         root,
         order_by = "id",
         order_direction = "ASC",
@@ -303,6 +361,11 @@ module.exports = class Fund extends Base {
             wheres.push("funds.monthly = @monthly");
             params.monthly = boolean2stmt(monthly);
             keys.push("monthly");
+        }
+        if ( pool !== undefined ) {
+            wheres.push("funds.pool = @pool");
+            params.pool = boolean2stmt(pool);
+            keys.push("pool");
         }
         if ( root !== undefined ) {
             if ( root ) {
@@ -357,6 +420,7 @@ module.exports = class Fund extends Base {
         start_balance,
         tracked,
         monthly,
+        pool,
         color
     }={}) {
         if ( this.get_stmt(db, "name_exists").get({ name }) ) {
@@ -364,6 +428,21 @@ module.exports = class Fund extends Base {
         }
         if ( parent_id && !this.get_stmt(db, "id_exists").get({ id:parent_id }) ) {
             throw new ForeignKeyError("Parent fund does not exist: "+parent_id);
+        }
+
+        // Monthly funds return their EOM balances to (and draw allocations
+        // from) their nearest pool ancestor, so one must exist and must have
+        // started by the time the monthly fund starts
+        if ( monthly ) {
+            const pool_row = parent_id
+                ? this.get_stmt(db, "nearest_pool_from").get({ id: parent_id })
+                : null;
+            if ( !pool_row ) {
+                throw new ConflictError("Monthly funds require a pool ancestor");
+            }
+            if ( pool_row.start_date > ydate2stmt(start_date) ) {
+                throw new ConflictError("A monthly fund cannot start before its pool ancestor");
+            }
         }
 
         const stmt = this.get_stmt(db, "create");
@@ -374,6 +453,7 @@ module.exports = class Fund extends Base {
             start_balance: currency2stmt(start_balance),
             tracked: boolean2stmt(tracked),
             monthly: boolean2stmt(monthly),
+            pool: boolean2stmt(pool),
             color
         });
 
@@ -428,6 +508,7 @@ module.exports = class Fund extends Base {
         start_date = null, // YDate or null
         start_balance = 0,
         monthly = false,
+        pool = false,
         color = null
     }={}) {
 
@@ -449,6 +530,14 @@ module.exports = class Fund extends Base {
             throw new Error("Cannot create a monthly fund unless it is also tracked");
         }
 
+        // Pools hold real money (tracked) and are never monthly
+        if ( pool && !tracked ) {
+            throw new Error("Cannot create a pool fund unless it is also tracked");
+        }
+        if ( pool && monthly ) {
+            throw new Error("Cannot create a fund that is both pool and monthly");
+        }
+
         const transaction =  this.build_transaction(db, "create", this._create.bind(this));
         return transaction(db, {
             name,
@@ -457,6 +546,7 @@ module.exports = class Fund extends Base {
             start_balance: tracked ? start_balance : null,
             tracked,
             monthly,
+            pool,
             color
         })
     }
@@ -529,15 +619,51 @@ module.exports = class Fund extends Base {
     }
 
     /**
+     * The fund's nearest pool ancestor (the source/sink for its allocations
+     * and, if monthly, its EOM cleanups), or null if none exists.
+     */
+    nearest_pool(db) {
+        if ( this.parent_id == null ) return null;
+        const row = this.constructor.get_stmt(db, "nearest_pool_from")
+            .get({ id: this.parent_id });
+        return row ? this.constructor.for_id(db, row.id) : null;
+    }
+
+    /**
      * The safeguard for "rewinding history": throws if any fund_finalizations
      * exist for this fund. Changes that would invalidate cached history
-     * (start_date, start_balance, tracked, monthly, the parent of a monthly
-     * fund, or deletion) must first unfinalize every month back to the fund's
-     * start, make the change, then re-finalize back up to the present.
+     * (start_date, start_balance, tracked, monthly, pool, the parent of a
+     * fund that is or contains a monthly fund, or deletion) must first
+     * unfinalize every month back to the fund's start, make the change, then
+     * re-finalize back up to the present.
      */
     assert_unfinalized(db) {
         if ( this.get_stmt(db, "has_finalizations").get({ fund_id: this.id }) ) {
             throw new ConflictError("Fund has finalized months; unfinalize back to the fund's start before rewriting its history");
+        }
+    }
+
+    /**
+     * Allocation sources are DERIVED, not snapshotted: an allocation
+     * transaction's source_fund_id always means "the target's nearest pool
+     * ancestor". After any hierarchy change that can affect pool resolution,
+     * every allocation in an unfinalized month is repointed to match (throws
+     * if one would be orphaned). Finalized months are immutable and keep the
+     * routing that was in effect when they were written.
+     */
+    static _rederive_allocation_sources(db) {
+        for ( const row of Transaction._unfinalized_allocations(db) ) {
+            const target = this.for_id(db, row.target_fund_id);
+            const pool = target.nearest_pool(db);
+            if ( !pool ) {
+                throw new ConflictError("Change would orphan an allocation for fund: " + target.name);
+            }
+            if ( ydate2stmt(pool.start_date) > row.date ) {
+                throw new ConflictError("Change would route the allocation for fund " + target.name + " from a pool that starts after the allocation date: " + pool.name);
+            }
+            if ( pool.id !== row.source_fund_id ) {
+                Transaction._set_source(db, { id: row.id, source_fund_id: pool.id });
+            }
         }
     }
 
@@ -550,6 +676,7 @@ module.exports = class Fund extends Base {
             start_balance: changes.start_balance !== undefined ? changes.start_balance : fund.start_balance,
             tracked: changes.tracked !== undefined ? changes.tracked : fund.tracked,
             monthly: changes.monthly !== undefined ? changes.monthly : fund.monthly,
+            pool: changes.pool !== undefined ? changes.pool : fund.pool,
             color: changes.color !== undefined ? changes.color : fund.color,
         };
 
@@ -572,16 +699,31 @@ module.exports = class Fund extends Base {
         if ( next.monthly && !next.tracked ) {
             throw new Error("Cannot make a fund monthly unless it is also tracked");
         }
+        if ( next.pool && !next.tracked ) {
+            throw new Error("Cannot make a fund a pool unless it is also tracked");
+        }
+        if ( next.pool && next.monthly ) {
+            throw new Error("Cannot make a fund both pool and monthly");
+        }
+
+        const parent_changed = next.parent_id !== fund.parent_id;
 
         // History-affecting changes require the fund to be fully unfinalized
         const history_affected =
             next.tracked !== fund.tracked
             || next.monthly !== fund.monthly
+            // Past cleanups/allocations were routed through pools, so the
+            // pool flag is part of history
+            || next.pool !== fund.pool
             || ydate2stmt(next.start_date) !== ydate2stmt(fund.start_date)
             || next.start_balance !== fund.start_balance
-            // Past cleanups flowed to the old parent, so a monthly fund's
-            // parent is part of its history
-            || ((fund.monthly || next.monthly) && next.parent_id !== fund.parent_id);
+            // Past cleanups flowed through the old ancestry, so the parent of
+            // a monthly fund -- or of any fund with a monthly descendant --
+            // is part of history
+            || (parent_changed && (
+                fund.monthly || next.monthly
+                || !!this.get_stmt(db, "has_monthly_descendant").get({ id: fund.id })
+            ));
         if ( history_affected ) {
             fund.assert_unfinalized(db);
         }
@@ -611,8 +753,33 @@ module.exports = class Fund extends Base {
             start_balance: currency2stmt(next.start_balance),
             tracked: boolean2stmt(next.tracked),
             monthly: boolean2stmt(next.monthly),
+            pool: boolean2stmt(next.pool),
             color: next.color,
         });
+
+        // Changes that can affect pool resolution must not orphan any
+        // monthly fund (global invariant -- a reparent can strand monthly
+        // funds much deeper in the subtree), and must keep the derived
+        // allocation sources in sync
+        if ( parent_changed || next.pool !== fund.pool || next.monthly !== fund.monthly ) {
+            const orphan = this.get_stmt(db, "monthly_without_pool").get();
+            if ( orphan ) {
+                throw new ConflictError("Change would leave a monthly fund without a pool ancestor: " + orphan.name);
+            }
+            this._rederive_allocation_sources(db);
+        }
+
+        // A fund that is (now) monthly must not start before its pool
+        // ancestor (same rule as create)
+        if ( next.monthly && (parent_changed || !fund.monthly) ) {
+            const pool_row = this.get_stmt(db, "nearest_pool_from").get({ id: next.parent_id });
+            if ( !pool_row ) {
+                throw new ConflictError("Monthly funds require a pool ancestor");
+            }
+            if ( pool_row.start_date > ydate2stmt(next.start_date) ) {
+                throw new ConflictError("A monthly fund cannot start before its pool ancestor");
+            }
+        }
 
         return this.for_id(db, fund.id);
     }
@@ -625,6 +792,7 @@ module.exports = class Fund extends Base {
         tracked,
         // balance, // <- must use `.calculate_balance`
         monthly,
+        pool,
         color,
     }={}) {
         const transaction = this.constructor.build_transaction(
@@ -636,6 +804,7 @@ module.exports = class Fund extends Base {
             start_balance,
             tracked,
             monthly,
+            pool,
             color,
         });
     }

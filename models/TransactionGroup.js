@@ -87,6 +87,18 @@ module.exports = class TransactionGroup extends Base {
             @eom_cleanup,
             @statement_id
         )
+        `,
+        sync_split: `
+            UPDATE transaction_groups
+            SET split = (
+                SELECT COUNT(*) FROM transactions
+                WHERE group_id = @group_id
+            ) > 1
+            WHERE id = @group_id
+        `,
+        delete: `
+            DELETE FROM transaction_groups
+            WHERE id = @id
         `
     }
 
@@ -292,13 +304,26 @@ module.exports = class TransactionGroup extends Base {
                 note: transaction.note,
 
                 eom_cleanup_id: transaction.eom_cleanup_id,
-                allocation_id: transaction.allocation_id,
+                // Denormalized from the group so allocation transactions are
+                // directly queryable
+                allocation,
             })
         }
 
         // TODO : trigger fund balance re-calculation
 
         return this.for_id(db, group_id);
+    }
+
+    /**
+     * Throws unless the month containing `date` (and every month before it)
+     * is unfinalized. Used by create/delete here, and by Allocation for its
+     * in-group edits.
+     */
+    static assert_month_unfinalized(db, date) {
+        if ( this.get_stmt(db, "month_is_finalized").get({ date: ydate2stmt(date) }) ) {
+            throw new ConflictError("Cannot modify transaction groups in a finalized month");
+        }
     }
 
     static create(db, {
@@ -312,23 +337,18 @@ module.exports = class TransactionGroup extends Base {
     }={}) {
         if ( transactions.length < 1 ) throw new Error("Must provide at least transaction");
 
-        if ( allocation ) for ( const transaction of transactions ) {
-            if ( !transaction.allocation_id ) throw new Error("Missing allocation id for allocation transaction group");
-        }
-        if ( eom_cleanup ) for ( const transaction of transactions ) {
-            if ( !transaction.eom_cleanup_id ) throw new Error("Missing eom cleanup id for allocation transaction group");
-        }
+        // The eom_cleanup/allocation flags are reserved for the internal
+        // `_create` paths; USER groups are always plain
+        if ( allocation ) throw new Error("Allocation groups may only be created via Allocation.set(...)");
+        if ( eom_cleanup ) throw new Error("EOM cleanup groups may only be created via MonthFinalization.create(...)");
 
         // Guard: no transaction groups may be added in (or before) a finalized
         // month -- the month must be unfinalized first.
-        // NOTE : MonthFinalization intentionally bypasses this guard by calling
-        //        `_create` directly for the month's eom_cleanup group: that group
-        //        is dated inside the month being finalized, and it lands
-        //        atomically in the same sqlite transaction as the finalization
-        //        rows themselves.
-        if ( this.get_stmt(db, "month_is_finalized").get({ date: ydate2stmt(date) }) ) {
-            throw new ConflictError("Cannot add a transaction group to a finalized month");
-        }
+        // NOTE : MonthFinalization and Allocation intentionally bypass this
+        //        guard by calling `_create` directly (MonthFinalization's
+        //        eom_cleanup group is dated inside the month being finalized;
+        //        Allocation applies the guard itself before editing).
+        this.assert_month_unfinalized(db, date);
 
         // TODO : more error checking?
 
@@ -339,8 +359,8 @@ module.exports = class TransactionGroup extends Base {
             note,
             statement_id,
             split: transactions.length > 1,
-            eom_cleanup,
-            allocation,
+            eom_cleanup: false,
+            allocation: false,
             transactions
         })
     }
@@ -368,6 +388,65 @@ module.exports = class TransactionGroup extends Base {
     }
 
     /**
+     * Only for use by Allocation (inside its sqlite transactions): insert a
+     * transaction into an existing group, keeping the denormalized `split`
+     * flag in sync. The transaction takes the group's date and allocation
+     * flag. Returns the refreshed group.
+     */
+    static _add_transaction(db, group, {
+        source_fund_id,
+        target_fund_id,
+        amount,
+        description,
+        note = null,
+        eom_cleanup_id = null,
+    }={}) {
+        Transaction._create_with_group(db, {
+            source_fund_id,
+            target_fund_id,
+            group_id: group.id,
+            date: group.date,
+
+            amount,
+            description,
+            note,
+
+            eom_cleanup_id,
+            allocation: group.allocation,
+        });
+        this.get_stmt(db, "sync_split").run({ group_id: group.id });
+        return this.for_id(db, group.id);
+    }
+
+    /**
+     * Only for use by Allocation (inside its sqlite transactions): remove one
+     * transaction from an existing group, keeping `split` in sync. Callers
+     * are responsible for deleting the group when it empties (groups hold at
+     * least one transaction). Returns the refreshed group.
+     */
+    static _remove_transaction(db, group, transaction_id) {
+        Transaction._delete(db, transaction_id);
+        this.get_stmt(db, "sync_split").run({ group_id: group.id });
+        return this.for_id(db, group.id);
+    }
+
+    static _delete(db, group) {
+        // NOTE : this guard inherently protects eom_cleanup groups, which only
+        //        ever exist inside finalized months (unfinalize removes them
+        //        via its own internal path)
+        this.assert_month_unfinalized(db, group.date);
+
+        Transaction._delete_for_group(db, group.id);
+        this.get_stmt(db, "delete").run({ id: group.id });
+    }
+
+    delete(db) {
+        const transaction = this.constructor.build_transaction(
+            db, "delete", this.constructor._delete.bind(this.constructor));
+        return transaction(db, this);
+    }
+
+    /**
      * NOTE : we explicitly restrict the update-able fields to prevent db desycn
      *        you should just delete and re-create a transaction if you need to
      *        change anything, since that will gaurentee all side-effects take place
@@ -376,6 +455,4 @@ module.exports = class TransactionGroup extends Base {
         description,
         note
     }={}) { throw new Error("TODO") }
-
-    delete() { throw new Error("TODO") }
 }
