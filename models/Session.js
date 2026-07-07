@@ -115,6 +115,20 @@ module.exports = class Session extends Base {
         return this.expires_at <= new Date();
     }
 
+    static openapi_SessionSchema = {
+        description: "A login session: the row IS the right to refresh access tokens, until expires_at. The per-session secret is never exposed.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            user_id: { type: 'integer', minimum: 1 },
+            note: { type: 'string', nullable: true, description: "Optional device/client label" },
+            expires_at: { type: 'string', format: 'date-time', description: "Fixed at login; refreshes never extend it" },
+            last_used_at: { type: 'string', format: 'date-time', nullable: true, description: "Touched on every refresh" },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'user_id', 'note', 'expires_at', 'last_used_at', 'created_at' ]
+    };
+
     // `token` is a secret: it only ever leaves the model inside an
     // auth-token payload (User.to_auth_token_payload)
     to_api() {

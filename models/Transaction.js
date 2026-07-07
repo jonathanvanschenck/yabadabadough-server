@@ -175,6 +175,25 @@ module.exports = class Transaction extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_TransactionSchema = {
+        description: "Moves `amount` from the source fund to the target fund on `date`. `date` and `allocation` are denormalized from the parent group.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            source_fund_id: { type: 'integer', minimum: 1 },
+            target_fund_id: { type: 'integer', minimum: 1 },
+            group_id: { type: 'integer', minimum: 1 },
+            amount: { type: 'number', minimum: 0, description: "Currency as a float dollar amount; zero only occurs on internal eom_cleanup transactions" },
+            date: { type: 'string', format: 'date', example: '2026-01-15' },
+            description: { type: 'string' },
+            note: { type: 'string', nullable: true },
+            eom_cleanup_id: { type: 'integer', minimum: 1, nullable: true, description: "The fund finalization this end-of-month cleanup transaction belongs to; null for ordinary transactions" },
+            allocation: { type: 'boolean', description: "true iff this transaction is a start-of-month allocation" },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'source_fund_id', 'target_fund_id', 'group_id', 'amount', 'date', 'description', 'note', 'eom_cleanup_id', 'allocation', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,

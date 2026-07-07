@@ -77,6 +77,23 @@ module.exports = class FundFinalization extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_FundFinalizationSchema = {
+        description: "One fund's historical record for one finalized month.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            month_id: { type: 'integer', minimum: 1, description: "The parent month finalization" },
+            fund_id: { type: 'integer', minimum: 1 },
+            eom_balance: { type: 'number', description: "Currency as a float dollar amount: the balance ON eom_date EXCLUDING eom_cleanup transactions -- a surplus/loss history snapshot, NOT a reconciliation point" },
+            sonm: {
+                description: "The reconciliation cache point: the forward balance entering sonm_date, INCLUDING eom_cleanup transactions",
+                allOf: [ { '$ref': '#/components/schemas/ForwardBalanceSchema' } ]
+            },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'month_id', 'fund_id', 'eom_balance', 'sonm', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,

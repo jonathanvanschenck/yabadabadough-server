@@ -145,6 +145,37 @@ module.exports = class TransactionGroup extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_TransactionGroupSchema = {
+        description: "A container for one or more related transactions, plus any bank statement items reconciled to it.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            description: { type: 'string' },
+            date: { type: 'string', format: 'date', example: '2026-01-15' },
+            note: { type: 'string', nullable: true },
+            status: {
+                type: 'object',
+                properties: {
+                    split: { type: 'boolean', description: "true iff the group holds more than one transaction" },
+                    allocation: { type: 'boolean', description: "Reserved for the internal Allocation path: the month's start-of-month allocation group" },
+                    eom_cleanup: { type: 'boolean', description: "Reserved for the internal MonthFinalization path: an end-of-month cleanup group" }
+                },
+                required: [ 'split', 'allocation', 'eom_cleanup' ]
+            },
+            transactions: {
+                type: 'array',
+                items: { '$ref': '#/components/schemas/TransactionSchema' }
+            },
+            statements: {
+                description: "Bank statement items reconciled to this group",
+                type: 'array',
+                items: { '$ref': '#/components/schemas/BankStatementItemSchema' }
+            },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'description', 'date', 'note', 'status', 'transactions', 'statements', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,

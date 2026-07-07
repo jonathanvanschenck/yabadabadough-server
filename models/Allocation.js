@@ -63,6 +63,22 @@ module.exports = class Allocation extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_AllocationSchema = {
+        description: "A start-of-month transfer into a fund from its nearest pool ancestor (monthly budgets / progressive saving). Not a table: a view over the month's allocation transaction group, so there is no id of its own -- (fund_id, month) identifies it.",
+        type: 'object',
+        properties: {
+            fund_id: { type: 'integer', minimum: 1, description: "The fund receiving the allocation" },
+            source_fund_id: { type: 'integer', minimum: 1, description: "The fund's nearest pool ancestor (derived, never snapshotted, in unfinalized months)" },
+            amount: { type: 'number', description: "Currency as a float dollar amount" },
+            month: { type: 'string', format: 'date', example: '2026-01-01', description: "First day of the allocated month" },
+            date: { type: 'string', format: 'date', example: '2026-01-01', description: "The underlying transaction's date (always the first of the month)" },
+            group_id: { type: 'integer', minimum: 1, description: "The month's allocation transaction group" },
+            transaction_id: { type: 'integer', minimum: 1, description: "The underlying transaction" },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'fund_id', 'source_fund_id', 'amount', 'month', 'date', 'group_id', 'transaction_id', 'created_at' ]
+    };
+
     to_api() {
         return {
             fund_id: this.fund_id,

@@ -144,6 +144,23 @@ module.exports = class BankStatementItem extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_BankStatementItemSchema = {
+        description: "One imported bank statement line. Always in exactly one of three derivable states: pending (ignored=false, group_id=null), ignored (ignored=true), or reconciled (group_id set). Bank facts (source, key, amount, date) are immutable.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            source: { type: 'string', description: "Which bank this line was imported from" },
+            key: { type: 'string', description: "Bank-scoped dedupe key; (source, key) is unique" },
+            ignored: { type: 'boolean' },
+            group_id: { type: 'integer', minimum: 1, nullable: true, description: "The transaction group this item is reconciled to; null while pending/ignored" },
+            amount: { type: 'number', description: "Signed currency as a float dollar amount: negative = money leaving the bank account" },
+            date: { type: 'string', format: 'date', example: '2026-01-15' },
+            note: { type: 'string', nullable: true },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'source', 'key', 'ignored', 'group_id', 'amount', 'date', 'note', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,

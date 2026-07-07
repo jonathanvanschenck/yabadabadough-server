@@ -230,6 +230,52 @@ module.exports = class Fund extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_ForwardBalanceSchema = {
+        description: "A balance cache point: the forward balance entering `date` -- includes every transaction BEFORE `date`, but NOT transactions on `date` itself.",
+        type: 'object',
+        properties: {
+            date: { type: 'string', format: 'date', example: '2026-01-01' },
+            forward_balance: { type: 'number', description: "Currency as a float dollar amount" }
+        },
+        required: [ 'date', 'forward_balance' ]
+    };
+
+    static openapi_FundSchema = {
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            name: { type: 'string' },
+            parent_id: { type: 'integer', minimum: 1, nullable: true, description: "null for root funds" },
+            start: {
+                description: "Where tracking began; null for untracked funds",
+                oneOf: [
+                    { '$ref': '#/components/schemas/ForwardBalanceSchema' },
+                    { '$ref': '#/components/schemas/NullSchema' }
+                ]
+            },
+            cache: {
+                description: "The most recent reconciliation point (latest finalization, falling back to the start values); null for untracked funds",
+                oneOf: [
+                    { '$ref': '#/components/schemas/ForwardBalanceSchema' },
+                    { '$ref': '#/components/schemas/NullSchema' }
+                ]
+            },
+            status: {
+                type: 'object',
+                properties: {
+                    tracked: { type: 'boolean' },
+                    monthly: { type: 'boolean', description: "Resets into its nearest pool ancestor at end of month" },
+                    pool: { type: 'boolean', description: "Source/sink of money for its descendants" },
+                    root: { type: 'boolean', description: "true iff parent_id is null" }
+                },
+                required: [ 'tracked', 'monthly', 'pool', 'root' ]
+            },
+            color: { type: 'string', nullable: true },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'name', 'parent_id', 'start', 'cache', 'status', 'color', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,

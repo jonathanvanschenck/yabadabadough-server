@@ -141,6 +141,19 @@ module.exports = class MonthFinalization extends Base {
         this.created_at = created_at;
     }
 
+    static openapi_MonthFinalizationSchema = {
+        description: "A finalized month: transaction groups may no longer be added in (or before) it. Parent of that month's fund finalizations.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            som_date: { type: 'string', format: 'date', example: '2026-01-01', description: "First day of the month" },
+            eom_date: { type: 'string', format: 'date', example: '2026-01-31', description: "Last day of the month" },
+            sonm_date: { type: 'string', format: 'date', example: '2026-02-01', description: "First day of the next month" },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'som_date', 'eom_date', 'sonm_date', 'created_at' ]
+    };
+
     to_api() {
         return {
             id: this.id,
