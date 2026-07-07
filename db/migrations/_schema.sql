@@ -1,4 +1,45 @@
 
+CREATE TABLE users (
+    id                  INTEGER PRIMARY KEY,
+    email               TEXT NOT NULL UNIQUE, -- stored normalized (lowercase, trimmed)
+
+    -- Self-describing salted hash: "scrypt$N$r$p$salt_b64$hash_b64".
+    -- Params live in the string so cost can be raised without breaking
+    -- existing hashes. NEVER exposed via to_api.
+    password_hash       TEXT NOT NULL,
+
+    admin               INTEGER NOT NULL DEFAULT 0 CHECK (admin IN (0,1)),
+
+    -- Meta data
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+) STRICT;
+
+-- A session row IS the right to refresh an access token: refreshable iff the
+-- row exists and expires_at is in the future. Logout / revoke-all = row
+-- deletion (no revoked flag).
+CREATE TABLE user_sessions (
+    id                  INTEGER PRIMARY KEY,
+    user_id             INTEGER NOT NULL REFERENCES users(id)
+                            ON DELETE CASCADE
+                            ON UPDATE CASCADE,
+
+    -- Per-session random secret, embedded in the auth-token payload and
+    -- required to match (timing-safe) at refresh: defends against sqlite id
+    -- reuse and is the hook for future rotation. NEVER exposed via to_api.
+    token               TEXT NOT NULL UNIQUE,
+
+    note                TEXT,               -- optional device/client label
+
+    expires_at          TEXT NOT NULL,      -- ISO 8601 datetime
+    last_used_at        TEXT,               -- ISO 8601, touched on every refresh
+
+    -- Meta data
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+) STRICT;
+CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
+
+
 CREATE TABLE funds (
     id                INTEGER PRIMARY KEY,
     name              TEXT NOT NULL UNIQUE,

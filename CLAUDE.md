@@ -15,6 +15,10 @@ Personal finance server application built with Node.js and SQLite. Manages funds
 - Schema version tracked via `PRAGMA user_version`
 - Fresh schema applied automatically to new databases via `db/migrations/_schema.sql`
 
+### Scripts
+- Create a user (bootstrap; no API yet): `node scripts/create-user.js <email> <password> [--admin]`
+- Reset a password: `node scripts/create-user.js <email> <new-password> --set-password`
+
 ## Architecture
 
 ### Database Layer (`lib/db.js`)
@@ -214,6 +218,47 @@ allocations.
 - `UNIQUE(month_id, fund_id)`; the most recent id is referenced on the funds table
 - Tracked funds created with a `start_date` in/before finalized months are backfilled
   automatically (`eom = sonm = start_balance`); backdated monthly funds must start at 0
+
+**Users** (`users` table, `models/User.js`):
+- Email is normalized (lowercase + trim) at every model boundary and stored normalized, so the
+  column `UNIQUE` gives case-insensitive uniqueness. Minimal format check (contains `@`);
+  passwords are min 8 chars, enforced in `create`/`set_password`
+- Passwords are salted scrypt hashes (node built-in crypto, no deps) stored as ONE
+  self-describing string: `scrypt$N$r$p$salt_b64$hash_b64`. Verification parses params from the
+  stored string (not code constants), so cost can be raised later without invalidating existing
+  hashes. `to_api` NEVER includes `password_hash`
+- `update` handles only `email`/`admin`; passwords change via `set_password` (fresh salt).
+  Password changes deliberately do NOT revoke sessions — that's API-layer policy (one
+  `Session.revoke_all` call). `User.authenticate` returns `User | null` and burns a dummy scrypt
+  verify on unknown emails (user-enumeration timing resistance). No last-admin guard by design
+- JWT payloads (signing/verification is future API-controller work; the model only renders
+  payload objects, with `typ` + `v` claims discriminating kinds):
+  - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, sid }`
+  - auth (~1w, session-bound): `{ v, typ: "auth", sub, sid, token }`
+  Rendered by `user.to_access_token_payload(session)` / `to_auth_token_payload(session)`;
+  `User.from_token_payload(payload)` is the db-free inverse for access payloads (unsaved
+  instance, `admin` may be ~1h stale — use `for_id` when freshness matters). NOTHING may assume
+  `sid` is non-null: future API-key credentials will mint access tokens with no session
+- Bootstrap via `scripts/create-user.js` (also the forgotten-password recovery path)
+
+**Sessions** (`user_sessions` table, `models/Session.js`):
+- A session row IS the right to refresh: refreshable iff the row exists and `expires_at` is in
+  the future. Logout (`session.delete`) and revoke-all (`Session.revoke_all(db, user_id)`) are
+  row deletions — no revoked flag. `Session.prune` reclaims expired rows
+- `token` is a per-session random secret (16 bytes hex) embedded in the auth payload and
+  required to match (timing-safe) at refresh — defends against sqlite id reuse and is the hook
+  for future refresh-token rotation. NEVER in `to_api`
+- `Session.for_auth_payload(db, payload)` is the refresh guard: checks `typ`/`v`, row exists,
+  secret matches, `sub` owns the session, not expired; touches `last_used_at`; returns the
+  fresh Session. Expiry is FIXED at creation (`ttl_days`, default `Session.DEFAULT_TTL_DAYS` =
+  7) — refreshes never extend it (no sliding window in v1)
+- Require direction is strictly `Session → User` (user existence via FK, mapped to
+  `ForeignKeyError`); `User` never requires `Session` — list a user's sessions via
+  `Session.from_db(db, { user_id, active })`. User deletion cascades sessions at the db layer
+- Accepted staleness window (by design): access tokens are stateless, so logout / revoke-all /
+  admin changes / user deletion do not kill OUTSTANDING access tokens — they die at their ≤1h
+  expiry. Controllers guarding sensitive actions can re-check with `User.for_id` /
+  `Session.for_id`
 
 ### YDate Class (`lib/YDate.js`)
 
