@@ -73,8 +73,11 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   dev only)
 - Credential failures are a UNIFORM 400 + `penalize()` (`penalty_ms` delay): never leak which
   check failed (bad email vs password, bad signature vs dead session, ...)
-- `YDD_DISABLE_AUTH` bypasses the gates for development; API tests live in
-  `test/api/test-auth.js` (real Webserver on an ephemeral port, in-memory db, fetch)
+- Utils (`collections/Utils.js`, `/api/utils/versions`): reports webserver/webapp versions
+  (currently the same value — they deploy together) and the schema version via
+  `schema_version(db)` (the `PRAGMA user_version` helper in `lib/db.js`); authed, no role
+- `YDD_DISABLE_AUTH` bypasses the gates for development; API tests live in `test/api/`
+  (real Webserver on an ephemeral port, in-memory db, fetch)
 
 ### Data Type Conventions
 
