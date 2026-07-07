@@ -6,4 +6,5 @@ module.exports = [
     require("./Transactions.js"),
     require("./Statements.js"),
     require("./Allocations.js"),
+    require("./Finalizations.js"),
 ];
