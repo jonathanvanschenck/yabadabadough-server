@@ -7,4 +7,5 @@ module.exports = [
     require("./Statements.js"),
     require("./Allocations.js"),
     require("./Finalizations.js"),
+    require("./Users.js"),
 ];
