@@ -4,4 +4,5 @@ module.exports = [
     require("./Utils.js"),
     require("./Funds.js"),
     require("./Transactions.js"),
+    require("./Statements.js"),
 ];
