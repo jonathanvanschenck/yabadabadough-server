@@ -77,7 +77,67 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   (currently the same value — they deploy together) and the schema version via
   `schema_version(db)` (the `PRAGMA user_version` helper in `lib/db.js`); authed, no role
 - `YDD_DISABLE_AUTH` bypasses the gates for development; API tests live in `test/api/`
-  (real Webserver on an ephemeral port, in-memory db, fetch)
+  (real Webserver on an ephemeral port, in-memory db, fetch) — use the shared
+  `test/api/harness.js` (`start_harness()` gives db + running server + one user & access
+  token per role, plus a `request()` helper with `token`/`body`/`sudo` options)
+
+### CRUD API Conventions (`collections/*.js`)
+
+The CRUD collections (Funds, Transactions, Statements, Allocations, Finalizations, Users)
+all follow the same shape:
+
+- **Paths**: the collection prefix names the logical area; inside it, list/create routes use
+  the PLURAL resource name and single-resource routes the SINGULAR + id — e.g.
+  `GET /api/funds/funds` (list), `GET /api/funds/fund/:fund_id` (single). The plural/singular
+  split means literal segments never collide with param routes, so controller order is never
+  load-bearing. Resources without ids use collection-root verbs instead (Allocations:
+  GET/PUT/DELETE on `/allocations` keyed by `(fund_id, month)` + `POST /allocations/copy`)
+- **Roles**: reads = `reader` (the Controller default), writes = `editor: true`, user
+  management = `admin: true` (which implies the `X-Sudo-Mode` header requirement); `/me`
+  self-service routes set `reader = false` (any authed user)
+- **Parsers** (`collections/lib/parsers.js`): request BODIES use the strict `only_*` parsers
+  (`only_id`, `only_number`, `only_positive_number`, `only_boolean`, `only_ydate`,
+  `only_non_empty_string`, the `nullable(parser)` combinator) — no string coercion; QUERY
+  params use the coercive/lenient `to_*` parsers, where invalid values fall back to
+  "filter not applied". Exception: a query param whose misparse would silently return wrong
+  data (e.g. `?on=` for balances) hard-400s instead
+- **Shared controller helpers** (`collections/lib/asseverate.js`):
+  - `parse_body_fields(body, [[key, parser, expected, {required}]])` — the body-validation
+    loop; parsers signal failure by returning `undefined` (400 `Bad parameter`/`Missing
+    parameter`). Per-element array validation wraps it and prefixes `items[i]:` context
+  - `assert_found(value, label)` — 404 for path-id lookups (invalid ids 404 too, never 400)
+  - `translate_model_error(err)` — wraps ONLY the model write call: `ConflictError` → 409,
+    `ForeignKeyError` → 400 (bad body reference), plain `Error` (model consistency checks)
+    → 400, anything else rethrown → 500
+  - `parse_list_params` / `openapi_list_parameters` — the shared
+    order_by/order_direction/limit/offset handling (order_by is whitelisted per endpoint,
+    matching the model's `ORDER_BY_MAP`)
+  - `data_invalidations_response(schema)` — the `{ data, invalidations }` response schema
+- **Write responses & invalidations**: every write returns
+  `{ data: <to_api() | null-for-delete>, invalidations: [...] }` and broadcasts the same
+  actions via `this.broadcast_invalidations()` (noop invalidator until socket.io lands). The
+  webapp applies them to its tanstack-query cache. ALL query keys and actions come from
+  `collections/lib/query_keys.js` (`QK`, `invalidate`, `remove`, `money_moved()`) — never
+  inline key literals; invalidations cross collections constantly (allocation writes touch
+  transaction/balance keys; finalizations touch nearly everything). Key conventions: plural
+  list keys (`["funds"]`), singular + STRINGIFIED id singles (`["fund", "3"]`), computed
+  subresources under their own top-level key (`["fund-balance", id]`) so hot invalidations
+  don't refetch cold data; when in doubt, over-invalidate
+- **Pagination**: list endpoints on the big tables (transaction groups, transactions,
+  statement items, fund finalizations) set `X-Total-Count` from the model's
+  `count(db, filters)` static (which shares `_from_db_wheres` with `from_db` and ignores
+  order/limit/offset, so one filter object serves both). Small tables (funds, users,
+  sessions, month finalizations) skip it and rely on a generous default limit (1000)
+- **API-layer rules on top of the models**: USER transaction/allocation amounts are strictly
+  positive (zero is reserved for internal eom_cleanup rows); allocation groups cannot be
+  deleted through the transaction-groups API; bank-statement deletion defaults to
+  `with_group=true` and its OpenAPI description carries the re-import double-count hazard;
+  password changes revoke sessions by default (`revoke_sessions: true` — API-layer policy per
+  the model docs); self-deletion of users is refused; foreign sessions read as 404, not 403
+- **OpenAPI**: every controller declares Summary/Description/Parameters/RequestBodySchema/
+  ResponseSchema/ErrorResponses, `$ref`-ing the model schemas registered by `lib/openapi.js`;
+  error schemas come from the shared `*ResponseSchema` set there. Swagger UI at `/api-docs`,
+  spec at `/api-docs.json`
 
 ### Data Type Conventions
 
