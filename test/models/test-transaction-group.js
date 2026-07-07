@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { create_connection, initialize_db, ConflictError, ForeignKeyError } = require("../../lib/db.js");
 const TransactionGroup = require("../../models/TransactionGroup.js");
+const Transaction = require("../../models/Transaction.js");
 const BankStatementItem = require("../../models/BankStatementItem.js");
 const MonthFinalization = require("../../models/MonthFinalization.js");
 const Allocation = require("../../models/Allocation.js");
@@ -583,6 +584,260 @@ describe("TransactionGroup Model", () => {
             expect(updated.statements).to.have.lengthOf(1);
             expect(updated.statements[0].id).to.equal(item.id);
             expect(BankStatementItem.for_id(db, item.id).group_id).to.equal(linked.id);
+        });
+    });
+
+    describe("edit_transactions()", () => {
+        let group, groceries_txn, gas_txn;
+
+        beforeEach(() => {
+            group = TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Split shopping",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries portion",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas portion",
+                    }
+                ]
+            });
+            groceries_txn = group.transactions.find(t => t.target_fund_id === groceries_fund.id);
+            gas_txn = group.transactions.find(t => t.target_fund_id === gas_fund.id);
+        });
+
+        it("should add a transaction (inheriting the group's date) and resync split", () => {
+            const single = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Just gas",
+                source_fund_id: checking_fund.id,
+                target_fund_id: gas_fund.id,
+                amount: 30.00,
+            });
+            expect(single.split).to.be.false;
+
+            const updated = TransactionGroup.edit_transactions(db, single, {
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 20.00,
+                    description: "Snacks",
+                }]
+            });
+
+            expect(updated.transactions).to.have.lengthOf(2);
+            expect(updated.split).to.be.true;
+            const added = updated.transactions.find(t => t.description === "Snacks");
+            expect(added.date.toString()).to.equal("2026-06-10");
+            expect(added.allocation).to.be.false;
+        });
+
+        it("should remove a transaction and resync split", () => {
+            const updated = TransactionGroup.edit_transactions(db, group, {
+                remove: [gas_txn.id]
+            });
+
+            expect(updated.transactions).to.have.lengthOf(1);
+            expect(updated.transactions[0].id).to.equal(groceries_txn.id);
+            expect(updated.split).to.be.false;
+            expect(Transaction.for_id(db, gas_txn.id)).to.be.null;
+        });
+
+        it("should update a transaction's fields in place", () => {
+            const updated = TransactionGroup.edit_transactions(db, group, {
+                update: [{ id: gas_txn.id, amount: 55.00, description: "More gas" }]
+            });
+
+            const fresh_gas = updated.transactions.find(t => t.id === gas_txn.id);
+            expect(fresh_gas.amount).to.equal(55.00);
+            expect(fresh_gas.description).to.equal("More gas");
+            // The other line is untouched
+            const fresh_groceries = updated.transactions.find(t => t.id === groceries_txn.id);
+            expect(fresh_groceries.amount).to.equal(60.00);
+        });
+
+        it("should apply a mixed add/update/remove batch atomically", () => {
+            const updated = TransactionGroup.edit_transactions(db, group, {
+                remove: [gas_txn.id],
+                update: [{ id: groceries_txn.id, amount: 75.00 }],
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: gas_fund.id,
+                    amount: 25.00,
+                    description: "Replacement gas",
+                }]
+            });
+
+            expect(updated.transactions).to.have.lengthOf(2);
+            expect(updated.split).to.be.true;
+            expect(updated.transactions.find(t => t.id === groceries_txn.id).amount).to.equal(75.00);
+            expect(updated.transactions.find(t => t.description === "Replacement gas").amount).to.equal(25.00);
+            // The removed line is gone (NOTE: its rowid may be reused by the
+            // add, so check membership rather than for_id)
+            expect(updated.transactions.some(t => t.description === "Gas portion")).to.be.false;
+        });
+
+        it("should refuse emptying the group", () => {
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                remove: [groceries_txn.id, gas_txn.id]
+            })).to.throw(Error, /at least one transaction; delete the group instead/);
+
+            // Nothing was deleted
+            expect(TransactionGroup.for_id(db, group.id).transactions).to.have.lengthOf(2);
+        });
+
+        it("should allow remove-all when adds keep the group non-empty", () => {
+            const updated = TransactionGroup.edit_transactions(db, group, {
+                remove: [groceries_txn.id, gas_txn.id],
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: gas_fund.id,
+                    amount: 99.00,
+                    description: "The whole thing",
+                }]
+            });
+
+            expect(updated.transactions).to.have.lengthOf(1);
+            expect(updated.split).to.be.false;
+            expect(updated.transactions[0].description).to.equal("The whole thing");
+        });
+
+        it("should reject ids that do not belong to the group", () => {
+            const other = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-11"),
+                description: "Other group",
+                source_fund_id: checking_fund.id,
+                target_fund_id: gas_fund.id,
+                amount: 5.00,
+            });
+            const foreign_id = other.transactions[0].id;
+
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                remove: [foreign_id]
+            })).to.throw(ForeignKeyError, /not in group/);
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                update: [{ id: foreign_id, amount: 1.00 }]
+            })).to.throw(ForeignKeyError, /not in group/);
+        });
+
+        it("should reject an id referenced twice", () => {
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                remove: [gas_txn.id],
+                update: [{ id: gas_txn.id, amount: 1.00 }]
+            })).to.throw(Error, /referenced twice/);
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                remove: [gas_txn.id, gas_txn.id]
+            })).to.throw(Error, /referenced twice/);
+        });
+
+        it("should refuse groups in finalized months", () => {
+            db.prepare(`
+                INSERT INTO month_finalizations (som_date, eom_date, sonm_date)
+                VALUES ('2026-06-01', '2026-06-30', '2026-07-01')
+            `).run();
+
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                update: [{ id: gas_txn.id, amount: 1.00 }]
+            })).to.throw(ConflictError, /finalized month/);
+        });
+
+        it("should refuse allocation and eom_cleanup groups", () => {
+            Allocation.set(db, {
+                month: YDate.parse("2026-06-01"),
+                fund_id: groceries_fund.id,
+                amount: 200.00,
+            });
+            const alloc_group = TransactionGroup.from_db(db, { allocation: true })[0];
+            expect(() => TransactionGroup.edit_transactions(db, alloc_group, {
+                remove: [alloc_group.transactions[0].id]
+            })).to.throw(Error, /managed via Allocation.set/);
+
+            MonthFinalization.create(db, {
+                month: YDate.parse("2026-06-15"),
+                recursive: true,
+            });
+            const cleanup_group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+            expect(() => TransactionGroup.edit_transactions(db, cleanup_group, {
+                remove: [cleanup_group.transactions[0].id]
+            })).to.throw(Error, /EOM cleanup groups cannot be edited/);
+        });
+
+        it("should validate added transactions like creation", () => {
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: 99999,
+                    amount: 10.00,
+                    description: "Bad fund",
+                }]
+            })).to.throw(ForeignKeyError, /Target fund does not exist/);
+
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: checking_fund.id,
+                    amount: 10.00,
+                    description: "Self transfer",
+                }]
+            })).to.throw(ConflictError, /same/);
+        });
+
+        it("should roll back the whole batch when a later op fails (atomicity)", () => {
+            expect(() => TransactionGroup.edit_transactions(db, group, {
+                remove: [gas_txn.id],                    // would succeed...
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: 99999,               // ...but this fails
+                    amount: 10.00,
+                    description: "Bad fund",
+                }]
+            })).to.throw(ForeignKeyError);
+
+            // The remove was rolled back with everything else
+            const fresh = TransactionGroup.for_id(db, group.id);
+            expect(fresh.transactions).to.have.lengthOf(2);
+            expect(Transaction.for_id(db, gas_txn.id)).to.not.be.null;
+            expect(fresh.split).to.be.true;
+        });
+
+        it("should keep bank statement reconciliation intact", () => {
+            const item = BankStatementItem.create(db, {
+                source: "boa",
+                key: "txn-888",
+                amount: -100.00,
+                date: YDate.parse("2026-06-05"),
+                note: "COSTCO",
+            });
+            const linked = TransactionGroup.create_from_statements(db, {
+                statement_ids: [item.id],
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 100.00,
+                    description: "Costco",
+                }]
+            });
+
+            const updated = TransactionGroup.edit_transactions(db, linked, {
+                add: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: gas_fund.id,
+                    amount: 15.00,
+                    description: "Costco gas",
+                }]
+            });
+
+            expect(updated.id).to.equal(linked.id);
+            expect(updated.transactions).to.have.lengthOf(2);
+            expect(updated.statements).to.have.lengthOf(1);
+            expect(updated.statements[0].id).to.equal(item.id);
         });
     });
 

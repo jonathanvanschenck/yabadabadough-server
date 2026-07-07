@@ -626,6 +626,95 @@ module.exports = class TransactionGroup extends Base {
         return transaction(db, item, { with_group });
     }
 
+    static _edit_transactions(db, group, {
+        add = [],
+        update = [],
+        remove = [],
+    }={}) {
+        if ( group.allocation ) {
+            throw new Error("Allocation groups are managed via Allocation.set(...)");
+        }
+        if ( group.eom_cleanup ) {
+            throw new Error("EOM cleanup groups cannot be edited");
+        }
+        this.assert_month_unfinalized(db, group.date);
+
+        // Every referenced id must belong to THIS group, and no id may be
+        // referenced twice (removed and updated, or twice in either list)
+        const own = new Set(group.transactions.map(t => t.id));
+        const touched = new Set();
+        for ( const id of remove ) {
+            if ( !own.has(id) ) throw new ForeignKeyError("Transaction not in group: " + id);
+            if ( touched.has(id) ) throw new Error("Transaction referenced twice: " + id);
+            touched.add(id);
+        }
+        for ( const u of update ) {
+            if ( !own.has(u.id) ) throw new ForeignKeyError("Transaction not in group: " + u.id);
+            if ( touched.has(u.id) ) throw new Error("Transaction referenced twice: " + u.id);
+            touched.add(u.id);
+        }
+
+        // A group always holds at least one transaction; deleting the last
+        // one is the group-delete operation, not a line edit
+        if ( group.transactions.length - remove.length + add.length < 1 ) {
+            throw new Error("A transaction group must keep at least one transaction; delete the group instead");
+        }
+
+        for ( const id of remove ) {
+            Transaction._delete(db, id);
+        }
+        for ( const { id, ...changes } of update ) {
+            // _update re-runs the shared field validation; its allocation/
+            // eom_cleanup/finalized-month guards are redundant here but
+            // harmless (already checked at the group level above)
+            Transaction._update(db, Transaction.for_id(db, id), changes);
+        }
+        for ( const spec of add ) {
+            // Adds inherit the group's date and allocation flag, and get the
+            // same validation as creation (_create_with_group)
+            Transaction._create_with_group(db, {
+                source_fund_id: spec.source_fund_id,
+                target_fund_id: spec.target_fund_id,
+                group_id: group.id,
+                date: group.date,
+
+                amount: spec.amount,
+                description: spec.description,
+                note: spec.note,
+
+                allocation: group.allocation,
+            });
+        }
+
+        // One resync after the whole batch keeps `split` consistent
+        this.get_stmt(db, "sync_split").run({ group_id: group.id });
+        return this.for_id(db, group.id);
+    }
+
+    /**
+     * Edit the group's transaction MEMBERSHIP in one atomic batch:
+     *
+     *   edit_transactions(db, group, {
+     *       add:    [ { source_fund_id, target_fund_id, amount, description, note? }, ... ],
+     *       update: [ { id, amount?, source_fund_id?, target_fund_id?, description?, note? }, ... ],
+     *       remove: [ transaction_id, ... ],
+     *   })
+     *
+     * Removes, then updates, then adds -- all inside one sqlite transaction,
+     * so any failed consistency check rolls the entire batch back. Added
+     * transactions take the group's date; every referenced id must belong to
+     * this group (ForeignKeyError otherwise) and may be referenced only once.
+     * The group must keep >= 1 transaction (delete the group instead of
+     * emptying it); `split` is resynced once at the end. Allocation and
+     * eom_cleanup groups are refused, as are groups in finalized months.
+     * The group id -- and any bank statement reconciliation -- is stable.
+     */
+    static edit_transactions(db, group, ops={}) {
+        const transaction = this.build_transaction(
+            db, "edit_transactions", this._edit_transactions.bind(this));
+        return transaction(db, group, ops);
+    }
+
     static _update(db, group, {
         description,
         note,
