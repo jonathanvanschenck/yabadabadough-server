@@ -5,4 +5,5 @@ module.exports = [
     require("./Funds.js"),
     require("./Transactions.js"),
     require("./Statements.js"),
+    require("./Allocations.js"),
 ];
