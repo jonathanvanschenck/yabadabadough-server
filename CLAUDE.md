@@ -112,7 +112,10 @@ TransactionGroup, `finalized_months_since` in Fund).
 
 **Transaction Groups** (`transaction_groups` table):
 - Container for one or more related transactions
-- May link to `bank_statement_items` via `statement_id`
+- May be linked FROM `bank_statement_items` (via that table's `group_id`); groups hydrate a
+  `statements` array on read (correlated subquery, like `transactions`), and `from_db` filters
+  on `has_statements`. Linking happens only in `TransactionGroup.create_from_statements`;
+  public `create` has no statement surface
 - Has `date` field (YYYY-MM-DD)
 - Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying; the
   `allocation`/`eom_cleanup` flags are reserved for the internal Allocation / MonthFinalization
@@ -130,6 +133,31 @@ TransactionGroup, `finalized_months_since` in Fund).
   one-allocation-per-fund-per-month
 - Zero amounts are allowed at the db/model level (needed for eom_cleanup transactions); USER
   transactions must be positive, enforced at the API layer
+
+**Bank Statement Items** (`bank_statement_items` table, `models/BankStatementItem.js`):
+- One imported bank statement line, deduped on `(source, key)` — `key` is externally derived, so
+  re-syncing via `BankStatementItem.import_many` never duplicates rows and NEVER updates existing
+  ones (user state must survive re-syncs). Bank facts (`source`, `key`, `amount`, `date`) are
+  immutable; only `ignored`/`note` are mutable (`item.update`)
+- `amount` is signed (negative = money leaving that bank account) and is intentionally NEVER
+  checked against the linked group's transaction amounts (transfers make any simple rule
+  ambiguous)
+- Always in exactly one of three derivable states: *pending* (`ignored = 0`, `group_id` NULL),
+  *ignored* (`ignored = 1`), or *reconciled* (`group_id` set). Ignored+linked is impossible: a
+  single-row db CHECK backstops the model-layer checks
+- `group_id` lives on THIS table (not on `transaction_groups`) so transfer-type events — two
+  items from two different bank imports (e.g. checking → savings) — can share one group. Linked
+  via `TransactionGroup.create_from_statements(db, { statement_ids, ... })`: one id normally,
+  both sides' ids for a transfer; group `date` defaults to the LATEST item date, `description`
+  to the items' notes (fallback: keys)
+- Unlinking only via group deletion (FK `ON DELETE SET NULL` releases items to pending) or
+  `TransactionGroup.delete_statement_item(db, item, { with_group = true })`. Deletion lives on
+  TransactionGroup (the with_group arm deletes a group in the same sqlite transaction, and the
+  require direction is strictly TG → BSI); `item.delete()` is a throwing stub pointing there
+- **Deletion hazard (by design, documented on the method)**: deleting is for undoing bad
+  imports, NOT for hiding items (use `ignored`). `with_group` destroys the group's real
+  transactions, and any deleted item REAPPEARS as pending on the next re-sync (its dedupe row
+  is gone) — reconciling it again double-counts
 
 **Allocations** (`models/Allocation.js` — intentionally NO table):
 - A start-of-month transfer into a fund ("monthly" budgets and progressive saving), created

@@ -375,7 +375,6 @@ module.exports = class MonthFinalization extends Base {
                 date: eom,
                 description: "EOM cleanup for " + som,
                 note: null,
-                statement_id: null,
                 split: cleanups.length > 1,
                 eom_cleanup: true,
                 allocation: false,

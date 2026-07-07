@@ -2,6 +2,7 @@
 const Base = require("./Base.js");
 
 const Transaction = require("./Transaction.js");
+const BankStatementItem = require("./BankStatementItem.js");
 
 const {
     ConflictError,
@@ -27,7 +28,6 @@ const GROUP_COLUMNS = [
     "split",
     "allocation",
     "eom_cleanup",
-    "statement_id",
     "created_at",
 ];
 
@@ -41,9 +41,26 @@ const TRANSACTIONS_COLUMN = `COALESCE(
     json('[]')
 ) AS _transactions`;
 
+// Correlated subquery, NOT a third join: a second one-to-many LEFT JOIN
+// would cross-product against the transactions join and duplicate the rows
+// feeding both json_group_arrays
+const STATEMENTS_COLUMN = `(
+    SELECT COALESCE(
+        json_group_array(
+            json_object(
+                ${BankStatementItem.SELECT_COLUMNS.map(c => `'${c}', bank_statement_items.${c}`).join(",\n                ")}
+            ) ORDER BY bank_statement_items.id
+        ),
+        json('[]')
+    )
+    FROM bank_statement_items
+    WHERE bank_statement_items.group_id = transaction_groups.id
+) AS _statements`;
+
 const SELECT_COLUMNS = [
     ...GROUP_COLUMNS.map(c => `transaction_groups.${c} AS ${c}`),
-    TRANSACTIONS_COLUMN
+    TRANSACTIONS_COLUMN,
+    STATEMENTS_COLUMN
 ];
 
 
@@ -58,11 +75,6 @@ module.exports = class TransactionGroup extends Base {
             transaction_groups.id = @id
         GROUP BY ${GROUP_COLUMNS.map(c => "transaction_groups."+c).join(", ")}
         `,
-        statement_exists: `
-            SELECT 1
-            FROM bank_statement_items
-            WHERE id = @id
-        `,
         // Inline (rather than requiring MonthFinalization) to avoid a circular require
         month_is_finalized: `
             SELECT 1
@@ -76,16 +88,14 @@ module.exports = class TransactionGroup extends Base {
             note,
             split,
             allocation,
-            eom_cleanup,
-            statement_id
+            eom_cleanup
         ) VALUES (
             @date,
             @description,
             @note,
             @split,
             @allocation,
-            @eom_cleanup,
-            @statement_id
+            @eom_cleanup
         )
         `,
         sync_split: `
@@ -118,8 +128,8 @@ module.exports = class TransactionGroup extends Base {
         split,
         allocation,
         eom_cleanup,
-        statement_id,
         transactions = [],
+        statements = [],
         created_at
     }={}) {
         super();
@@ -130,8 +140,8 @@ module.exports = class TransactionGroup extends Base {
         this.split = split;
         this.allocation = allocation;
         this.eom_cleanup = eom_cleanup;
-        this.statement_id = statement_id;
         this.transactions = transactions;
+        this.statements = statements;
         this.created_at = created_at;
     }
 
@@ -146,8 +156,8 @@ module.exports = class TransactionGroup extends Base {
                 allocation: this.allocation,
                 eom_cleanup: this.eom_cleanup,
             },
-            statement_id: this.statement_id,
             transactions: this.transactions.map(t => t.to_api()),
+            statements: this.statements.map(s => s.to_api()),
             created_at: this.created_at.toISOString(),
         };
     }
@@ -156,6 +166,7 @@ module.exports = class TransactionGroup extends Base {
         if ( row == null ) return null;
 
         const transactions = JSON.parse(row._transactions);
+        const statements = JSON.parse(row._statements);
         return new this({
             id: row.id,
             date: stmt2ydate(row.date),
@@ -164,8 +175,8 @@ module.exports = class TransactionGroup extends Base {
             split: stmt2boolean(row.split),
             allocation: stmt2boolean(row.allocation),
             eom_cleanup: stmt2boolean(row.eom_cleanup),
-            statement_id: row.statement_id,
             transactions: transactions.map(r => Transaction.from_row(r)),
+            statements: statements.map(r => BankStatementItem.from_row(r)),
             created_at: stmt2datetime(row.created_at),
         });
     }
@@ -181,7 +192,7 @@ module.exports = class TransactionGroup extends Base {
         split,
         allocation,
         eom_cleanup,
-        statement_id,
+        has_statements,
         description_like,
         order_by = "date",
         order_direction = "DESC",
@@ -217,10 +228,10 @@ module.exports = class TransactionGroup extends Base {
             params.eom_cleanup = boolean2stmt(eom_cleanup);
             keys.push("eom_cleanup");
         }
-        if ( statement_id !== undefined ) {
-            wheres.push("transaction_groups.statement_id = @statement_id");
-            params.statement_id = statement_id;
-            keys.push("statement_id");
+        if ( has_statements !== undefined ) {
+            wheres.push((has_statements ? "" : "NOT ")
+                + "EXISTS (SELECT 1 FROM bank_statement_items WHERE bank_statement_items.group_id = transaction_groups.id)");
+            keys.push("has_statements_" + boolean2stmt(has_statements));
         }
         if ( description_like !== undefined ) {
             wheres.push("transaction_groups.description LIKE @description_like");
@@ -268,24 +279,16 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note,
-        statement_id,
         split,
         eom_cleanup,
         allocation,
         transactions
     }={}) {
-
-        // Check foreign key constraints
-        if ( statement_id && !this.get_stmt(db, "statement_exists").get({ id: statement_id }) ) {
-            throw new ForeignKeyError("Bank statement item does not exist: " + statement_id);
-        }
-
         const stmt = this.get_stmt(db, "create");
         const result = stmt.run({
             date: ydate2stmt(date),
             description,
             note,
-            statement_id,
             split: boolean2stmt(split),
             eom_cleanup: boolean2stmt(eom_cleanup),
             allocation: boolean2stmt(allocation),
@@ -330,7 +333,6 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note = null,
-        statement_id = null,
         eom_cleanup = false,
         allocation = false,
         transactions = []
@@ -338,7 +340,9 @@ module.exports = class TransactionGroup extends Base {
         if ( transactions.length < 1 ) throw new Error("Must provide at least transaction");
 
         // The eom_cleanup/allocation flags are reserved for the internal
-        // `_create` paths; USER groups are always plain
+        // `_create` paths; USER groups are always plain. (Reconciling bank
+        // statement items goes through `create_from_statements`, which owns
+        // the linking.)
         if ( allocation ) throw new Error("Allocation groups may only be created via Allocation.set(...)");
         if ( eom_cleanup ) throw new Error("EOM cleanup groups may only be created via MonthFinalization.create(...)");
 
@@ -357,12 +361,79 @@ module.exports = class TransactionGroup extends Base {
             date,
             description,
             note,
-            statement_id,
             split: transactions.length > 1,
             eom_cleanup: false,
             allocation: false,
             transactions
         })
+    }
+
+    static _create_from_statements(db, {
+        statement_ids,
+        date,
+        description,
+        note,
+        transactions
+    }={}) {
+        const items = BankStatementItem._assert_linkable(db, statement_ids);
+
+        // Transfer sides can post on different days; default to the day the
+        // money movement completed
+        const _date = date ?? items
+            .map(i => i.date)
+            .reduce((a, b) => ydate2stmt(a) >= ydate2stmt(b) ? a : b);
+
+        this.assert_month_unfinalized(db, _date);
+
+        const _description = description ?? (
+            items.map(i => i.note).filter(Boolean).join(" / ")
+            || items.map(i => i.key).join(" / ")
+        );
+
+        const group = this._create(db, {
+            date: _date,
+            description: _description,
+            note,
+            split: transactions.length > 1,
+            eom_cleanup: false,
+            allocation: false,
+            transactions
+        });
+
+        BankStatementItem._link(db, statement_ids, group.id);
+
+        // Refresh so the hydrated `statements` array is populated
+        return this.for_id(db, group.id);
+    }
+
+    /**
+     * Create a transaction group that reconciles one or more bank statement
+     * items. Pass ONE statement id for the ordinary case; pass BOTH sides'
+     * ids for a transfer-type event (e.g. checking -> savings), which shows
+     * up as two items from two different bank imports but is a single group
+     * here.
+     *
+     * `date` defaults to the latest linked item's date; `description`
+     * defaults to the items' notes (falling back to their keys).
+     *
+     * NOTE : the sum of the transaction amounts is intentionally NOT checked
+     *        against the item amounts (transfers make any simple rule
+     *        ambiguous); reconciliation quality is the caller's concern.
+     */
+    static create_from_statements(db, {
+        statement_ids = [],
+        date = null,
+        description = null,
+        note = null,
+        transactions = []
+    }={}) {
+        if ( statement_ids.length < 1 ) throw new Error("Must provide at least one statement id");
+        if ( new Set(statement_ids).size !== statement_ids.length ) throw new Error("Duplicate statement ids");
+        if ( transactions.length < 1 ) throw new Error("Must provide at least transaction");
+
+        const transaction = this.build_transaction(
+            db, "create_from_statements", this._create_from_statements.bind(this));
+        return transaction(db, { statement_ids, date, description, note, transactions });
     }
 
     static create_single(db, {
@@ -444,6 +515,45 @@ module.exports = class TransactionGroup extends Base {
         const transaction = this.constructor.build_transaction(
             db, "delete", this.constructor._delete.bind(this.constructor));
         return transaction(db, this);
+    }
+
+    static _delete_statement_item(db, item, { with_group }={}) {
+        const fresh = BankStatementItem.for_id(db, item.id);
+        if ( !fresh ) {
+            throw new ForeignKeyError("Bank statement item does not exist: " + item.id);
+        }
+
+        if ( with_group && fresh.group_id != null ) {
+            // The finalized-month guard inside _delete applies; ON DELETE
+            // SET NULL releases any transfer peer item back to pending
+            this._delete(db, this.for_id(db, fresh.group_id));
+        }
+
+        BankStatementItem._delete_row(db, fresh.id);
+    }
+
+    /**
+     * Delete a bank statement item -- and, with `with_group` (the default),
+     * the transaction group that reconciles it.
+     *
+     * This lives HERE (not on BankStatementItem) because the with_group arm
+     * deletes a group inside the same sqlite transaction, which needs this
+     * model -- and the model require direction is strictly
+     * TransactionGroup -> BankStatementItem, so the composer owns the
+     * operation. BankStatementItem#delete() is a throwing stub pointing here.
+     *
+     * WARNING : deletion is for undoing bad imports, NOT for hiding items
+     *           (that is what `ignored` is for). With with_group the group's
+     *           real transactions are destroyed (a transfer peer item is
+     *           released back to pending, not deleted). And in ALL cases,
+     *           re-syncing the bank statement will re-import the deleted item
+     *           as pending -- its (source, key) dedupe row is gone -- so
+     *           reconciling it again would double-count.
+     */
+    static delete_statement_item(db, item, { with_group = true }={}) {
+        const transaction = this.build_transaction(
+            db, "delete_statement_item", this._delete_statement_item.bind(this));
+        return transaction(db, item, { with_group });
     }
 
     /**

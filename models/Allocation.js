@@ -178,7 +178,6 @@ module.exports = class Allocation extends Base {
                 date: som,
                 description: "Allocations for " + som,
                 note: null,
-                statement_id: null,
                 split: false,
                 eom_cleanup: false,
                 allocation: true,

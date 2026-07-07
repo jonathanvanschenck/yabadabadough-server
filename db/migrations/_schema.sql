@@ -135,24 +135,6 @@ BEGIN
         );
 END;
 
-CREATE TABLE bank_statement_items (
-    id                  INTEGER PRIMARY KEY,
-    source              TEXT NOT NULL, -- which bank
-    key                 TEXT NOT NULL, -- bank-scoped unique key for this item
-
-    -- Meta data
-    amount              INTEGER NOT NULL, -- 4 decimal
-    date                TEXT NOT NULL, -- YYY-MM-DD
-    note                TEXT,
-
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-
-    UNIQUE (source, key)
-) STRICT;
-CREATE INDEX idx_bank_statement_items_source ON bank_statement_items(source);
-CREATE INDEX idx_bank_statement_items_key ON bank_statement_items(key);
-
-
 -- NOTE : there is intentionally NO allocations table. An allocation is a
 --        transaction inside the month's single allocation transaction group
 --        (transaction_groups.allocation = 1, dated the first of the month),
@@ -206,11 +188,8 @@ CREATE TABLE transaction_groups (
     description         TEXT NOT NULL,
     note                TEXT,
 
-    -- Not null if this group arose from a bank statement item
-    statement_id        INTEGER REFERENCES bank_statement_items(id)
-                            ON DELETE SET NULL
-                            ON UPDATE CASCADE,
-
+    -- NOTE : bank statement items reference groups (bank_statement_items.group_id),
+    --        not the other way around -- see that table below
 
     -- DENORMALIZED VALUES:
     -- Reference value for if this group has multiple transactions
@@ -232,7 +211,42 @@ CREATE INDEX idx_transaction_groups_date ON transaction_groups(date);
 CREATE INDEX idx_transaction_groups_split ON transaction_groups(split);
 CREATE INDEX idx_transaction_groups_allocation ON transaction_groups(allocation);
 CREATE INDEX idx_transaction_groups_eom_cleanup ON transaction_groups(eom_cleanup);
-CREATE INDEX idx_transaction_groups_statement_id ON transaction_groups(statement_id);
+
+-- NOTE : this table is defined AFTER transaction_groups (its reconciliation
+--        target) so that group_id and its cross-column CHECK can live in the
+--        table definition
+CREATE TABLE bank_statement_items (
+    id                  INTEGER PRIMARY KEY,
+    source              TEXT NOT NULL, -- which bank
+    key                 TEXT NOT NULL, -- bank-scoped unique key for this item
+
+    -- User has chosen to NOT create a transaction group for this item
+    ignored             INTEGER NOT NULL DEFAULT 0 CHECK (ignored IN (0,1)),
+
+    -- Which transaction group reconciles this item. The FK lives on THIS
+    -- side (not on transaction_groups) so that transfer-type events -- two
+    -- items from two different bank imports -- can share a single group
+    group_id            INTEGER REFERENCES transaction_groups(id)
+                            ON DELETE SET NULL
+                            ON UPDATE CASCADE,
+
+    -- Meta data
+    amount              INTEGER NOT NULL, -- 4 decimal, signed: negative = money leaving the bank account
+    date                TEXT NOT NULL, -- YYYY-MM-DD
+    note                TEXT,
+
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    -- Idempotent re-import key
+    UNIQUE (source, key),
+
+    -- An ignored item must not be linked to a group
+    CHECK (NOT (ignored = 1 AND group_id IS NOT NULL))
+) STRICT;
+CREATE INDEX idx_bank_statement_items_source ON bank_statement_items(source);
+CREATE INDEX idx_bank_statement_items_key ON bank_statement_items(key);
+CREATE INDEX idx_bank_statement_items_group_id ON bank_statement_items(group_id);
+CREATE INDEX idx_bank_statement_items_ignored ON bank_statement_items(ignored);
 
 CREATE TABLE transactions (
     id                  INTEGER PRIMARY KEY,
