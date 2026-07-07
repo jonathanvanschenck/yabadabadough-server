@@ -35,26 +35,28 @@ const set_password = flags.includes("--set-password");
 const db = create_connection(env.db);
 initialize_db(db);
 
-try {
-    let user;
-    if ( set_password ) {
-        user = User.for_email(db, email);
-        if ( !user ) {
-            console.error("No such user: " + email);
+!async function() {
+    try {
+        let user;
+        if ( set_password ) {
+            user = User.for_email(db, email);
+            if ( !user ) {
+                console.error("No such user: " + email);
+                process.exit(1);
+            }
+            user = await user.set_password(db, password);
+        } else {
+            user = await User.create(db, { email, password, admin, editor });
+        }
+
+        console.log(JSON.stringify(user.to_api(), null, 2));
+    } catch (err) {
+        if ( err instanceof ConflictError ) {
+            console.error(err.message);
             process.exit(1);
         }
-        user = user.set_password(db, password);
-    } else {
-        user = User.create(db, { email, password, admin, editor });
+        throw err;
+    } finally {
+        db.close();
     }
-
-    console.log(JSON.stringify(user.to_api(), null, 2));
-} catch (err) {
-    if ( err instanceof ConflictError ) {
-        console.error(err.message);
-        process.exit(1);
-    }
-    throw err;
-} finally {
-    db.close();
-}
+}();

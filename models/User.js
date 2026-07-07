@@ -1,5 +1,6 @@
 
 const crypto = require("crypto");
+const { promisify } = require("util");
 
 const Base = require("./Base.js");
 
@@ -28,15 +29,23 @@ const SELECT_COLUMNS = [
 // string "scrypt$N$r$p$salt_b64$hash_b64". Verification reads the params out
 // of the stored string (not these constants), so cost can be raised later
 // without invalidating existing hashes.
+//
+// Hashing is ASYNC (libuv threadpool): scrypt burns ~50-100ms of CPU, and
+// the sync variant would stall every other request on the event loop. The
+// hash must therefore always happen OUTSIDE the sqlite transaction --
+// better-sqlite3 transactions cannot contain an await (all db reads/writes
+// stay sync).
+const scrypt = promisify(crypto.scrypt);
+
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SALT_BYTES = 16;
 const HASH_BYTES = 32;
 
-function hash_password(password) {
+async function hash_password(password) {
     const salt = crypto.randomBytes(SALT_BYTES);
-    const hash = crypto.scryptSync(String(password), salt, HASH_BYTES, {
+    const hash = await scrypt(String(password), salt, HASH_BYTES, {
         N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P
     });
     return [
@@ -49,7 +58,7 @@ function hash_password(password) {
     ].join("$");
 }
 
-function verify_password(password, stored) {
+async function verify_password(password, stored) {
     if ( typeof stored !== "string" ) return false;
 
     const parts = stored.split("$");
@@ -61,13 +70,13 @@ function verify_password(password, stored) {
     const salt = Buffer.from(parts[4], "base64");
     const expected = Buffer.from(parts[5], "base64");
 
-    const actual = crypto.scryptSync(String(password), salt, expected.length, { N, r, p });
+    const actual = await scrypt(String(password), salt, expected.length, { N, r, p });
     return crypto.timingSafeEqual(actual, expected);
 }
 
 // Verified against when authenticating an unknown email, so "no such user"
 // and "wrong password" take the same time (user-enumeration resistance)
-const DUMMY_HASH = hash_password(crypto.randomBytes(16).toString("hex"));
+const DUMMY_HASH_PROMISE = hash_password(crypto.randomBytes(16).toString("hex"));
 
 /**
  * A user account: normalized email, salted scrypt password hash, and role
@@ -79,7 +88,10 @@ const DUMMY_HASH = hash_password(crypto.randomBytes(16).toString("hex"));
  * display/editing.
  *
  * The password_hash is never exposed via to_api, and only ever changes
- * through set_password (update handles email/roles only).
+ * through set_password (update handles email/roles only). Everything that
+ * touches scrypt (create, set_password, verify_password, authenticate) is
+ * async -- the hash runs on the libuv threadpool, never the event loop, and
+ * always OUTSIDE the sqlite transaction.
  *
  * Token payloads (signing/verification is the API layer's job):
  *  - access (~1h, stateless):  { v, typ: "access", sub, email, admin, reader, editor, sid }
@@ -178,6 +190,30 @@ module.exports = class User extends Base {
             editor: !!(this.editor || this.admin),
         };
     }
+
+    static openapi_UserSchema = {
+        description: "A user account. The flat admin/reader/editor flags are what was explicitly granted (what update edits); `roles` is the effective set, where admin implies every other role. The password hash is never exposed.",
+        type: 'object',
+        properties: {
+            id: { type: 'integer', minimum: 1 },
+            email: { type: 'string', format: 'email', description: "Stored normalized (lowercase, trimmed)" },
+            admin: { type: 'boolean' },
+            reader: { type: 'boolean', description: "Granted by default" },
+            editor: { type: 'boolean' },
+            roles: {
+                description: "Effective roles: admin implies every other role",
+                type: 'object',
+                properties: {
+                    admin: { type: 'boolean' },
+                    reader: { type: 'boolean' },
+                    editor: { type: 'boolean' }
+                },
+                required: [ 'admin', 'reader', 'editor' ]
+            },
+            created_at: { type: 'string', format: 'date-time' }
+        },
+        required: [ 'id', 'email', 'admin', 'reader', 'editor', 'roles', 'created_at' ]
+    };
 
     to_api() {
         return {
@@ -312,7 +348,7 @@ module.exports = class User extends Base {
         return this.for_id(db, result.lastInsertRowid);
     }
 
-    static create(db, {
+    static async create(db, {
         email,
         password,
         admin = false,
@@ -323,8 +359,9 @@ module.exports = class User extends Base {
         this._assert_valid_email(_email);
         this._assert_valid_password(password);
 
-        // Hash before entering the sqlite transaction (scrypt is slow)
-        const password_hash = hash_password(password);
+        // Hash before entering the sqlite transaction (transactions must
+        // stay synchronous; scrypt is the slow part anyway)
+        const password_hash = await hash_password(password);
 
         const transaction = this.build_transaction(db, "create", this._create.bind(this));
         return transaction(db, { email: _email, password_hash, admin, reader, editor });
@@ -397,31 +434,31 @@ module.exports = class User extends Base {
      * whether "password changed" kills logins is API-layer policy
      * (one Session.revoke_all call away).
      */
-    set_password(db, password) {
+    async set_password(db, password) {
         this.constructor._assert_valid_password(password);
-        const password_hash = hash_password(password);
+        const password_hash = await hash_password(password);
 
         const transaction = this.constructor.build_transaction(
             db, "set_password", this.constructor._set_password.bind(this.constructor));
         return transaction(db, this, password_hash);
     }
 
-    verify_password(password) {
+    async verify_password(password) {
         return verify_password(password, this.password_hash);
     }
 
     /**
-     * Login helper: returns the User on success, null on unknown email OR
+     * Login helper: resolves the User on success, null on unknown email OR
      * wrong password (never distinguishable). Unknown emails still burn a
      * scrypt verification so the two failures take the same time.
      */
-    static authenticate(db, { email, password }={}) {
+    static async authenticate(db, { email, password }={}) {
         const user = this.for_email(db, email);
         if ( !user ) {
-            verify_password(password ?? "", DUMMY_HASH);
+            await verify_password(password ?? "", await DUMMY_HASH_PROMISE);
             return null;
         }
-        return user.verify_password(password ?? "") ? user : null;
+        return (await user.verify_password(password ?? "")) ? user : null;
     }
 
     static _delete(db, user) {

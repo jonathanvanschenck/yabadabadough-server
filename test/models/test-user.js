@@ -3,6 +3,17 @@ const { create_connection, initialize_db, ConflictError, ForeignKeyError } = req
 const User = require("../../models/User.js");
 const Session = require("../../models/Session.js");
 
+// User.create / set_password / authenticate / verify_password are async
+// (scrypt runs on the threadpool), so throwing expectations need a helper
+async function rejects(promise) {
+    try {
+        await promise;
+    } catch (err) {
+        return err;
+    }
+    throw new Error("Expected a rejection");
+}
+
 describe("User Model", () => {
     let db;
 
@@ -16,8 +27,8 @@ describe("User Model", () => {
     });
 
     describe("create()", () => {
-        it("should create a user", () => {
-            const user = User.create(db, {
+        it("should create a user", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
@@ -30,8 +41,8 @@ describe("User Model", () => {
             expect(user.created_at).to.be.a("Date");
         });
 
-        it("should create an admin user", () => {
-            const user = User.create(db, {
+        it("should create an admin user", async () => {
+            const user = await User.create(db, {
                 email: "root@example.com",
                 password: "hunter22hunter22",
                 admin: true,
@@ -40,8 +51,8 @@ describe("User Model", () => {
             expect(user.admin).to.be.true;
         });
 
-        it("should create an editor user", () => {
-            const user = User.create(db, {
+        it("should create an editor user", async () => {
+            const user = await User.create(db, {
                 email: "editor@example.com",
                 password: "hunter22hunter22",
                 editor: true,
@@ -51,8 +62,8 @@ describe("User Model", () => {
             expect(user.admin).to.be.false;
         });
 
-        it("should allow revoking the default reader role", () => {
-            const user = User.create(db, {
+        it("should allow revoking the default reader role", async () => {
+            const user = await User.create(db, {
                 email: "norole@example.com",
                 password: "hunter22hunter22",
                 reader: false,
@@ -61,8 +72,8 @@ describe("User Model", () => {
             expect(user.reader).to.be.false;
         });
 
-        it("should normalize email case and whitespace", () => {
-            const user = User.create(db, {
+        it("should normalize email case and whitespace", async () => {
+            const user = await User.create(db, {
                 email: "  Alice@Example.COM ",
                 password: "hunter22hunter22",
             });
@@ -70,52 +81,54 @@ describe("User Model", () => {
             expect(user.email).to.equal("alice@example.com");
         });
 
-        it("should reject duplicate emails", () => {
-            User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should reject duplicate emails", async () => {
+            await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
-            expect(() => User.create(db, {
+            const err = await rejects(User.create(db, {
                 email: "alice@example.com",
                 password: "different-password",
-            })).to.throw(ConflictError);
+            }));
+            expect(err).to.be.an.instanceOf(ConflictError);
         });
 
-        it("should reject case-insensitive duplicate emails", () => {
-            User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should reject case-insensitive duplicate emails", async () => {
+            await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
-            expect(() => User.create(db, {
+            const err = await rejects(User.create(db, {
                 email: "ALICE@example.com",
                 password: "different-password",
-            })).to.throw(ConflictError);
+            }));
+            expect(err).to.be.an.instanceOf(ConflictError);
         });
 
-        it("should reject missing or malformed emails", () => {
-            expect(() => User.create(db, { password: "hunter22hunter22" }))
-                .to.throw("Missing email");
-            expect(() => User.create(db, { email: "not-an-email", password: "hunter22hunter22" }))
-                .to.throw("Invalid email");
+        it("should reject missing or malformed emails", async () => {
+            expect((await rejects(User.create(db, { password: "hunter22hunter22" }))).message)
+                .to.include("Missing email");
+            expect((await rejects(User.create(db, { email: "not-an-email", password: "hunter22hunter22" }))).message)
+                .to.include("Invalid email");
         });
 
-        it("should reject missing or short passwords", () => {
-            expect(() => User.create(db, { email: "alice@example.com" }))
-                .to.throw("Missing password");
-            expect(() => User.create(db, { email: "alice@example.com", password: "short12" }))
-                .to.throw("at least 8 characters");
+        it("should reject missing or short passwords", async () => {
+            expect((await rejects(User.create(db, { email: "alice@example.com" }))).message)
+                .to.include("Missing password");
+            expect((await rejects(User.create(db, { email: "alice@example.com", password: "short12" }))).message)
+                .to.include("at least 8 characters");
         });
     });
 
     describe("passwords", () => {
-        it("should verify the correct password and reject others", () => {
-            const user = User.create(db, {
+        it("should verify the correct password and reject others", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
 
-            expect(user.verify_password("hunter22hunter22")).to.be.true;
-            expect(user.verify_password("wrong-password!")).to.be.false;
+            expect(await user.verify_password("hunter22hunter22")).to.be.true;
+            expect(await user.verify_password("wrong-password!")).to.be.false;
         });
 
-        it("should store a self-describing scrypt hash string", () => {
-            const user = User.create(db, {
+        it("should store a self-describing scrypt hash string", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
@@ -128,43 +141,44 @@ describe("User Model", () => {
             expect(parseInt(parts[3])).to.be.a("number"); // p
         });
 
-        it("should salt hashes uniquely", () => {
-            const a = User.create(db, { email: "a@example.com", password: "hunter22hunter22" });
-            const b = User.create(db, { email: "b@example.com", password: "hunter22hunter22" });
+        it("should salt hashes uniquely", async () => {
+            const a = await User.create(db, { email: "a@example.com", password: "hunter22hunter22" });
+            const b = await User.create(db, { email: "b@example.com", password: "hunter22hunter22" });
 
             expect(a.password_hash).to.not.equal(b.password_hash);
         });
 
-        it("should re-hash on set_password", () => {
-            const user = User.create(db, {
+        it("should re-hash on set_password", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
 
-            const updated = user.set_password(db, "a-new-password");
+            const updated = await user.set_password(db, "a-new-password");
 
             expect(updated.password_hash).to.not.equal(user.password_hash);
-            expect(updated.verify_password("a-new-password")).to.be.true;
-            expect(updated.verify_password("hunter22hunter22")).to.be.false;
+            expect(await updated.verify_password("a-new-password")).to.be.true;
+            expect(await updated.verify_password("hunter22hunter22")).to.be.false;
         });
 
-        it("should reject short passwords on set_password", () => {
-            const user = User.create(db, {
+        it("should reject short passwords on set_password", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
 
-            expect(() => user.set_password(db, "short12")).to.throw("at least 8 characters");
+            expect((await rejects(user.set_password(db, "short12"))).message)
+                .to.include("at least 8 characters");
         });
     });
 
     describe("authenticate()", () => {
-        beforeEach(() => {
-            User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        beforeEach(async () => {
+            await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
         });
 
-        it("should return the user for correct credentials", () => {
-            const user = User.authenticate(db, {
+        it("should return the user for correct credentials", async () => {
+            const user = await User.authenticate(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
             });
@@ -173,8 +187,8 @@ describe("User Model", () => {
             expect(user.email).to.equal("alice@example.com");
         });
 
-        it("should normalize the email", () => {
-            const user = User.authenticate(db, {
+        it("should normalize the email", async () => {
+            const user = await User.authenticate(db, {
                 email: " ALICE@example.com ",
                 password: "hunter22hunter22",
             });
@@ -182,15 +196,15 @@ describe("User Model", () => {
             expect(user).to.not.be.null;
         });
 
-        it("should return null for a wrong password", () => {
-            expect(User.authenticate(db, {
+        it("should return null for a wrong password", async () => {
+            expect(await User.authenticate(db, {
                 email: "alice@example.com",
                 password: "wrong-password!",
             })).to.be.null;
         });
 
-        it("should return null for an unknown email", () => {
-            expect(User.authenticate(db, {
+        it("should return null for an unknown email", async () => {
+            expect(await User.authenticate(db, {
                 email: "nobody@example.com",
                 password: "hunter22hunter22",
             })).to.be.null;
@@ -203,15 +217,15 @@ describe("User Model", () => {
             expect(User.for_email(db, "nobody@example.com")).to.be.null;
         });
 
-        it("should find by normalized email", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should find by normalized email", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             expect(User.for_email(db, " ALICE@Example.com ").id).to.equal(user.id);
         });
 
-        it("should filter and order from_db", () => {
-            User.create(db, { email: "b@example.com", password: "hunter22hunter22" });
-            User.create(db, { email: "a@example.com", password: "hunter22hunter22", admin: true });
+        it("should filter and order from_db", async () => {
+            await User.create(db, { email: "b@example.com", password: "hunter22hunter22" });
+            await User.create(db, { email: "a@example.com", password: "hunter22hunter22", admin: true });
 
             const admins = User.from_db(db, { admin: true });
             expect(admins).to.have.length(1);
@@ -223,19 +237,19 @@ describe("User Model", () => {
     });
 
     describe("update()", () => {
-        it("should update email and admin", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should update email and admin", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             const updated = user.update(db, { email: " NEW@Example.com ", admin: true });
 
             expect(updated.email).to.equal("new@example.com");
             expect(updated.admin).to.be.true;
             // Password is untouched
-            expect(updated.verify_password("hunter22hunter22")).to.be.true;
+            expect(await updated.verify_password("hunter22hunter22")).to.be.true;
         });
 
-        it("should update the reader and editor flags", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should update the reader and editor flags", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             const updated = user.update(db, { reader: false, editor: true });
 
@@ -243,8 +257,8 @@ describe("User Model", () => {
             expect(updated.editor).to.be.true;
         });
 
-        it("should leave omitted fields alone", () => {
-            const user = User.create(db, {
+        it("should leave omitted fields alone", async () => {
+            const user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
                 admin: true,
@@ -259,15 +273,15 @@ describe("User Model", () => {
             expect(updated.editor).to.be.true;
         });
 
-        it("should reject an email belonging to another user", () => {
-            User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
-            const bob = User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+        it("should reject an email belonging to another user", async () => {
+            await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+            const bob = await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
 
             expect(() => bob.update(db, { email: "alice@example.com" })).to.throw(ConflictError);
         });
 
-        it("should allow a user to keep their own email", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should allow a user to keep their own email", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             const updated = user.update(db, { email: "alice@example.com", admin: true });
             expect(updated.admin).to.be.true;
@@ -275,8 +289,8 @@ describe("User Model", () => {
     });
 
     describe("delete()", () => {
-        it("should delete the user and cascade their sessions", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should delete the user and cascade their sessions", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
             const session = Session.create(db, { user_id: user.id });
 
             user.delete(db);
@@ -285,8 +299,8 @@ describe("User Model", () => {
             expect(Session.for_id(db, session.id)).to.be.null;
         });
 
-        it("should throw for an already-deleted user", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should throw for an already-deleted user", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
             user.delete(db);
 
             expect(() => user.delete(db)).to.throw(ForeignKeyError);
@@ -294,8 +308,8 @@ describe("User Model", () => {
     });
 
     describe("to_api()", () => {
-        it("should never expose the password hash", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should never expose the password hash", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             const api = user.to_api();
 
@@ -313,14 +327,14 @@ describe("User Model", () => {
     });
 
     describe("roles", () => {
-        it("should default to reader only", () => {
-            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+        it("should default to reader only", async () => {
+            const user = await User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
 
             expect(user.roles).to.deep.equal({ admin: false, reader: true, editor: false });
         });
 
-        it("should grant admins every other role", () => {
-            const user = User.create(db, {
+        it("should grant admins every other role", async () => {
+            const user = await User.create(db, {
                 email: "root@example.com",
                 password: "hunter22hunter22",
                 admin: true,
@@ -333,8 +347,8 @@ describe("User Model", () => {
             expect(user.roles).to.deep.equal({ admin: true, reader: true, editor: true });
         });
 
-        it("should not grant editors anything extra", () => {
-            const user = User.create(db, {
+        it("should not grant editors anything extra", async () => {
+            const user = await User.create(db, {
                 email: "editor@example.com",
                 password: "hunter22hunter22",
                 editor: true,
@@ -344,11 +358,11 @@ describe("User Model", () => {
             expect(user.roles).to.deep.equal({ admin: false, reader: false, editor: true });
         });
 
-        it("should filter from_db by effective role", () => {
-            User.create(db, { email: "reader@example.com", password: "hunter22hunter22" });
-            User.create(db, { email: "editor@example.com", password: "hunter22hunter22", editor: true });
-            User.create(db, { email: "root@example.com", password: "hunter22hunter22", admin: true, reader: false });
-            User.create(db, { email: "norole@example.com", password: "hunter22hunter22", reader: false });
+        it("should filter from_db by effective role", async () => {
+            await User.create(db, { email: "reader@example.com", password: "hunter22hunter22" });
+            await User.create(db, { email: "editor@example.com", password: "hunter22hunter22", editor: true });
+            await User.create(db, { email: "root@example.com", password: "hunter22hunter22", admin: true, reader: false });
+            await User.create(db, { email: "norole@example.com", password: "hunter22hunter22", reader: false });
 
             // Admins count as editors/readers even when the stored flags are off
             const editors = User.from_db(db, { editor: true, order_by: "email" });
@@ -366,8 +380,8 @@ describe("User Model", () => {
         let user;
         let session;
 
-        beforeEach(() => {
-            user = User.create(db, {
+        beforeEach(async () => {
+            user = await User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
                 admin: true
@@ -401,8 +415,8 @@ describe("User Model", () => {
             });
         });
 
-        it("should reject another user's session", () => {
-            const bob = User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+        it("should reject another user's session", async () => {
+            const bob = await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
 
             expect(() => bob.to_access_token_payload(session)).to.throw(ConflictError);
             expect(() => bob.to_auth_token_payload(session)).to.throw(ConflictError);

@@ -9,11 +9,11 @@ describe("Session Model", () => {
     let db;
     let user;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         db = create_connection({ path: ":memory:" });
         initialize_db(db);
 
-        user = User.create(db, {
+        user = await User.create(db, {
             email: "alice@example.com",
             password: "hunter22hunter22",
         });
@@ -159,8 +159,8 @@ describe("Session Model", () => {
     });
 
     describe("revoke_all()", () => {
-        it("should kill all of a user's sessions and only theirs", () => {
-            const bob = User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+        it("should kill all of a user's sessions and only theirs", async () => {
+            const bob = await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
 
             Session.create(db, { user_id: user.id });
             Session.create(db, { user_id: user.id });
@@ -175,8 +175,8 @@ describe("Session Model", () => {
     });
 
     describe("queries", () => {
-        it("should filter by user_id and active", () => {
-            const bob = User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+        it("should filter by user_id and active", async () => {
+            const bob = await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
 
             Session.create(db, { user_id: bob.id });
             const live = Session.create(db, { user_id: user.id });

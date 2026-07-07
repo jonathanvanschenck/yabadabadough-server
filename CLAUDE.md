@@ -48,6 +48,34 @@ Owns JWT mechanics only (payload shapes / TTL policy live with the models):
 - Wired in `index.js` from the `tokens` env block (`YDD_JWT_KEYS_DIR`, default `./keys`,
   gitignored) and passed to `Webserver` as `token_manager`
 
+### API Layer (`lib/Webserver.js`, `collections/`)
+
+Express app built from asseverate Collections/Controllers (local wrappers in
+`collections/lib/asseverate.js`); controllers declare role gates via static flags
+(`access`/`admin`/`editor`/`reader` — reader defaults ON, matching the model default):
+- `req.access` is built ONLY from a signature-verified access-token payload
+  (`Access.from_access_token`, used by the Bearer middleware, the cookie middleware, and the
+  future socket.io handshake): identifier = email, plus `user_id`/`session_id` (`session_id`
+  may be NULL — API-key credentials will mint sessionless access tokens). Roles come straight
+  off the payload (already effective) with ONE twist: `admin` is masked out unless the request
+  carries `X-Sudo-Mode: true` (`adminable` says whether sudo would work) — a deliberate
+  guard against accidental admin calls
+- Auth endpoints (`collections/Auth.js`, `/api/auth/*`): `login` (email+password →
+  new session + access/auth tokens, also set as cookies), `refresh` (needs ONLY the auth
+  token; runs `Session.for_auth_payload`; auth token returned unchanged — no rotation in v1),
+  `authenticate` ("check my auth, refresh if stale" — browsers call it with cookies +
+  `auto_refresh`), `logout` (deletes the session row via the full guard, idempotent, always
+  clears cookies), `revoke-all` (kills every session for the authed user), and the
+  `check`/`check-admin`/`check-editor`/`check-reader` role probes
+- Cookies: `access_token` (maxAge = 1h TTL, rides on every request) and `auth_token`
+  (path-scoped to `/api/auth`, expires with the session); both httpOnly + SameSite Strict;
+  `Secure` from `secure_cookies` (`YDD_SECURE_COOKIES`, default true — set false for plain-http
+  dev only)
+- Credential failures are a UNIFORM 400 + `penalize()` (`penalty_ms` delay): never leak which
+  check failed (bad email vs password, bad signature vs dead session, ...)
+- `YDD_DISABLE_AUTH` bypasses the gates for development; API tests live in
+  `test/api/test-auth.js` (real Webserver on an ephemeral port, in-memory db, fetch)
+
 ### Data Type Conventions
 
 **Currency**: Stored as INTEGER with 4 decimal places (e.g., 10000 = $1.00)
@@ -104,6 +132,20 @@ Base class for all models with pattern:
 - `instance.to_api()`: Serializes for API response
 - `instance.update(db, {...})`: Updates record
 - `instance.delete(db)`: Deletes record
+
+**OpenAPI schema convention**: each model declares `static openapi_<Name>Schema` properties —
+OpenAPI 3.0 schema objects documenting its API representations. `lib/openapi.js` scans every
+`models/*.js` export for `openapi_`-prefixed statics, strips the prefix, and registers them
+under `components.schemas.<Name>Schema` (so all names must be globally unique and end in
+`Schema`). The main schema documents `to_api()` exactly — every emitted key listed in
+`required` (nullable fields are `nullable: true`, not omitted) — and lives directly above
+`to_api()` in the file; models may declare additional statics for shared sub-shapes (e.g.
+`Fund.openapi_ForwardBalanceSchema`). Cross-schema links use
+`{ $ref: '#/components/schemas/<Name>Schema' }` — the registry is global, so referencing
+another model's schema is fine. Nullable refs compose with the `NullSchema` helper via `oneOf`;
+a described ref wraps its `$ref` in `allOf` (a bare sibling `description` would be ignored).
+Conventions for the field types: currency → `number` (float dollars), YDate → `string` with
+`format: 'date'`, datetimes → `string` with `format: 'date-time'`.
 
 **SQL locality convention**: each model file owns ALL SQL against its table; cross-model
 operations go through (possibly internal `_`-prefixed) model methods, never inline SQL at the
@@ -251,14 +293,17 @@ allocations.
 - Passwords are salted scrypt hashes (node built-in crypto, no deps) stored as ONE
   self-describing string: `scrypt$N$r$p$salt_b64$hash_b64`. Verification parses params from the
   stored string (not code constants), so cost can be raised later without invalidating existing
-  hashes. `to_api` NEVER includes `password_hash`
+  hashes. `to_api` NEVER includes `password_hash`. Everything touching scrypt (`create`,
+  `set_password`, `verify_password`, `authenticate`) is ASYNC — the hash runs on the libuv
+  threadpool, never the event loop, and always OUTSIDE the sqlite transaction (better-sqlite3
+  transactions cannot contain an await)
 - `update` handles only `email` and the role flags; passwords change via `set_password` (fresh
   salt).
   Password changes deliberately do NOT revoke sessions — that's API-layer policy (one
   `Session.revoke_all` call). `User.authenticate` returns `User | null` and burns a dummy scrypt
   verify on unknown emails (user-enumeration timing resistance). No last-admin guard by design
-- JWT payloads (signing/verification is future API-controller work; the model only renders
-  payload objects, with `typ` + `v` claims discriminating kinds):
+- JWT payloads (signed/verified by `lib/TokenManager.js` at the API layer; the model only
+  renders payload objects, with `typ` + `v` claims discriminating kinds):
   - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, reader, editor, sid }` (effective roles)
   - auth (~1w, session-bound): `{ v, typ: "auth", sub, sid, token }`
   Rendered by `user.to_access_token_payload(session)` / `to_auth_token_payload(session)`;
