@@ -201,6 +201,12 @@ module.exports = class Session extends Base {
     }
 
     static _create(db, { user_id, token, expires_at, note }={}) {
+        // Opportunistic housekeeping: every login sweeps expired sessions
+        // (ALL users'), so the table stays bounded by real usage without a
+        // cron. Runs before the insert so a deliberately-expired session
+        // (negative ttl_days) survives its own creation.
+        this.get_stmt(db, "prune").run({ now: datetime2stmt(new Date()) });
+
         let result;
         try {
             result = this.get_stmt(db, "create").run({
@@ -220,10 +226,14 @@ module.exports = class Session extends Base {
     }
 
     /**
+     * Also prunes ALL expired sessions as a side effect (see _create) --
+     * logins are the housekeeping trigger, so no cron is needed.
+     *
      * ttl_days may be any finite number, including negative/zero -- a
      * non-positive value creates an already-expired session. That is useless
      * for real logins but deliberately allowed so tests can fabricate
-     * expired sessions without inline SQL against the table.
+     * expired sessions without inline SQL against the table. (Note the
+     * sweep above: an expired session only survives until the NEXT create.)
      */
     static create(db, {
         user_id,

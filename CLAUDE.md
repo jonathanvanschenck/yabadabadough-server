@@ -244,7 +244,9 @@ allocations.
 **Sessions** (`user_sessions` table, `models/Session.js`):
 - A session row IS the right to refresh: refreshable iff the row exists and `expires_at` is in
   the future. Logout (`session.delete`) and revoke-all (`Session.revoke_all(db, user_id)`) are
-  row deletions — no revoked flag. `Session.prune` reclaims expired rows
+  row deletions — no revoked flag. `Session.prune` reclaims expired rows, and `Session.create`
+  runs the same sweep on every login (no cron needed — the table stays bounded by real usage;
+  tests fabricating expired sessions via negative `ttl_days` must create them last)
 - `token` is a per-session random secret (16 bytes hex) embedded in the auth payload and
   required to match (timing-safe) at refresh — defends against sqlite id reuse and is the hook
   for future refresh-token rotation. NEVER in `to_api`

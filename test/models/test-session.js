@@ -69,6 +69,19 @@ describe("Session Model", () => {
             expect(() => Session.create(db, { user_id: user.id, ttl_days: "soon" }))
                 .to.throw("Invalid ttl_days");
         });
+
+        it("should sweep expired sessions on login", () => {
+            const live = Session.create(db, { user_id: user.id });
+            const stale = Session.create(db, { user_id: user.id, ttl_days: -1 });
+
+            const fresh = Session.create(db, { user_id: user.id });
+
+            // Compare by token, not id: sqlite reuses the swept row's id for
+            // the fresh session (the very hazard the token secret guards)
+            const tokens = Session.from_db(db, { user_id: user.id }).map(s => s.token);
+            expect(tokens).to.have.members([live.token, fresh.token]);
+            expect(tokens).to.not.include(stale.token);
+        });
     });
 
     describe("for_auth_payload()", () => {
@@ -165,9 +178,10 @@ describe("Session Model", () => {
         it("should filter by user_id and active", () => {
             const bob = User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
 
-            const live = Session.create(db, { user_id: user.id });
-            const stale = Session.create(db, { user_id: user.id, ttl_days: -1 });
             Session.create(db, { user_id: bob.id });
+            const live = Session.create(db, { user_id: user.id });
+            // Expired sessions are created LAST: any later create would sweep them
+            const stale = Session.create(db, { user_id: user.id, ttl_days: -1 });
 
             expect(Session.from_db(db, { user_id: user.id })).to.have.length(2);
 
@@ -183,11 +197,10 @@ describe("Session Model", () => {
         it("should prune only expired sessions", () => {
             const live = Session.create(db, { user_id: user.id });
             Session.create(db, { user_id: user.id, ttl_days: -1 });
-            Session.create(db, { user_id: user.id, ttl_days: -2 });
 
             const count = Session.prune(db);
 
-            expect(count).to.equal(2);
+            expect(count).to.equal(1);
             const remaining = Session.from_db(db, { user_id: user.id });
             expect(remaining).to.have.length(1);
             expect(remaining[0].id).to.equal(live.id);
