@@ -4,6 +4,7 @@ const { Logger } = require("yalls");
 const { Collection: _Collection, Controller: _Controller, Handler: _Handler, Middleware: _Middleware, HTTPCodeError } = require("asseverate");
 
 const { ConflictError, ForeignKeyError } = require("../../lib/db.js");
+const { string_to_enum, only_direction, to_positive_int, to_non_negative_int } = require("./parsers.js");
 
 class HTTPCodeErrorDetailed extends Error /* NOT HTTPCodeError, otherwise asseverate default error handler will catch it */ {
     constructor(code, message, details) {
@@ -69,6 +70,75 @@ function translate_model_error(err) {
     if ( err instanceof ForeignKeyError ) throw new HTTPCodeError(400, err.message);
     if ( err.constructor === Error ) throw new HTTPCodeError(400, err.message);
     throw err;
+}
+
+/**
+ * The shared list-endpoint query params (order_by/order_direction/limit/
+ * offset), parsed leniently: invalid values fall back to the model's
+ * defaults (order_by/order_direction as undefined -- the from_db default
+ * parameter kicks in) or the endpoint's default limit. The model's
+ * ORDER_BY_MAP whitelist is what actually reaches the SQL string -- NEVER
+ * pass raw user input as order_by.
+ */
+function parse_list_params(query, order_by_values, { default_limit=1000 }={}) {
+    return {
+        order_by: string_to_enum(query?.order_by, order_by_values),
+        order_direction: only_direction(query?.order_direction),
+        limit: to_positive_int(query?.limit) ?? default_limit,
+        offset: to_non_negative_int(query?.offset) ?? 0,
+    };
+}
+
+/**
+ * The matching openapi parameter objects for parse_list_params.
+ */
+function openapi_list_parameters(order_by_values, { default_limit=1000 }={}) {
+    return [
+        {
+            name: 'order_by',
+            in: 'query',
+            description: `Field to order by (${order_by_values.join(", ")})`,
+            required: false,
+            schema: { type: 'string', enum: order_by_values }
+        },
+        {
+            name: 'order_direction',
+            in: 'query',
+            description: 'Direction to order results (asc or desc)',
+            required: false,
+            schema: { type: 'string', enum: [ 'asc', 'desc' ] }
+        },
+        {
+            name: 'limit',
+            in: 'query',
+            description: `Limit the number of results returned (default ${default_limit})`,
+            required: false,
+            schema: { type: 'integer', minimum: 1 }
+        },
+        {
+            name: 'offset',
+            in: 'query',
+            description: 'Number of results to skip for pagination (default 0)',
+            required: false,
+            schema: { type: 'integer', minimum: 0 }
+        }
+    ];
+}
+
+/**
+ * The response schema every write endpoint shares: the affected resource
+ * (or null for deletes) plus the invalidation actions the webapp should
+ * apply to its tanstack-query cache.
+ */
+function data_invalidations_response(data_schema) {
+    return {
+        type: 'object',
+        properties: {
+            data: data_schema,
+            invalidations: { "$ref": '#/components/schemas/InvalidationArraySchema' }
+        },
+        required: [ 'data', 'invalidations' ]
+    };
 }
 
 function log_error(log, error) {
@@ -444,6 +514,9 @@ module.exports = {
     log_error,
     parse_body_fields,
     assert_found,
-    translate_model_error
+    translate_model_error,
+    parse_list_params,
+    openapi_list_parameters,
+    data_invalidations_response
 };
 
