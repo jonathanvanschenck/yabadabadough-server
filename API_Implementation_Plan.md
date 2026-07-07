@@ -11,6 +11,66 @@ in `lib/Webserver.js`; wired up for real when socket.io lands).
 
 ---
 
+## Status: IMPLEMENTED (2026-07-07)
+
+All eight phases landed, one commit each (`9660a54..47a0341`): 36 routes across Funds,
+Transactions, Statements, Allocations, Finalizations, Users (+ the pre-existing Auth/Utils),
+462 tests passing, conventions documented in CLAUDE.md ("CRUD API Conventions"). The phase
+sections below are the as-built record; what follows here is what is deliberately NOT built
+yet, and why.
+
+### Outstanding — blocked on model-layer TODOs
+
+- **`PATCH /api/transactions/transaction-group/:group_id`** (edit `description`/`note` only —
+  everything else is delete-and-recreate by design): blocked on `TransactionGroup#update`,
+  which is a throwing TODO in the model. When it lands, the endpoint is mechanical
+  (editor-gated; invalidate `transaction-groups` + the single group key; no balance keys —
+  the mutable fields cannot move money). Until then the API deliberately has NO group update.
+- **`GET /api/funds/fund/:fund_id/descendants`** (the fund's subtree, e.g. for hierarchy
+  views and "what does this pool feed" UI): blocked on `Fund#descendants`, also a throwing
+  model TODO. Alternative shape once the model exists: a `descendant_of` filter on
+  `GET /api/funds/funds` instead of a dedicated route — decide when implementing (the filter
+  composes with tracked/monthly/pool filters, so it is probably the better surface).
+
+### Outstanding — deferred by choice (add when a real need shows up)
+
+- **`X-Total-Count` on the small-table lists** (funds, users, sessions, month-finalizations):
+  `count()` statics were skipped for tables bounded by real-world size (a personal fund tree,
+  a handful of users); their lists rely on the generous default limit (1000). Mechanical to
+  add via the same `_from_db_wheres` extraction if any of them ever needs paging.
+- **Admin per-session revocation** (`DELETE /api/users/user/:user_id/session/:session_id`):
+  admins today reset the user's password with `revoke_sessions: true` (kills everything) or
+  the user self-serves via `/api/users/me/session/:id` and `/api/auth/revoke-all`. A
+  surgical admin kill-one-session endpoint adds little until there is a support workflow
+  that needs it.
+- **Bulk balances** (`GET /api/funds/balances[?on=]` returning every tracked fund's balance
+  in one response): today the webapp would call `/fund/:id/balance` per fund. If dashboards
+  end up N+1-fetching, add the bulk route under the same `["fund-balance"]` key family
+  (webapp key `["fund-balance", "all", on]` or similar) — the per-fund calculation is cheap
+  (cache point + net transfers), so this is a round-trip optimization, not a server one.
+
+### Outstanding — waiting on future architecture (tracked elsewhere, listed for completeness)
+
+- **socket.io invalidation transport**: the invalidator in `lib/Webserver.js` is a noop and
+  the handshake/`clean_queries` code is commented out. Every write already returns and
+  broadcasts the correct action arrays, so wiring the transport requires no controller
+  changes.
+- **API-key credentials** (sessionless access tokens; `sid: null` is already tolerated
+  everywhere by design): needs mint/list/revoke endpoints — probably
+  `/api/users/me/api-keys` for self-service plus admin visibility under
+  `/api/users/user/:user_id/api-keys` — and a token-minting path that skips Session. No
+  model exists yet.
+- **Auth-token rotation on refresh**: v1 `/api/auth/refresh` returns the auth token
+  unchanged; `Session.token` (the per-session secret) is the designed hook. Rotation is an
+  Auth-collection change, not a new endpoint.
+- **Hierarchy restructuring / snapshotting** ("X stops being a pool as of month M" without
+  rewriting earlier months — see the Future direction note in CLAUDE.md): routing is
+  currently write-once against history, so no endpoints exist for point-in-time hierarchy
+  changes. When the model story lands this likely becomes a new resource (hierarchy
+  revisions) rather than extra PATCH fields on funds.
+
+---
+
 ## Phase 0 — Shared helpers
 
 ### 0.1 `collections/lib/asseverate.js`: body-validation helper (the requested one)
