@@ -19,15 +19,25 @@ Transactions, Statements, Allocations, Finalizations, Users (+ the pre-existing 
 sections below are the as-built record; what follows here is what is deliberately NOT built
 yet, and why.
 
+### Since implemented
+
+- **Transaction editing (2026-07-07)**: real in-place updates replaced the original
+  delete-and-recreate workflow (which was non-atomic across two HTTP calls and lost the group
+  id — and with it any bank statement reconciliation, since `bank_statement_items.group_id` is
+  `ON DELETE SET NULL`). See `Transaction_Update_Implementation_Plan.md` for the full design.
+  Three PATCH routes in `collections/Transactions.js`:
+  - `PATCH /api/transactions/transaction-group/:group_id` — scalars (`description`/`note`/
+    `date`; date cascades to the lines and broadcasts `money_moved()`, cosmetic edits skip the
+    balance keys)
+  - `PATCH /api/transactions/transaction-group/:group_id/transactions` — atomic
+    `add`/`update`/`remove` line editor (`TransactionGroup.edit_transactions`)
+  - `PATCH /api/transactions/transaction/:transaction_id` — in-place edit of one line; the
+    `/transaction` resource's only write (create/delete of lines stays group-scoped)
+
 ### Outstanding — blocked on model-layer TODOs
 
-- **`PATCH /api/transactions/transaction-group/:group_id`** (edit `description`/`note` only —
-  everything else is delete-and-recreate by design): blocked on `TransactionGroup#update`,
-  which is a throwing TODO in the model. When it lands, the endpoint is mechanical
-  (editor-gated; invalidate `transaction-groups` + the single group key; no balance keys —
-  the mutable fields cannot move money). Until then the API deliberately has NO group update.
 - **`GET /api/funds/fund/:fund_id/descendants`** (the fund's subtree, e.g. for hierarchy
-  views and "what does this pool feed" UI): blocked on `Fund#descendants`, also a throwing
+  views and "what does this pool feed" UI): blocked on `Fund#descendants`, a throwing
   model TODO. Alternative shape once the model exists: a `descendant_of` filter on
   `GET /api/funds/funds` instead of a dedicated route — decide when implementing (the filter
   composes with tracked/monthly/pool filters, so it is probably the better surface).
@@ -254,8 +264,10 @@ and `collections/Transactions.js` (prefix `/api/transactions`, tag `Transactions
 | POST | `/from-statements` | editor | — | `TransactionGroup.create_from_statements` — body: `statement_ids` (required array of ids, 1 normally, 2 for a transfer), `date`/`description`/`note` (optional — model derives defaults from the items), `transactions` (required, as above). 400 dup/unknown ids (FK), 409 item ignored/already reconciled |
 | DELETE | `/:group_id` | editor | — | `group.delete` — plus an API-layer guard **before** the model call: 409 if `group.allocation` ("manage via /api/allocations") — eom_cleanup groups are inherently protected by the finalized-month check. 409 finalized month |
 
-No PATCH in v1: `TransactionGroup#update` is still a model-layer TODO (delete + recreate is
-the documented workflow). Add the endpoint when the model lands.
+~~No PATCH in v1: `TransactionGroup#update` is still a model-layer TODO (delete + recreate is
+the documented workflow). Add the endpoint when the model lands.~~ Superseded (2026-07-07):
+the group-scalar PATCH, the line-editor PATCH, and the single-transaction PATCH all landed —
+see "Since implemented" above and `Transaction_Update_Implementation_Plan.md`.
 
 `/api/transactions` (read-only — all writes go through groups):
 

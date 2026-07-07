@@ -129,11 +129,20 @@ all follow the same shape:
   order/limit/offset, so one filter object serves both). Small tables (funds, users,
   sessions, month finalizations) skip it and rely on a generous default limit (1000)
 - **API-layer rules on top of the models**: USER transaction/allocation amounts are strictly
-  positive (zero is reserved for internal eom_cleanup rows); allocation groups cannot be
-  deleted through the transaction-groups API; bank-statement deletion defaults to
+  positive (zero is reserved for internal eom_cleanup rows); allocation and eom_cleanup groups
+  cannot be deleted OR edited through the transaction-groups API (API-layer 409 guards, with
+  the model refusals as backstop); bank-statement deletion defaults to
   `with_group=true` and its OpenAPI description carries the re-import double-count hazard;
   password changes revoke sessions by default (`revoke_sessions: true` — API-layer policy per
   the model docs); self-deletion of users is refused; foreign sessions read as 404, not 403
+- **Transaction editing** (three PATCH routes, all in `collections/Transactions.js`; group ids
+  are stable across all of them, so bank statement reconciliation survives edits):
+  `PATCH /transaction-group/:id` (scalars — description/note/date; a date edit broadcasts
+  `money_moved()`, cosmetic edits skip the `fund-balance` refetch),
+  `PATCH /transaction-group/:id/transactions` (atomic add/update/remove line editor; the group
+  must keep ≥ 1 line — emptying it is a 400 pointing at DELETE), and
+  `PATCH /transaction/:id` (in-place field edit of one line — the `/transaction` resource's
+  ONLY write: creating/deleting lines stays group-scoped, and `date` is group-level)
 - **OpenAPI**: every controller declares Summary/Description/Parameters/RequestBodySchema/
   ResponseSchema/ErrorResponses, `$ref`-ing the model schemas registered by `lib/openapi.js`;
   error schemas come from the shared `*ResponseSchema` set there. Swagger UI at `/api-docs`,
@@ -251,6 +260,21 @@ TransactionGroup, `finalized_months_since` in Fund).
 - `group.delete(db)` removes a group and its transactions; the only guard is the finalized-month
   check (which inherently protects eom_cleanup groups — they only exist inside finalized months).
   `TransactionGroup.assert_month_unfinalized(db, date)` is the shared guard helper
+- **In-place edits** (updates are preferred over delete-and-recreate because the group id — and
+  therefore any bank statement reconciliation pointing at it — stays stable; deleting a
+  reconciled group releases its items to pending via `ON DELETE SET NULL`, setting up a
+  double-count on re-sync):
+  - `group.update(db, { description, note, date })` — scalar fields; a `date` change re-checks
+    every line's start-date invariant, refuses moving into (or editing within) a finalized
+    month, and cascades to the denormalized date on every transaction
+    (`Transaction._set_date_for_group`)
+  - `TransactionGroup.edit_transactions(db, group, { add, update, remove })` — the atomic line
+    editor: adds go through `_create_with_group` (full creation validation, group's date),
+    updates through `Transaction._update`, removes through `Transaction._delete`, one `split`
+    resync at the end. Referenced ids must belong to the group and appear once; the group must
+    keep ≥ 1 transaction (delete the group to empty it)
+  - Both refuse allocation/eom_cleanup groups (managed by Allocation / MonthFinalization) and
+    run inside one sqlite transaction — any failed check rolls the whole edit back
 
 **Transactions** (`transactions` table):
 - Moves money from `source_fund_id` to `target_fund_id`
@@ -261,6 +285,13 @@ TransactionGroup, `finalized_months_since` in Fund).
   one-allocation-per-fund-per-month
 - Zero amounts are allowed at the db/model level (needed for eom_cleanup transactions); USER
   transactions must be positive, enforced at the API layer
+- `transaction.update(db, { amount, source_fund_id, target_fund_id, description, note })` edits
+  one line in place, re-running the same checks as creation (the shared
+  `Transaction._assert_transaction_valid`, extracted from `_create_with_group`). `date` and
+  `allocation` are group-level facts and only change via the group; allocation/eom_cleanup
+  transactions and finalized months are refused. Creating/deleting lines goes through
+  `TransactionGroup` (`create`/`delete`/`edit_transactions`) — `transaction.delete()` is a
+  throwing stub pointing there
 
 **Bank Statement Items** (`bank_statement_items` table, `models/BankStatementItem.js`):
 - One imported bank statement line, deduped on `(source, key)` — `key` is externally derived, so
