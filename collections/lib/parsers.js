@@ -1,4 +1,6 @@
 
+const YDate = require("../../lib/YDate.js");
+
 function only_string(str, fallback=undefined) {
     if ( typeof(str) != "string" ) return fallback;
     return str;
@@ -70,6 +72,41 @@ function to_date(date, fallback=undefined) {
     return d;
 }
 
+// Strict parsers for request BODIES: no string coercion (unlike the to_*
+// parsers, which exist to coerce query strings). They signal failure by
+// returning the fallback (default undefined), which is what
+// parse_body_fields keys off of.
+function only_int(integer, fallback=undefined) {
+    if ( !Number.isInteger(integer) ) return fallback;
+    return integer;
+}
+function only_id(integer, fallback=undefined) {
+    if ( !Number.isInteger(integer) || integer <= 0 ) return fallback;
+    return integer;
+}
+function only_number(number, fallback=undefined) {
+    if ( typeof(number) != "number" || isNaN(number) ) return fallback;
+    return number;
+}
+function only_positive_number(number, fallback=undefined) {
+    if ( typeof(number) != "number" || isNaN(number) || number <= 0 ) return fallback;
+    return number;
+}
+
+// Strict YYYY-MM-DD -> YDate (YDate.parse validates the exact format);
+// works for bodies and query params alike
+function only_ydate(str, fallback=undefined) {
+    if ( typeof(str) != "string" ) return fallback;
+    return YDate.parse(str) ?? fallback;
+}
+const to_ydate = only_ydate; // naming symmetry at query-param call sites
+
+// Combinator: passes null through untouched, otherwise applies `parser` --
+// for nullable body fields, instead of `(v) => v===null ? v : only_string(v)`
+function nullable(parser) {
+    return (value, fallback=undefined) => value === null ? null : parser(value, fallback);
+}
+
 function string_to_enum(proposal, valids=[], fallback_not_string=undefined, fallback_not_present=undefined) {
     if ( typeof(proposal) != "string" ) return fallback_not_string;
     if ( valids.includes(proposal) ) return proposal;
@@ -108,6 +145,13 @@ function parse_and_filter_array(arr, parse, filter=(x) => x!==undefined, fallbac
 module.exports = {
     only_string,
     only_non_empty_string,
+    only_int,
+    only_id,
+    only_number,
+    only_positive_number,
+    only_ydate,
+    to_ydate,
+    nullable,
     to_int,
     to_positive_int,
     to_non_negative_int,

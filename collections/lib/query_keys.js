@@ -1,0 +1,65 @@
+
+/**
+ * The tanstack-query key registry: the single source of truth for the query
+ * keys the webapp caches under and the invalidation actions the API
+ * broadcasts. Invalidations constantly cross collection boundaries (an
+ * allocation write invalidates transaction-group queries; a finalization
+ * touches nearly everything), so key literals must never be inlined in a
+ * controller -- always compose from here.
+ *
+ * Conventions:
+ * - list key = plural resource name; single = singular + STRINGIFIED id
+ *   (tanstack matches by prefix, so ["fund", "3"] also catches any
+ *   ["fund", "3", ...] subkeys the webapp hangs off it)
+ * - computed subresources get their own top-level key (fund-balance) so hot
+ *   invalidation (every transaction write) doesn't force refetching cold
+ *   data (the fund objects themselves)
+ * - list controllers may document a parameterized shape (the webapp appends
+ *   its filter object: ["allocations", { month }]) -- invalidating the bare
+ *   list key catches all of them
+ * - when in doubt, over-invalidate
+ */
+const QK = {
+    versions: ["versions"],
+
+    funds: ["funds"],
+    fund: (id) => ["fund", id.toString()],
+    fund_balances: ["fund-balance"],
+    fund_balance: (id) => ["fund-balance", id.toString()],
+
+    transaction_groups: ["transaction-groups"],
+    transaction_group: (id) => ["transaction-group", id.toString()],
+    transactions: ["transactions"],
+    transaction: (id) => ["transaction", id.toString()],
+
+    statements: ["statements"],
+    statement: (id) => ["statement", id.toString()],
+
+    allocations: ["allocations"],
+
+    month_finalizations: ["month-finalizations"],
+    month_finalization: (id) => ["month-finalization", id.toString()],
+    fund_finalizations: ["fund-finalizations"],
+    fund_finalization: (id) => ["fund-finalization", id.toString()],
+
+    users: ["users"],
+    user: (id) => ["user", id.toString()],
+    user_sessions: (id) => ["user", id.toString(), "sessions"],
+    me: ["me"],
+    me_sessions: ["me", "sessions"],
+};
+
+const invalidate = (key) => ({ type: "invalidate", key });
+const remove = (key) => ({ type: "remove", key });
+
+/**
+ * Every write that adds/removes/moves transactions changes computed balances
+ * and the transaction/group lists -- the shared "money moved" action set.
+ */
+const money_moved = () => [
+    invalidate(QK.transaction_groups),
+    invalidate(QK.transactions),
+    invalidate(QK.fund_balances),
+];
+
+module.exports = { QK, invalidate, remove, money_moved };

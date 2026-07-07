@@ -384,4 +384,39 @@ describe("BankStatementItem Model", () => {
             expect(api_data.created_at).to.be.a("string");
         });
     });
+
+    describe("count()", () => {
+        beforeEach(() => {
+            BankStatementItem.import_many(db, [
+                { source: "big-bank", key: "c-1", amount: -10.00, date: YDate.parse("2026-06-01") },
+                { source: "big-bank", key: "c-2", amount: -20.00, date: YDate.parse("2026-06-05") },
+                { source: "other-bank", key: "c-3", amount: 30.00, date: YDate.parse("2026-06-10") },
+            ]);
+        });
+
+        it("counts all items with no filters", () => {
+            expect(BankStatementItem.count(db)).to.equal(3);
+        });
+
+        it("counts with the same filters as from_db", () => {
+            expect(BankStatementItem.count(db, { source: "big-bank" })).to.equal(2);
+            expect(BankStatementItem.count(db, { since: YDate.parse("2026-06-05") })).to.equal(2);
+            expect(BankStatementItem.count(db, { has_group: false })).to.equal(3);
+
+            const item = BankStatementItem.for_key(db, { source: "big-bank", key: "c-1" });
+            reconcile(item);
+            expect(BankStatementItem.count(db, { has_group: true })).to.equal(1);
+
+            const other = BankStatementItem.for_key(db, { source: "big-bank", key: "c-2" });
+            other.update(db, { ignored: true });
+            expect(BankStatementItem.count(db, { ignored: true })).to.equal(1);
+        });
+
+        it("ignores order/limit/offset so it can share the from_db filter object", () => {
+            const filter = { order_by: "date", order_direction: "DESC", limit: 1, offset: 0 };
+            expect(BankStatementItem.count(db, filter)).to.equal(3);
+            expect(BankStatementItem.from_db(db, filter)).to.have.lengthOf(1);
+        });
+    });
+
 });

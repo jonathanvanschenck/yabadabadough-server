@@ -217,7 +217,7 @@ module.exports = class TransactionGroup extends Base {
         return this.from_row(stmt.get({ id }) ?? null);
     }
 
-    static from_db(db, {
+    static _from_db_wheres({
         since,  // YDate or null
         until,  // YDate or null
         split,
@@ -225,10 +225,6 @@ module.exports = class TransactionGroup extends Base {
         eom_cleanup,
         has_statements,
         description_like,
-        order_by = "date",
-        order_direction = "DESC",
-        limit = 100,
-        offset = 0
     }={}) {
         const wheres = [];
         const params = {};
@@ -270,6 +266,18 @@ module.exports = class TransactionGroup extends Base {
             keys.push("description_like");
         }
 
+        return { wheres, params, keys };
+    }
+
+    static from_db(db, {
+        order_by = "date",
+        order_direction = "DESC",
+        limit = 100,
+        offset = 0,
+        ...filters
+    }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
         let sql = `SELECT ${SELECT_COLUMNS.join(",\n    ")}\n`
                 + `FROM transaction_groups\n`
                 + `LEFT JOIN transactions ON transactions.group_id = transaction_groups.id\n`;
@@ -303,6 +311,30 @@ module.exports = class TransactionGroup extends Base {
         );
 
         return stmt.all(params).map(row => this.from_row(row));
+    }
+
+    /**
+     * Total rows matching the same filters as from_db (order/limit/offset
+     * are accepted and ignored, so the API layer can pass one filter object
+     * to both). No JOIN needed: the wheres only touch transaction_groups
+     * (has_statements is an EXISTS subquery).
+     */
+    static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
+        let sql = `SELECT COUNT(*) AS count\n`
+                + `FROM transaction_groups\n`;
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "count$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.get(params).count;
     }
 
 

@@ -1,0 +1,334 @@
+# API Implementation Plan
+
+Full CRUD API for the finance models, following the asseverate Collection/Controller pattern
+demonstrated by `~/git/hyperspace/collections/Vendors.js`, adapted to this project's existing
+conventions (`collections/Auth.js`, `collections/Utils.js`, `collections/lib/asseverate.js`).
+
+Every controller declares `query_key` statics chosen for tanstack-query invalidation on the
+webapp side; every write endpoint returns `{ data, invalidations }` and broadcasts the same
+invalidation actions through `this.broadcast_invalidations(...)` (currently a noop invalidator
+in `lib/Webserver.js`; wired up for real when socket.io lands).
+
+---
+
+## Phase 0 — Shared helpers
+
+### 0.1 `collections/lib/asseverate.js`: body-validation helper (the requested one)
+
+Replace the repeated Vendors-style loop:
+
+```js
+if ( data[key] !== req.body[key] ) throw new HTTPCodeError(400, `Bad parameter: ...`)
+```
+
+with one exported function:
+
+```js
+/**
+ * Validate/normalize a request body against a field spec.
+ *
+ *   fields: [ [ key, parser, expected, { required=false }={} ], ... ]
+ *
+ * - key absent from body: skipped (or 400 `Missing parameter: <key>` when required)
+ * - parser returns undefined: 400 `Bad parameter: <key> (got '<v>' expected <expected>)`
+ * - otherwise the PARSED value lands in the returned object
+ */
+function parse_body_fields(body = {}, fields = []) { ... }
+```
+
+Contract change vs the hyperspace `!==` comparison, on purpose: parsers signal failure by
+returning `undefined` (all `collections/lib/parsers.js` parsers already default their fallback
+to `undefined`). This keeps identity-parser behavior the same while also supporting
+*transforming* parsers (`YDate.parse` returns an object, so `!==` could never work). To avoid
+losing strictness for numbers (`to_int(5.7) === 5` would silently truncate), body validation
+uses new strict `only_*` parsers (0.2); the coercive `to_*` parsers stay for query strings.
+
+Also add to `asseverate.js`:
+
+- `assert_found(value, label)` — returns `value`, or throws `HTTPCodeError(404, "Not found: <label>")`
+  when null/undefined. Used after every `Model.for_id`. (Plays the role of hyperspace's
+  `get_vendor` helper without needing one method per model.)
+- `translate_model_error(err)` — the write-path error mapper, used as
+  `.catch()`/try-catch around model create/update/delete calls **only** (never around whole
+  handlers):
+  - `ConflictError` → `HTTPCodeError(409, err.message)`
+  - `ForeignKeyError` → `HTTPCodeError(400, err.message)` (bad reference in the body; path-id
+    lookups have already 404'd via `assert_found`)
+  - plain `Error` (i.e. `err.constructor === Error` — the models' consistency-check throws,
+    e.g. "Cannot create a monthly fund without a parent") → `HTTPCodeError(400, err.message)`
+  - anything else (TypeError etc. = real bugs) → rethrow → 500
+
+### 0.2 `collections/lib/parsers.js`: new parsers
+
+- `only_int(v)` — strict: `Number.isInteger(v)` or undefined (no string coercion)
+- `only_id(v)` — strict positive integer
+- `only_positive_number(v)` — strict `typeof v === "number" && v > 0` (user-facing currency
+  amounts; the models accept float dollars)
+- `only_ydate(v)` — `typeof v === "string"` then `YDate.parse(v)`; undefined on failure
+  (works for both body fields and query params)
+- `nullable(parser)` — combinator replacing the repeated `(v) => v===null ? v : only_string(v)`
+  lambdas: passes `null` through, otherwise applies `parser`
+- `to_ydate(v)` — alias of `only_ydate` for query-param call sites, for naming symmetry
+
+### 0.3 `collections/lib/query_keys.js`: the key registry
+
+Invalidations cross collection boundaries constantly (an allocation write must invalidate
+transaction-group queries; a finalization touches almost everything), so key literals must not
+be scattered. One small module exports both the key constants and pre-built action helpers:
+
+```js
+const QK = {
+    funds: ["funds"],                     fund: (id) => ["fund", id.toString()],
+    fund_balance: (id) => ["fund-balance", id.toString()],   // prefix ["fund-balance"] invalidates all
+    transaction_groups: ["transaction-groups"], transaction_group: (id) => [...],
+    transactions: ["transactions"],       transaction: (id) => [...],
+    statements: ["statements"],           statement: (id) => [...],
+    allocations: ["allocations"],
+    month_finalizations: ["month-finalizations"], month_finalization: (id) => [...],
+    fund_finalizations: ["fund-finalizations"],   fund_finalization: (id) => [...],
+    users: ["users"],                     user: (id) => [...],
+    me: ["me"],                           me_sessions: ["me", "sessions"],
+};
+const invalidate = (key) => ({ type: "invalidate", key });
+const remove = (key) => ({ type: "remove", key });
+```
+
+IDs are stringified in keys (matching hyperspace's `vendor.id.toString()`); tanstack matches
+by prefix, so `invalidate(["fund", "3"])` also catches `["fund", "3", ...]` subkeys the webapp
+may hang off it. List keys are invalidated on every write to that resource; single keys are
+invalidated on update and `remove`d on delete.
+
+### 0.4 Model layer: `static count(db, filters)` for the paginated tables
+
+The list endpoints for the big tables mirror hyperspace's `X-Total-Count` header, which needs
+a count query. Per the SQL-locality convention this SQL lives in the models: extract each
+model's `from_db` WHERE-building into a private `_from_db_wheres(filters)` returning
+`{ wheres, params, keys }`, used by both `from_db` and a new `count`:
+
+- `TransactionGroup.count` (no JOIN needed — its wheres only touch `transaction_groups` plus
+  the EXISTS subquery)
+- `Transaction.count`
+- `BankStatementItem.count`
+- `FundFinalization.count`
+
+Deliberately skipped for `funds`, `users`, `user_sessions`, `month_finalizations`: these tables
+are small (a personal-finance fund tree, a handful of users), the endpoints just use a generous
+default limit, and `count` is a mechanical follow-up if ever needed. Model unit tests for each
+new `count` go in the existing `test/models/test-*.js` files.
+
+---
+
+## Conventions applied to every collection below
+
+- **Paths**: hyperspace style (per review) — the prefix names the logical area, and inside it
+  lists/creates are plural while single-resource routes are singular + id:
+  `GET /api/funds/funds`, `GET /api/funds/fund/:fund_id`. The plural/singular split also means
+  literal segments never collide with param routes (`/month-finalizations/latest` vs
+  `/month-finalization/:id` live under different literals), so controller ordering is never
+  load-bearing — except `/me` routes, which use their own `/me...` literal prefix.
+- **Roles**: reads = `reader` (the default), writes = `editor: true`, user management =
+  `admin: true` (which per the local Controller means X-Sudo-Mode). `/me` endpoints use
+  `reader = false` (any authed user).
+- **List endpoints**: expose exactly the model's `from_db` filters as query params (coercive
+  `to_*`/`to_ydate` parsers, invalid values fall back to "filter not applied" — same as
+  hyperspace), plus `order_by` (whitelist matching the model's `ORDER_BY_MAP`, handled with an
+  explicit switch, same SQL-injection warning comments), `order_direction` (`only_direction`),
+  `limit`, `offset`. Where a `count` static exists, respond sets `X-Total-Count` and declares
+  `openapi_ResponseHeaders`.
+- **Single endpoints**: `to_int(req.params.x)` then `assert_found(Model.for_id(...))`.
+- **Bodies**: validated with `parse_body_fields` + strict parsers; write model calls wrapped
+  with `translate_model_error`. USER transaction amounts are checked `> 0` at this layer
+  (models permit zero for internal eom_cleanup rows).
+- **Write responses**: `{ data, invalidations }` (`data: null` for deletes), broadcast via
+  `this.broadcast_invalidations(actions, meta)`, documented with the existing shared schemas
+  (`InvalidationArraySchema`, `NullSchema`, `BadParameterResponseSchema`,
+  `NotFoundResponseSchema`, `ConflictResponseSchema` from `lib/openapi.js`).
+- **OpenAPI**: every controller gets `openapi_Summary`/`Description`/`Parameters`/
+  `RequestBodySchema`/`ResponseSchema`/`ErrorResponses`, `$ref`-ing the model schemas already
+  registered by `lib/openapi.js` (`FundSchema`, `TransactionGroupSchema`, etc.). Dates are
+  `{ type: 'string', format: 'date' }`.
+
+---
+
+## Phase 1 — Funds (`collections/Funds.js`, prefix `/api/funds`, tag `Funds`)
+
+Establishes the template; everything later copies it.
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/` | reader | `["funds"]` | `Fund.from_db` (filters: `id`, `ids` (csv via `string_to_array`+`parse_and_filter_array`), `name`, `name_like`, `started_since/until`, `tracked`, `monthly`, `pool`, `root`; order: `id`) |
+| GET | `/:fund_id` | reader | `["fund", id]` | `Fund.for_id` |
+| GET | `/:fund_id/balance` | reader | `["fund-balance", id]` | `?on=YYYY-MM-DD` → `calculate_balance_on`, else `calculate_balance`. Response `{ fund_id, on: date\|null, balance }`. 400 when `on` predates `start_date` (the model throws a plain Error — `translate_model_error` applies). Untracked funds return balance 0 (model behavior) — document it |
+| POST | `/` | editor | — | `Fund.create` — body: `name` (required, `only_non_empty_string`), `tracked` (required, `only_boolean`), `parent_id` (`nullable(only_id)`), `start_date` (`nullable(only_ydate)`), `start_balance` (strict number), `monthly`, `pool` (`only_boolean`), `color` (`nullable(only_non_empty_string)`) |
+| PATCH | `/:fund_id` | editor | — | `fund.update` (same fields; all optional) |
+| DELETE | `/:fund_id` | editor | — | `fund.delete` — 409 (ConflictError) while finalizations exist |
+
+Invalidations:
+- POST: `invalidate(QK.funds)` + `invalidate(QK.fund_finalizations)` (creation can backfill
+  fund_finalizations when `start_date` falls in finalized months)
+- PATCH: `invalidate(QK.funds)`, `invalidate(QK.fund(id))`, and — because hierarchy/pool edits
+  can repoint allocation sources (`Fund._rederive_allocation_sources`) — `QK.allocations`,
+  `QK.transactions`, `QK.transaction_groups`, `["fund-balance"]` (all). Overly generous by
+  design, like hyperspace's vendor→acquisition-method note.
+- DELETE: `invalidate(QK.funds)`, `remove(QK.fund(id))`, plus the same generous set.
+
+Tests: `test/api/test-funds.js` (harness copied from `test/api/test-utils.js`: real Webserver
+on port 0, in-memory db, minted tokens for a reader-only user and an editor user; assert 401
+unauthenticated, 403 reader-on-write, happy paths, 400 bad params, 404, 409 finalized-fund
+delete, invalidations arrays present).
+
+## Phase 2 — Transaction groups & transactions (`collections/Transactions.js`)
+
+Two prefixes worth of routes, one file (they share helpers); implemented as two Collections
+exported as an array is NOT supported by `collections/index.js`'s shape, so: two files —
+`collections/TransactionGroups.js` (prefix `/api/transaction-groups`, tag `Transaction Groups`)
+and `collections/Transactions.js` (prefix `/api/transactions`, tag `Transactions`).
+
+`/api/transaction-groups`:
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/` | reader | `["transaction-groups"]` | `TransactionGroup.from_db` (filters: `since`, `until`, `split`, `allocation`, `eom_cleanup`, `has_statements`, `description_like`; order: `id`/`date`) + `count` → `X-Total-Count` |
+| GET | `/:group_id` | reader | `["transaction-group", id]` | `for_id` |
+| POST | `/` | editor | — | `TransactionGroup.create` — body: `date` (required, ydate), `description` (required), `note` (nullable), `transactions` (required non-empty array; each element validated with `parse_body_fields`: `source_fund_id`/`target_fund_id`/`amount` required — amount strictly positive here, API-layer rule — `description` required, `note` nullable). `allocation`/`eom_cleanup` are NOT accepted fields at all |
+| POST | `/from-statements` | editor | — | `TransactionGroup.create_from_statements` — body: `statement_ids` (required array of ids, 1 normally, 2 for a transfer), `date`/`description`/`note` (optional — model derives defaults from the items), `transactions` (required, as above). 400 dup/unknown ids (FK), 409 item ignored/already reconciled |
+| DELETE | `/:group_id` | editor | — | `group.delete` — plus an API-layer guard **before** the model call: 409 if `group.allocation` ("manage via /api/allocations") — eom_cleanup groups are inherently protected by the finalized-month check. 409 finalized month |
+
+No PATCH in v1: `TransactionGroup#update` is still a model-layer TODO (delete + recreate is
+the documented workflow). Add the endpoint when the model lands.
+
+`/api/transactions` (read-only — all writes go through groups):
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/` | reader | `["transactions"]` | `Transaction.from_db` (filters: `source_fund_id`, `target_fund_id`, `involving_fund_id`, `group_id`, `since`, `until`, `allocation`, `description_like`; order: `id`/`date`) + `count` → `X-Total-Count` |
+| GET | `/:transaction_id` | reader | `["transaction", id]` | `for_id` |
+
+Invalidations (both POSTs and DELETE): `QK.transaction_groups`, `QK.transactions`,
+`["fund-balance"]`; DELETE also `remove(QK.transaction_group(id))`; the statement variants also
+`QK.statements` (linking/releasing items changes their state).
+
+Tests: `test/api/test-transaction-groups.js`, `test/api/test-transactions.js`.
+
+## Phase 3 — Bank statement items (`collections/Statements.js`, prefix `/api/statements`, tag `Bank Statements`)
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/` | reader | `["statements"]` | `BankStatementItem.from_db` (filters: `source`, `since`, `until`, `ignored`, `has_group`, `group_id`; plus API-layer sugar `state=pending\|ignored\|reconciled` that expands to `ignored`/`has_group` combos; order: `id`/`date`) + `count` → `X-Total-Count` |
+| GET | `/:statement_id` | reader | `["statement", id]` | `for_id` |
+| POST | `/import` | editor | — | `BankStatementItem.import_many` — body `{ items: [{ source, key, amount (signed number, only strict number — zero/negative legal), date, note? }] }` (each element via `parse_body_fields`); response data `{ created: [...to_api], skipped: [{source,key}] }`. Idempotent by design |
+| PATCH | `/:statement_id` | editor | — | `item.update` — body: `ignored` (`only_boolean`), `note` (nullable string). 409 ignoring a reconciled item |
+| DELETE | `/:statement_id` | editor | — | `TransactionGroup.delete_statement_item(db, item, { with_group })` — `with_group` query param via `string_to_boolean`, default true. OpenAPI description carries the model's re-import/double-count hazard warning verbatim. 409 finalized month (with_group arm) |
+
+Invalidations: import → `QK.statements`; PATCH → `QK.statements`, `QK.statement(id)`;
+DELETE → `QK.statements`, `remove(QK.statement(id))`, and when a group was destroyed also
+`QK.transaction_groups`, `QK.transactions`, `["fund-balance"]`.
+
+Tests: `test/api/test-statements.js` (including: re-import skips, ignore-reconciled 409,
+delete releases the transfer peer to pending).
+
+## Phase 4 — Allocations (`collections/Allocations.js`, prefix `/api/allocations`, tag `Allocations`)
+
+No table, no ids — `(fund_id, month)` addresses an allocation, so the surface is verbs on the
+collection root rather than `/:id` routes.
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/` | reader | `["allocations"]` | Two modes, exactly one required: `?month=YYYY-MM-DD` → `Allocation.for_month`; `?fund_id=N[&since&until]` → `Allocation.for_fund`. 400 when neither/both given. (Webapp hangs params off the key itself: `["allocations", { month }]` — invalidating the `["allocations"]` prefix catches all of them) |
+| PUT | `/` | editor | — | `Allocation.set` — body: `month` (required ydate — any day within the month), `fund_id` (required id), `amount` (required strictly positive). Upsert semantics = PUT. 400 model consistency errors (untracked target, started mid-month, no started pool ancestor), 409 finalized month |
+| DELETE | `/` | editor | — | `Allocation.remove` — body: `month`, `fund_id` (both required). 404 when no such allocation (model ConflictError/plain-Error mapped appropriately — check the model's throw and map "no allocation" to 404 explicitly) |
+| POST | `/copy` | editor | — | `Allocation.copy_month` — body: `from`, `to` (required ydates), `on_conflict` (`string_to_enum` of `error\|merge\|overwrite`, default `error`). 409 on conflict-mode `error` collisions or finalized target month |
+
+Invalidations (all writes): `QK.allocations`, `QK.transaction_groups`, `QK.transactions`,
+`["fund-balance"]`.
+
+Tests: `test/api/test-allocations.js`.
+
+## Phase 5 — Finalizations (`collections/Finalizations.js`, prefix `/api/finalizations`, tag `Finalizations`)
+
+Month finalizations and fund finalizations share the prefix as subresources.
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/months` | reader | `["month-finalizations"]` | `MonthFinalization.from_db` (`since`, `until` on som_date; order: `id`/`som_date`) |
+| GET | `/months/latest` | reader | `["month-finalizations", "latest"]` | `MonthFinalization.latest` — data is the finalization or `null` (200 either way: "nothing finalized yet" is a normal state, not a 404). **Registered before `/months/:id`** |
+| GET | `/months/:month_finalization_id` | reader | `["month-finalization", id]` | `for_id` |
+| POST | `/months` | editor | — | `MonthFinalization.create` — body: `month` (required ydate, any day in month), `recursive` (`only_boolean`, default false). 409 already-finalized / non-contiguous without recursive |
+| DELETE | `/months/:month_finalization_id` | editor | — | `month.unfinalize` — 409 unless it is the latest (LIFO) |
+| GET | `/funds` | reader | `["fund-finalizations"]` | `FundFinalization.from_db` (`fund_id`, `month_id`, `since`, `until` on sonm_date; order: `id`/`sonm_date`) + `count` → `X-Total-Count`. This is also the "fund finalization history" endpoint (`?fund_id=`) — no separate `/api/funds/:id/finalizations` route, one canonical query |
+| GET | `/funds/:fund_finalization_id` | reader | `["fund-finalization", id]` | `for_id` |
+
+Invalidations (POST and DELETE — finalization touches nearly everything): 
+`QK.month_finalizations`, `QK.fund_finalizations`, `QK.funds` (cache points repoint), `["fund"]`
+(all singles), `["fund-balance"]`, `QK.transaction_groups`, `QK.transactions` (eom_cleanup
+groups appear/disappear), `QK.allocations` (mutability boundary moves).
+
+Tests: `test/api/test-finalizations.js` (contiguity 409, recursive, LIFO unfinalize 409,
+latest-null case).
+
+## Phase 6 — Users & sessions (`collections/Users.js`, prefix `/api/users`, tag `Users`)
+
+Admin-gated management plus `/me` self-service. **Route order: all `/me...` controllers before
+any `/:user_id...` controller.** Note in every admin-write description: outstanding access
+tokens keep their old roles for up to ~1h (accepted staleness window).
+
+| Method | Path | Role | query_key | Model call |
+|---|---|---|---|---|
+| GET | `/me` | authed (`reader=false`) | `["me"]` | `User.for_id(req.access.user_id)` (fresh, not the token payload) |
+| POST | `/me/password` | authed | — | body: `current_password`, `password` (required), `revoke_other_sessions` (`only_boolean`, default true). Flow: `user.verify_password(current_password)` — on failure `penalize()` + uniform 400 — then `set_password`, then optionally `Session.revoke_all` minus... v1: revoke_all (the current session dies too; the response says so and the webapp re-logs-in). Keep it simple and safe |
+| GET | `/me/sessions` | authed | `["me", "sessions"]` | `Session.from_db({ user_id: self, active })` (`active` via `string_to_boolean`, default true) |
+| DELETE | `/me/sessions/:session_id` | authed | — | `Session.for_id` → 404; 404 (not 403 — don't leak existence) when `session.user_id !== req.access.user_id`; `session.delete` |
+| GET | `/` | admin | `["users"]` | `User.from_db` (filters `admin`, `reader`, `editor` — effective-role semantics documented; order: `id`/`email`/`created_at`) |
+| GET | `/:user_id` | admin | `["user", id]` | `for_id` |
+| GET | `/:user_id/sessions` | admin | `["user", id, "sessions"]` | `Session.from_db({ user_id, active })` |
+| POST | `/` | admin | — | `await User.create` — body: `email` (required), `password` (required), `admin`/`reader`/`editor` (`only_boolean`). 409 duplicate email (ConflictError), 400 short password/bad email (plain Error) |
+| PATCH | `/:user_id` | admin | — | `user.update` — `email`, `admin`, `reader`, `editor` |
+| POST | `/:user_id/password` | admin | — | `await user.set_password(password)`; body `revoke_sessions` (default true) → `Session.revoke_all` (API-layer policy, per the model docs) |
+| DELETE | `/:user_id` | admin | — | `user.delete` (sessions cascade). Refuse self-delete (400 "use another admin") to keep the footgun small; no last-admin guard by design (matches model) |
+
+Invalidations: writes → `QK.users`, `QK.user(id)` (+`remove` on delete); self/password/session
+writes → `QK.me`, `QK.me_sessions`; admin session-affecting writes → `["user", id, "sessions"]`.
+When an admin edits the *calling* user, also `QK.me`.
+
+Tests: `test/api/test-users.js` (X-Sudo-Mode required on admin routes, /me without roles,
+ownership 404 on foreign session delete, penalized uniform 400 on wrong current_password,
+password-change revocation behavior).
+
+## Phase 7 — Registration, docs, polish
+
+1. `collections/index.js`: append Funds, TransactionGroups, Transactions, Statements,
+   Allocations, Finalizations, Users.
+2. `npm test` green across `test/models` (count additions) and `test/api`.
+3. Update `CLAUDE.md` API-layer section: list the new collections/prefixes, the
+   `parse_body_fields`/`assert_found`/`translate_model_error` helpers, the query-key registry
+   (`collections/lib/query_keys.js`), and the strict-body / coercive-query parser split.
+4. Sanity-pass `/api-docs`: every route documented, no schema $ref typos (swagger-ui renders
+   or it doesn't).
+
+---
+
+## Query-key summary (the webapp contract)
+
+| Key | Meaning | Invalidated by |
+|---|---|---|
+| `["versions"]` | existing Utils endpoint | (socket reconnect, already planned) |
+| `["funds"]` / `["fund", id]` | fund list / single | fund writes; finalize/unfinalize (cache repoints) |
+| `["fund-balance", id]` | computed balances (prefix-invalidated as a whole) | any transaction-affecting write: group create/delete, allocations, statement delete w/ group, finalize/unfinalize, fund hierarchy edits |
+| `["transaction-groups"]` / `["transaction-group", id]` | group list / single | group writes, allocations, statement deletes, finalize/unfinalize |
+| `["transactions"]` / `["transaction", id]` | flat transaction list / single | same as groups |
+| `["statements"]` / `["statement", id]` | bank statement items | import, item patch/delete, reconcile (from-statements), group delete |
+| `["allocations"]` | allocation views (webapp appends `{month}`/`{fund_id}` params) | allocation writes, fund hierarchy edits, finalize/unfinalize |
+| `["month-finalizations"]` (+`"latest"`) / `["month-finalization", id]` | finalized months | finalize/unfinalize |
+| `["fund-finalizations"]` / `["fund-finalization", id]` | per-fund history | finalize/unfinalize, fund create (backfill) |
+| `["users"]` / `["user", id]` (+ `["user", id, "sessions"]`) | admin views | user/session admin writes |
+| `["me"]` / `["me", "sessions"]` | self views | self writes, admin edits of self |
+
+Guiding rules: list key = plural resource name; single = singular + stringified id; computed
+subresources get their own top-level key (`fund-balance`) so hot invalidation (every
+transaction write) doesn't force refetching cold data (fund objects); when in doubt,
+over-invalidate (hyperspace's documented stance).
+
+## Suggested commit sequence
+
+One commit per phase (helpers; funds; groups+transactions; statements; allocations;
+finalizations; users; registration/docs), each with its tests — mirrors how Auth/Utils landed.

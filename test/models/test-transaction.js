@@ -534,4 +534,52 @@ describe("Transaction Model", () => {
             expect(results).to.be.an("array").with.lengthOf(0);
         });
     });
+
+    describe("count()", () => {
+        beforeEach(() => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Grocery shopping",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Split transaction",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries portion",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas portion",
+                    }
+                ]
+            });
+        });
+
+        it("counts all transactions with no filters", () => {
+            expect(Transaction.count(db)).to.equal(3);
+        });
+
+        it("counts with the same filters as from_db", () => {
+            expect(Transaction.count(db, { target_fund_id: groceries_fund.id })).to.equal(2);
+            expect(Transaction.count(db, { since: YDate.parse("2026-06-05") })).to.equal(2);
+            expect(Transaction.count(db, { description_like: "portion" })).to.equal(2);
+            expect(Transaction.count(db, { target_fund_id: gas_fund.id, until: YDate.parse("2026-06-02") })).to.equal(0);
+        });
+
+        it("ignores order/limit/offset so it can share the from_db filter object", () => {
+            const filter = { target_fund_id: groceries_fund.id, order_by: "date", order_direction: "DESC", limit: 1, offset: 0 };
+            expect(Transaction.count(db, filter)).to.equal(2);
+            expect(Transaction.from_db(db, filter)).to.have.lengthOf(1);
+        });
+    });
+
 });

@@ -143,4 +143,47 @@ describe("models/FundFinalization.js", () => {
             expect(results[0].eom_balance).to.equal(10);
         });
     });
+
+    describe("count()", () => {
+        let other_fund;
+        beforeEach(() => {
+            // Untracked so Fund.create does not backfill a row for the
+            // already-finalized month (this suite drives _create manually)
+            other_fund = Fund.create(db, {
+                name: "other",
+                tracked: false,
+            });
+            FundFinalization._create(db, {
+                month_id,
+                fund_id: fund.id,
+                eom_balance: 10,
+                sonm_balance: 10,
+                sonm_date: YDate.parse("2026-02-01"),
+            });
+            FundFinalization._create(db, {
+                month_id,
+                fund_id: other_fund.id,
+                eom_balance: 20,
+                sonm_balance: 20,
+                sonm_date: YDate.parse("2026-02-01"),
+            });
+        });
+
+        it("counts all finalizations with no filters", () => {
+            expect(FundFinalization.count(db)).to.equal(2);
+        });
+
+        it("counts with the same filters as from_db", () => {
+            expect(FundFinalization.count(db, { fund_id: fund.id })).to.equal(1);
+            expect(FundFinalization.count(db, { month_id })).to.equal(2);
+            expect(FundFinalization.count(db, { since: YDate.parse("2026-03-01") })).to.equal(0);
+        });
+
+        it("ignores order/limit/offset so it can share the from_db filter object", () => {
+            const filter = { order_by: "sonm_date", order_direction: "DESC", limit: 1, offset: 0 };
+            expect(FundFinalization.count(db, filter)).to.equal(2);
+            expect(FundFinalization.from_db(db, filter)).to.have.lengthOf(1);
+        });
+    });
+
 });

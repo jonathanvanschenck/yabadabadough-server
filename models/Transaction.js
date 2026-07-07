@@ -233,7 +233,7 @@ module.exports = class Transaction extends Base {
         return this.from_row(stmt.get({ id }) ?? null);
     }
 
-    static from_db(db, {
+    static _from_db_wheres({
         source_fund_id,
         target_fund_id,
         involving_fund_id,
@@ -242,10 +242,6 @@ module.exports = class Transaction extends Base {
         until,  // YDate or null
         allocation,
         description_like,
-        order_by = "date",
-        order_direction = "DESC",
-        limit = 100,
-        offset = 0
     }={}) {
         const wheres = [];
         const params = {};
@@ -292,6 +288,18 @@ module.exports = class Transaction extends Base {
             keys.push("description_like");
         }
 
+        return { wheres, params, keys };
+    }
+
+    static from_db(db, {
+        order_by = "date",
+        order_direction = "DESC",
+        limit = 100,
+        offset = 0,
+        ...filters
+    }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
                 + `FROM transactions\n`;
         if ( wheres.length ) {
@@ -320,6 +328,29 @@ module.exports = class Transaction extends Base {
         );
 
         return stmt.all(params).map(row => this.from_row(row));
+    }
+
+    /**
+     * Total rows matching the same filters as from_db (order/limit/offset
+     * are accepted and ignored, so the API layer can pass one filter object
+     * to both).
+     */
+    static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
+        let sql = `SELECT COUNT(*) AS count\n`
+                + `FROM transactions\n`;
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "count$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.get(params).count;
     }
 
     /**

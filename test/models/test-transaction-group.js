@@ -1118,4 +1118,68 @@ describe("TransactionGroup Model", () => {
             });
         });
     });
+
+    describe("count()", () => {
+        beforeEach(() => {
+            TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Grocery shopping",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Split transaction",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries portion",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas portion",
+                    }
+                ]
+            });
+            const item = BankStatementItem.create(db, {
+                source: "big-bank",
+                key: "count-test-1",
+                amount: -50.00,
+                date: YDate.parse("2026-06-10"),
+            });
+            TransactionGroup.create_from_statements(db, {
+                statement_ids: [item.id],
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: gas_fund.id,
+                    amount: 50.00,
+                    description: "Gas station",
+                }]
+            });
+        });
+
+        it("counts all groups with no filters", () => {
+            expect(TransactionGroup.count(db)).to.equal(3);
+        });
+
+        it("counts with the same filters as from_db", () => {
+            expect(TransactionGroup.count(db, { split: true })).to.equal(1);
+            expect(TransactionGroup.count(db, { has_statements: true })).to.equal(1);
+            expect(TransactionGroup.count(db, { has_statements: false })).to.equal(2);
+            expect(TransactionGroup.count(db, { since: YDate.parse("2026-06-05") })).to.equal(2);
+            expect(TransactionGroup.count(db, { description_like: "split" })).to.equal(1);
+        });
+
+        it("ignores order/limit/offset so it can share the from_db filter object", () => {
+            const filter = { order_by: "date", order_direction: "DESC", limit: 1, offset: 0 };
+            expect(TransactionGroup.count(db, filter)).to.equal(3);
+            expect(TransactionGroup.from_db(db, filter)).to.have.lengthOf(1);
+        });
+    });
+
 });

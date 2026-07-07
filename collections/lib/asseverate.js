@@ -3,12 +3,72 @@ const { Logger } = require("yalls");
 
 const { Collection: _Collection, Controller: _Controller, Handler: _Handler, Middleware: _Middleware, HTTPCodeError } = require("asseverate");
 
+const { ConflictError, ForeignKeyError } = require("../../lib/db.js");
+
 class HTTPCodeErrorDetailed extends Error /* NOT HTTPCodeError, otherwise asseverate default error handler will catch it */ {
     constructor(code, message, details) {
         super(message);
         this.code = code;
         this.details = details;
     }
+}
+
+/**
+ * Validate/normalize a request body against a field spec:
+ *
+ *   fields: [ [ key, parser, expected, { required=false }={} ], ... ]
+ *
+ * - key absent from body: skipped (400 `Missing parameter` when required)
+ * - parser returns undefined: 400 `Bad parameter: <key> (got ... expected <expected>)`
+ * - otherwise the PARSED value lands on the returned object
+ *
+ * Parsers signal failure by returning undefined (every parsers.js parser
+ * defaults its fallback to undefined), so transforming parsers (only_ydate)
+ * work the same as identity parsers (only_non_empty_string). Bodies should
+ * use the strict only_* parsers -- the coercive to_* parsers are for query
+ * strings.
+ */
+function parse_body_fields(body={}, fields=[]) {
+    const data = {};
+    for ( const [ key, parser, expected, { required=false }={} ] of fields ) {
+        if ( body?.[key] === undefined ) {
+            if ( required ) throw new HTTPCodeError(400, `Missing parameter: ${key} (expected ${expected})`);
+            continue;
+        }
+        const parsed = parser(body[key]);
+        if ( parsed === undefined ) throw new HTTPCodeError(400, `Bad parameter: ${key} (got '${JSON.stringify(body[key])}' expected ${expected})`);
+        data[key] = parsed;
+    }
+    return data;
+}
+
+/**
+ * 404 helper for path-id lookups: returns `value` unless it is null/undefined.
+ */
+function assert_found(value, label) {
+    if ( value == null ) throw new HTTPCodeError(404, `Not found: ${label}`);
+    return value;
+}
+
+/**
+ * The write-path error mapper. Wrap ONLY the model create/update/delete call
+ * (never a whole handler), e.g.:
+ *
+ *     try { fund = Fund.create(this.db, data); }
+ *     catch (err) { translate_model_error(err); }
+ *
+ * - ConflictError   -> 409 (duplicate / immutable-history / state conflicts)
+ * - ForeignKeyError -> 400 (bad reference in the body; path ids 404 earlier
+ *                     via assert_found)
+ * - plain Error     -> 400 (the models' consistency checks throw bare Errors;
+ *                     the constructor check keeps TypeError & friends -- real
+ *                     bugs -- flowing through to the 500 handler)
+ */
+function translate_model_error(err) {
+    if ( err instanceof ConflictError ) throw new HTTPCodeError(409, err.message);
+    if ( err instanceof ForeignKeyError ) throw new HTTPCodeError(400, err.message);
+    if ( err.constructor === Error ) throw new HTTPCodeError(400, err.message);
+    throw err;
 }
 
 function log_error(log, error) {
@@ -381,6 +441,9 @@ module.exports = {
     JWTMiddleware,
     FlyTrap,
     Access,
-    log_error
+    log_error,
+    parse_body_fields,
+    assert_found,
+    translate_model_error
 };
 
