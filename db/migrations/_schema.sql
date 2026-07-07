@@ -8,7 +8,12 @@ CREATE TABLE users (
     -- existing hashes. NEVER exposed via to_api.
     password_hash       TEXT NOT NULL,
 
+    -- Stored role flags: everyone defaults to reader. Admin implies every
+    -- other role at READ time (user.roles) -- never written back here, so
+    -- these columns always hold what was explicitly granted.
     admin               INTEGER NOT NULL DEFAULT 0 CHECK (admin IN (0,1)),
+    reader              INTEGER NOT NULL DEFAULT 1 CHECK (reader IN (0,1)),
+    editor              INTEGER NOT NULL DEFAULT 0 CHECK (editor IN (0,1)),
 
     -- Meta data
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

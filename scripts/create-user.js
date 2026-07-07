@@ -2,7 +2,7 @@
 /**
  * Bootstrap / recovery CLI for user accounts (there is no API yet):
  *
- *   node scripts/create-user.js <email> <password> [--admin]
+ *   node scripts/create-user.js <email> <password> [--admin] [--editor]
  *   node scripts/create-user.js <email> <password> --set-password
  *
  * The first form creates a user; the second resets an existing user's
@@ -14,7 +14,7 @@ const { create_connection, initialize_db, ConflictError } = require("../lib/db.j
 const User = require("../models/User.js");
 
 function usage() {
-    console.error("Usage: node scripts/create-user.js <email> <password> [--admin | --set-password]");
+    console.error("Usage: node scripts/create-user.js <email> <password> [--admin] [--editor] [--set-password]");
     process.exit(1);
 }
 
@@ -24,11 +24,12 @@ const positional = args.filter(arg => !arg.startsWith("--"));
 
 if ( positional.length !== 2 ) usage();
 for ( const flag of flags ) {
-    if ( flag !== "--admin" && flag !== "--set-password" ) usage();
+    if ( flag !== "--admin" && flag !== "--editor" && flag !== "--set-password" ) usage();
 }
 
 const [ email, password ] = positional;
 const admin = flags.includes("--admin");
+const editor = flags.includes("--editor");
 const set_password = flags.includes("--set-password");
 
 const db = create_connection(env.db);
@@ -44,7 +45,7 @@ try {
         }
         user = user.set_password(db, password);
     } else {
-        user = User.create(db, { email, password, admin });
+        user = User.create(db, { email, password, admin, editor });
     }
 
     console.log(JSON.stringify(user.to_api(), null, 2));

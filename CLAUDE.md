@@ -16,8 +16,9 @@ Personal finance server application built with Node.js and SQLite. Manages funds
 - Fresh schema applied automatically to new databases via `db/migrations/_schema.sql`
 
 ### Scripts
-- Create a user (bootstrap; no API yet): `node scripts/create-user.js <email> <password> [--admin]`
+- Create a user (bootstrap; no API yet): `node scripts/create-user.js <email> <password> [--admin] [--editor]`
 - Reset a password: `node scripts/create-user.js <email> <new-password> --set-password`
+- Generate/rotate a JWT signing key pair: `node scripts/generate-jwt-key.js [dir]`
 
 ## Architecture
 
@@ -28,6 +29,24 @@ Central module for database operations:
 - `initialize_db(db)`: Applies schema for new databases, handles migrations for existing ones
 - Caches prepared statements and transactions on `db.prepared_stmts` and `db.prepared_transactions` Maps
 - Exports `ConflictError` and `ForeignKeyError` for model validation
+
+### Token Manager (`lib/TokenManager.js`)
+
+Owns JWT mechanics only (payload shapes / TTL policy live with the models):
+- Ed25519 (`EdDSA`) signatures via node built-in crypto, no deps — same philosophy as scrypt
+  password hashing. The algorithm is pinned: any other `alg` header is rejected
+- Holds an ordered list of `kid`-named key pairs; the first with a private half signs, ALL
+  verify (matched by the token's `kid` header). Old keys may be public-half-only, which is the
+  rotation story: generate a new pair, keep the old public key one max-token-lifetime (~1w),
+  then delete. `TokenManager.from_dir(dir)` loads `<kid>.private.pem` / `<kid>.public.pem`,
+  kids sorted DESCENDING so the newest timestamp-named kid (from `scripts/generate-jwt-key.js`)
+  signs. Missing/empty dir is a hard startup error pointing at the script
+- `tokenize(payload, { ttl_s | expires_at })` stamps `iat`/`exp` (exp source is required —
+  negative `ttl_s` allowed for test fabrication); `verify(token)` checks signature AND
+  expiry/nbf, returning the payload or `null` on ANY failure (never throws on bad input);
+  `peek(token)` parses without verifying (routing/inspection only — never trust it)
+- Wired in `index.js` from the `tokens` env block (`YDD_JWT_KEYS_DIR`, default `./keys`,
+  gitignored) and passed to `Webserver` as `token_manager`
 
 ### Data Type Conventions
 
@@ -223,17 +242,24 @@ allocations.
 - Email is normalized (lowercase + trim) at every model boundary and stored normalized, so the
   column `UNIQUE` gives case-insensitive uniqueness. Minimal format check (contains `@`);
   passwords are min 8 chars, enforced in `create`/`set_password`
+- Three role flags: `admin`, `reader` (default 1 — everyone is a reader unless revoked), and
+  `editor`. Stored flags hold what was explicitly granted; `user.roles` is the EFFECTIVE set,
+  where admin implies every other role (derived at read time, never written back). ALL role
+  checks go through `roles`; access-token payloads carry effective roles (applied at mint time),
+  and `from_db`'s `reader`/`editor` filters match effective roles (admins count) while `admin`
+  is exact. Editor does NOT imply reader (the default covers it)
 - Passwords are salted scrypt hashes (node built-in crypto, no deps) stored as ONE
   self-describing string: `scrypt$N$r$p$salt_b64$hash_b64`. Verification parses params from the
   stored string (not code constants), so cost can be raised later without invalidating existing
   hashes. `to_api` NEVER includes `password_hash`
-- `update` handles only `email`/`admin`; passwords change via `set_password` (fresh salt).
+- `update` handles only `email` and the role flags; passwords change via `set_password` (fresh
+  salt).
   Password changes deliberately do NOT revoke sessions — that's API-layer policy (one
   `Session.revoke_all` call). `User.authenticate` returns `User | null` and burns a dummy scrypt
   verify on unknown emails (user-enumeration timing resistance). No last-admin guard by design
 - JWT payloads (signing/verification is future API-controller work; the model only renders
   payload objects, with `typ` + `v` claims discriminating kinds):
-  - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, sid }`
+  - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, reader, editor, sid }` (effective roles)
   - auth (~1w, session-bound): `{ v, typ: "auth", sub, sid, token }`
   Rendered by `user.to_access_token_payload(session)` / `to_auth_token_payload(session)`;
   `User.from_token_payload(payload)` is the db-free inverse for access payloads (unsaved

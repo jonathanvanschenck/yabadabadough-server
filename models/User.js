@@ -19,6 +19,8 @@ const SELECT_COLUMNS = [
     "email",
     "password_hash",
     "admin",
+    "reader",
+    "editor",
     "created_at",
 ];
 
@@ -68,13 +70,21 @@ function verify_password(password, stored) {
 const DUMMY_HASH = hash_password(crypto.randomBytes(16).toString("hex"));
 
 /**
- * A user account: normalized email, salted scrypt password hash, admin flag.
+ * A user account: normalized email, salted scrypt password hash, and role
+ * flags (admin/reader/editor -- everyone defaults to reader).
+ *
+ * Role flags are stored as explicitly granted; `user.roles` is the EFFECTIVE
+ * set, where admin implies every other role (derived at read time, never
+ * written back). Role checks go through `roles`; the stored flags are for
+ * display/editing.
  *
  * The password_hash is never exposed via to_api, and only ever changes
- * through set_password (update handles email/admin only).
+ * through set_password (update handles email/roles only).
  *
  * Token payloads (signing/verification is the API layer's job):
- *  - access (~1h, stateless):  { v, typ: "access", sub, email, admin, sid }
+ *  - access (~1h, stateless):  { v, typ: "access", sub, email, admin, reader, editor, sid }
+ *    (role claims are the EFFECTIVE roles, so request handling never
+ *    re-derives the admin-implies-all rule)
  *  - auth (~1w, session-bound): { v, typ: "auth", sub, sid, token }
  * Access tokens are verified by signature alone, so logout / revoke-all /
  * admin changes do not kill outstanding access tokens -- they die at their
@@ -99,17 +109,23 @@ module.exports = class User extends Base {
             INSERT INTO users (
                 email,
                 password_hash,
-                admin
+                admin,
+                reader,
+                editor
             ) VALUES (
                 @email,
                 @password_hash,
-                @admin
+                @admin,
+                @reader,
+                @editor
             )
         `,
         update: `
             UPDATE users
             SET email = @email,
-                admin = @admin
+                admin = @admin,
+                reader = @reader,
+                editor = @editor
             WHERE id = @id
         `,
         set_password: `
@@ -136,6 +152,8 @@ module.exports = class User extends Base {
         email,
         password_hash,
         admin,
+        reader,
+        editor,
         created_at,
     }={}) {
         super();
@@ -143,7 +161,22 @@ module.exports = class User extends Base {
         this.email = email;
         this.password_hash = password_hash;
         this.admin = admin;
+        this.reader = reader;
+        this.editor = editor;
         this.created_at = created_at;
+    }
+
+    /**
+     * The EFFECTIVE role set: admin implies every other role. All role
+     * checks go through here -- the stored flags only say what was
+     * explicitly granted.
+     */
+    get roles() {
+        return {
+            admin: !!this.admin,
+            reader: !!(this.reader || this.admin),
+            editor: !!(this.editor || this.admin),
+        };
     }
 
     to_api() {
@@ -151,6 +184,9 @@ module.exports = class User extends Base {
             id: this.id,
             email: this.email,
             admin: this.admin,
+            reader: this.reader,
+            editor: this.editor,
+            roles: this.roles,
             created_at: this.created_at.toISOString(),
         };
     }
@@ -163,6 +199,8 @@ module.exports = class User extends Base {
             email: row.email,
             password_hash: row.password_hash,
             admin: stmt2boolean(row.admin),
+            reader: stmt2boolean(row.reader),
+            editor: stmt2boolean(row.editor),
             created_at: stmt2datetime(row.created_at),
         });
     }
@@ -177,8 +215,14 @@ module.exports = class User extends Base {
         return this.from_row(stmt.get({ email: this._normalize_email(email) }) ?? null);
     }
 
+    /**
+     * The reader/editor filters match EFFECTIVE roles (admins count), same
+     * semantics as user.roles; the admin filter is exact.
+     */
     static from_db(db, {
         admin,
+        reader,
+        editor,
         order_by = "id",
         order_direction = "ASC",
         limit = 100,
@@ -192,6 +236,18 @@ module.exports = class User extends Base {
             wheres.push("admin = @admin");
             params.admin = boolean2stmt(admin);
             keys.push("admin");
+        }
+
+        if ( reader !== undefined ) {
+            wheres.push("(reader = 1 OR admin = 1) = @reader");
+            params.reader = boolean2stmt(reader);
+            keys.push("reader");
+        }
+
+        if ( editor !== undefined ) {
+            wheres.push("(editor = 1 OR admin = 1) = @editor");
+            params.editor = boolean2stmt(editor);
+            keys.push("editor");
         }
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
@@ -240,7 +296,7 @@ module.exports = class User extends Base {
         if ( password.length < 8 ) throw new Error("Password must be at least 8 characters");
     }
 
-    static _create(db, { email, password_hash, admin }={}) {
+    static _create(db, { email, password_hash, admin, reader, editor }={}) {
         if ( this.get_stmt(db, "for_email").get({ email }) ) {
             throw new ConflictError("User already exists: " + email);
         }
@@ -249,6 +305,8 @@ module.exports = class User extends Base {
             email,
             password_hash,
             admin: boolean2stmt(admin),
+            reader: boolean2stmt(reader),
+            editor: boolean2stmt(editor),
         });
 
         return this.for_id(db, result.lastInsertRowid);
@@ -258,6 +316,8 @@ module.exports = class User extends Base {
         email,
         password,
         admin = false,
+        reader = true,
+        editor = false,
     }={}) {
         const _email = this._normalize_email(email);
         this._assert_valid_email(_email);
@@ -267,7 +327,7 @@ module.exports = class User extends Base {
         const password_hash = hash_password(password);
 
         const transaction = this.build_transaction(db, "create", this._create.bind(this));
-        return transaction(db, { email: _email, password_hash, admin });
+        return transaction(db, { email: _email, password_hash, admin, reader, editor });
     }
 
     static _update(db, user, changes={}) {
@@ -279,6 +339,8 @@ module.exports = class User extends Base {
         const next = {
             email: changes.email !== undefined ? changes.email : fresh.email,
             admin: changes.admin !== undefined ? changes.admin : fresh.admin,
+            reader: changes.reader !== undefined ? changes.reader : fresh.reader,
+            editor: changes.editor !== undefined ? changes.editor : fresh.editor,
         };
 
         const existing = this.get_stmt(db, "for_email").get({ email: next.email });
@@ -290,17 +352,21 @@ module.exports = class User extends Base {
             id: fresh.id,
             email: next.email,
             admin: boolean2stmt(next.admin),
+            reader: boolean2stmt(next.reader),
+            editor: boolean2stmt(next.editor),
         });
 
         return this.for_id(db, fresh.id);
     }
 
     /**
-     * Only `email` and `admin` -- passwords change via set_password.
+     * Only `email` and the role flags -- passwords change via set_password.
      */
     update(db, {
         email,
         admin,
+        reader,
+        editor,
     }={}) {
         if ( email !== undefined ) {
             email = this.constructor._normalize_email(email);
@@ -309,7 +375,7 @@ module.exports = class User extends Base {
 
         const transaction = this.constructor.build_transaction(
             db, "update", this.constructor._update.bind(this.constructor));
-        return transaction(db, this, { email, admin });
+        return transaction(db, this, { email, admin, reader, editor });
     }
 
     static _set_password(db, user, password_hash) {
@@ -382,17 +448,22 @@ module.exports = class User extends Base {
 
     /**
      * Payload for the short-lived (~1h) stateless access token. Carries
-     * everything request handling needs so the users table is never hit.
+     * everything request handling needs so the users table is never hit --
+     * including the EFFECTIVE roles (admin-implies-all applied at mint
+     * time, so consumers never re-derive it).
      * The API controller signs it and sets exp from ACCESS_TOKEN_TTL_S.
      */
     to_access_token_payload(session) {
         this._assert_session_owner(session);
+        const roles = this.roles;
         return {
             v: 1,
             typ: "access",
             sub: this.id,
             email: this.email,
-            admin: this.admin,
+            admin: roles.admin,
+            reader: roles.reader,
+            editor: roles.editor,
             sid: session.id,
         };
     }
@@ -416,7 +487,9 @@ module.exports = class User extends Base {
     /**
      * Db-free construction from a signature-verified ACCESS payload, for
      * stateless request handling: the instance is unsaved (no password_hash,
-     * no created_at) and `admin` may be up to ~1h stale. Anything needing
+     * no created_at) and the role flags may be up to ~1h stale. The payload
+     * carries EFFECTIVE roles, so the instance's flags are effective too
+     * (its `roles` getter returns the same set). Anything needing
      * fresh/trusted state should use User.for_id(db, payload.sub) instead.
      */
     static from_token_payload(payload={}) {
@@ -431,6 +504,8 @@ module.exports = class User extends Base {
             id: payload.sub,
             email: payload.email,
             admin: payload.admin,
+            reader: payload.reader,
+            editor: payload.editor,
             password_hash: null,
             created_at: null,
         });

@@ -25,6 +25,8 @@ describe("User Model", () => {
             expect(user.id).to.be.a("number");
             expect(user.email).to.equal("alice@example.com");
             expect(user.admin).to.be.false;
+            expect(user.reader).to.be.true; // everyone defaults to reader
+            expect(user.editor).to.be.false;
             expect(user.created_at).to.be.a("Date");
         });
 
@@ -36,6 +38,27 @@ describe("User Model", () => {
             });
 
             expect(user.admin).to.be.true;
+        });
+
+        it("should create an editor user", () => {
+            const user = User.create(db, {
+                email: "editor@example.com",
+                password: "hunter22hunter22",
+                editor: true,
+            });
+
+            expect(user.editor).to.be.true;
+            expect(user.admin).to.be.false;
+        });
+
+        it("should allow revoking the default reader role", () => {
+            const user = User.create(db, {
+                email: "norole@example.com",
+                password: "hunter22hunter22",
+                reader: false,
+            });
+
+            expect(user.reader).to.be.false;
         });
 
         it("should normalize email case and whitespace", () => {
@@ -211,17 +234,29 @@ describe("User Model", () => {
             expect(updated.verify_password("hunter22hunter22")).to.be.true;
         });
 
+        it("should update the reader and editor flags", () => {
+            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+
+            const updated = user.update(db, { reader: false, editor: true });
+
+            expect(updated.reader).to.be.false;
+            expect(updated.editor).to.be.true;
+        });
+
         it("should leave omitted fields alone", () => {
             const user = User.create(db, {
                 email: "alice@example.com",
                 password: "hunter22hunter22",
-                admin: true
+                admin: true,
+                editor: true
             });
 
             const updated = user.update(db, { admin: false });
 
             expect(updated.email).to.equal("alice@example.com");
             expect(updated.admin).to.be.false;
+            expect(updated.reader).to.be.true;
+            expect(updated.editor).to.be.true;
         });
 
         it("should reject an email belonging to another user", () => {
@@ -268,9 +303,62 @@ describe("User Model", () => {
                 id: user.id,
                 email: "alice@example.com",
                 admin: false,
+                reader: true,
+                editor: false,
+                roles: { admin: false, reader: true, editor: false },
                 created_at: user.created_at.toISOString(),
             });
             expect(api).to.not.have.property("password_hash");
+        });
+    });
+
+    describe("roles", () => {
+        it("should default to reader only", () => {
+            const user = User.create(db, { email: "alice@example.com", password: "hunter22hunter22" });
+
+            expect(user.roles).to.deep.equal({ admin: false, reader: true, editor: false });
+        });
+
+        it("should grant admins every other role", () => {
+            const user = User.create(db, {
+                email: "root@example.com",
+                password: "hunter22hunter22",
+                admin: true,
+                reader: false, // even with the stored flags revoked
+                editor: false,
+            });
+
+            expect(user.reader).to.be.false;
+            expect(user.editor).to.be.false;
+            expect(user.roles).to.deep.equal({ admin: true, reader: true, editor: true });
+        });
+
+        it("should not grant editors anything extra", () => {
+            const user = User.create(db, {
+                email: "editor@example.com",
+                password: "hunter22hunter22",
+                editor: true,
+                reader: false,
+            });
+
+            expect(user.roles).to.deep.equal({ admin: false, reader: false, editor: true });
+        });
+
+        it("should filter from_db by effective role", () => {
+            User.create(db, { email: "reader@example.com", password: "hunter22hunter22" });
+            User.create(db, { email: "editor@example.com", password: "hunter22hunter22", editor: true });
+            User.create(db, { email: "root@example.com", password: "hunter22hunter22", admin: true, reader: false });
+            User.create(db, { email: "norole@example.com", password: "hunter22hunter22", reader: false });
+
+            // Admins count as editors/readers even when the stored flags are off
+            const editors = User.from_db(db, { editor: true, order_by: "email" });
+            expect(editors.map(u => u.email)).to.deep.equal(["editor@example.com", "root@example.com"]);
+
+            const readers = User.from_db(db, { reader: true, order_by: "email" });
+            expect(readers.map(u => u.email)).to.deep.equal(["editor@example.com", "reader@example.com", "root@example.com"]);
+
+            const non_readers = User.from_db(db, { reader: false });
+            expect(non_readers.map(u => u.email)).to.deep.equal(["norole@example.com"]);
         });
     });
 
@@ -287,13 +375,18 @@ describe("User Model", () => {
             session = Session.create(db, { user_id: user.id });
         });
 
-        it("should render the access token payload", () => {
+        it("should render the access token payload with effective roles", () => {
+            // user is admin with editor NOT explicitly granted -- the payload
+            // carries effective roles, so editor comes out true anyway
+            expect(user.editor).to.be.false;
             expect(user.to_access_token_payload(session)).to.deep.equal({
                 v: 1,
                 typ: "access",
                 sub: user.id,
                 email: "alice@example.com",
                 admin: true,
+                reader: true,
+                editor: true,
                 sid: session.id,
             });
         });
@@ -321,6 +414,7 @@ describe("User Model", () => {
             expect(clone.id).to.equal(user.id);
             expect(clone.email).to.equal(user.email);
             expect(clone.admin).to.equal(user.admin);
+            expect(clone.roles).to.deep.equal(user.roles);
             expect(clone.password_hash).to.be.null;
         });
 
