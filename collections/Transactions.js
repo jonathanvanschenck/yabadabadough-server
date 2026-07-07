@@ -26,13 +26,15 @@ const TransactionGroup = require("../models/TransactionGroup.js");
 const Transaction = require("../models/Transaction.js");
 
 /**
- * Validate the `transactions` array shared by both group-creation bodies.
- * USER transaction amounts are strictly positive at this layer (the models
- * permit zero only for internal eom_cleanup transactions).
+ * Validate a `transactions` array (group-creation bodies, and the line
+ * editor's `add` array via `label`/`allow_empty`). USER transaction amounts
+ * are strictly positive at this layer (the models permit zero only for
+ * internal eom_cleanup transactions).
  */
-function parse_transaction_specs(raw) {
-    if ( !Array.isArray(raw) || raw.length < 1 ) {
-        throw new HTTPCodeError(400, "Bad parameter: transactions (expected non-empty array)");
+function parse_transaction_specs(raw, { label = "transactions", allow_empty = false }={}) {
+    if ( raw === undefined && allow_empty ) return [];
+    if ( !Array.isArray(raw) || (!allow_empty && raw.length < 1) ) {
+        throw new HTTPCodeError(400, `Bad parameter: ${label} (expected ${allow_empty ? "array" : "non-empty array"})`);
     }
     return raw.map((spec, i) => {
         try {
@@ -44,10 +46,45 @@ function parse_transaction_specs(raw) {
                 [ "note", nullable(only_string), "string or null" ],
             ]);
         } catch (err) {
-            if ( err instanceof HTTPCodeError ) throw new HTTPCodeError(400, `transactions[${i}]: ${err.message}`);
+            if ( err instanceof HTTPCodeError ) throw new HTTPCodeError(400, `${label}[${i}]: ${err.message}`);
             throw err;
         }
     });
+}
+
+/**
+ * Validate the line editor's `update` array: each element names an existing
+ * transaction by id plus the in-place changes (same strict field rules as
+ * creation, but everything optional).
+ */
+function parse_transaction_updates(raw) {
+    if ( raw === undefined ) return [];
+    if ( !Array.isArray(raw) ) {
+        throw new HTTPCodeError(400, "Bad parameter: update (expected array)");
+    }
+    return raw.map((spec, i) => {
+        try {
+            return parse_body_fields(spec, [
+                [ "id", only_id, "positive integer", { required: true } ],
+                [ "amount", only_positive_number, "positive number" ],
+                [ "source_fund_id", only_id, "positive integer" ],
+                [ "target_fund_id", only_id, "positive integer" ],
+                [ "description", only_non_empty_string, "non-empty string" ],
+                [ "note", nullable(only_string), "string or null" ],
+            ]);
+        } catch (err) {
+            if ( err instanceof HTTPCodeError ) throw new HTTPCodeError(400, `update[${i}]: ${err.message}`);
+            throw err;
+        }
+    });
+}
+
+function parse_id_array(raw, label) {
+    if ( raw === undefined ) return [];
+    if ( !Array.isArray(raw) || raw.some((id) => only_id(id) === undefined) ) {
+        throw new HTTPCodeError(400, `Bad parameter: ${label} (expected array of positive integers)`);
+    }
+    return raw;
 }
 
 const TransactionSpecSchema = {
@@ -62,6 +99,19 @@ const TransactionSpecSchema = {
     required: [ 'source_fund_id', 'target_fund_id', 'amount', 'description' ]
 };
 
+const TransactionUpdateSpecSchema = {
+    type: 'object',
+    properties: {
+        id: { type: 'integer', minimum: 1, description: "The id of a transaction belonging to this group" },
+        source_fund_id: { type: 'integer', minimum: 1 },
+        target_fund_id: { type: 'integer', minimum: 1 },
+        amount: { type: 'number', exclusiveMinimum: 0, description: "Currency as a float dollar amount; strictly positive" },
+        description: { type: 'string' },
+        note: { type: 'string', nullable: true }
+    },
+    required: [ 'id' ]
+};
+
 class Controller extends _Controller {
 
     static GroupIDParam = {
@@ -72,10 +122,44 @@ class Controller extends _Controller {
         schema: { type: 'integer' }
     }
 
+    static TransactionIDParam = {
+        name: 'transaction_id',
+        in: 'path',
+        description: 'The ID of the transaction',
+        required: true,
+        schema: { type: 'integer' }
+    }
+
     get_group(req) {
         const group_id = to_int(req.params.group_id);
         if ( !group_id ) throw new HTTPCodeError(404, "Not found");
         return assert_found(TransactionGroup.for_id(this.db, group_id), `transaction group ${group_id}`);
+    }
+
+    get_transaction(req) {
+        const transaction_id = to_int(req.params.transaction_id);
+        if ( !transaction_id ) throw new HTTPCodeError(404, "Not found");
+        return assert_found(Transaction.for_id(this.db, transaction_id), `transaction ${transaction_id}`);
+    }
+
+    // The internal group kinds cannot be edited through this API (mirrors the
+    // DELETE endpoint's allocation guard); the model refusals back this up
+    assert_group_editable(group) {
+        if ( group.allocation ) {
+            throw new HTTPCodeError(409, "Allocation groups are managed via the allocations API");
+        }
+        if ( group.eom_cleanup ) {
+            throw new HTTPCodeError(409, "EOM cleanup groups cannot be edited");
+        }
+    }
+
+    assert_transaction_editable(transaction) {
+        if ( transaction.allocation ) {
+            throw new HTTPCodeError(409, "Allocation transactions are managed via the allocations API");
+        }
+        if ( transaction.eom_cleanup_id != null ) {
+            throw new HTTPCodeError(409, "EOM cleanup transactions cannot be edited");
+        }
     }
 }
 
@@ -412,6 +496,165 @@ module.exports = class TransactionsCollection extends Collection {
             ]
         },
 
+        class PatchTransactionGroup extends Controller {
+            static path = "/transaction-group/:group_id";
+
+            static method = "PATCH";
+
+            static editor = true;
+
+            static openapi_Summary = "Update Transaction Group";
+
+            static openapi_Description = "Update a transaction group's scalar fields in place: description, note, and/or date. A date change cascades to every transaction in the group (re-checking their funds' start dates) and may not move the group into -- or out of -- a finalized month (409). The group's id is stable, so bank statement reconciliation survives (this is the reason to prefer updates over delete-and-recreate). Allocation and eom_cleanup groups cannot be edited here (409). Adding/removing/editing the group's transactions goes through PATCH .../transactions.";
+
+            static openapi_Parameters = [
+                this.GroupIDParam
+            ]
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    description: { type: 'string' },
+                    note: { type: 'string', nullable: true },
+                    date: { type: 'string', format: 'date', description: "Cascades to every transaction in the group" }
+                }
+            }
+
+            async parse_request(req) {
+                const group = this.get_group(req);
+                const data = parse_body_fields(req.body, [
+                    [ "description", only_non_empty_string, "non-empty string" ],
+                    [ "note", nullable(only_string), "string or null" ],
+                    [ "date", only_ydate, "YYYY-MM-DD string" ],
+                ]);
+                return { group, data };
+            }
+
+            async respond({ group, data }) {
+                this.assert_group_editable(group);
+
+                let updated;
+                try {
+                    updated = group.update(this.db, data);
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                // A date change moves money between periods; description/note
+                // cannot, so skip the balance refetch for cosmetic edits
+                const invalidation_actions = data.date !== undefined ? [
+                    ...money_moved(),
+                    invalidate(QK.transaction_group(group.id)),
+                ] : [
+                    invalidate(QK.transaction_groups),
+                    invalidate(QK.transaction_group(group.id)),
+                ];
+                // The hydrated statements ride on the group
+                if ( data.date !== undefined && group.statements.length ) {
+                    invalidation_actions.push(invalidate(QK.statements));
+                }
+
+                this.broadcast_invalidations(invalidation_actions, { group_id: group.id });
+
+                return {
+                    data: updated.to_api(),
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/TransactionGroupSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict (finalized month; allocation/eom_cleanup group; date predates a fund's start date)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
+            ]
+        },
+
+        class PatchTransactionGroupTransactions extends Controller {
+            static path = "/transaction-group/:group_id/transactions";
+
+            static method = "PATCH";
+
+            static editor = true;
+
+            static openapi_Summary = "Edit Transaction Group Transactions (Add/Update/Remove)";
+
+            static openapi_Description = "Edit the group's transactions in one atomic batch: `add` new transactions (they take the group's date), `update` existing ones in place (amount, funds, description, note), and/or `remove` others. Every referenced id must belong to this group and may be referenced only once. The group must keep at least one transaction -- to empty it, DELETE the group instead. The group's id is stable, so bank statement reconciliation survives. Groups in finalized months and allocation/eom_cleanup groups cannot be edited (409).";
+
+            static openapi_Parameters = [
+                this.GroupIDParam
+            ]
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    add: {
+                        type: 'array',
+                        items: TransactionSpecSchema,
+                        description: "New transactions to insert (dated the group's date)"
+                    },
+                    update: {
+                        type: 'array',
+                        items: TransactionUpdateSpecSchema,
+                        description: "In-place edits to transactions already in the group"
+                    },
+                    remove: {
+                        type: 'array',
+                        items: { type: 'integer', minimum: 1 },
+                        description: "Ids of transactions (in this group) to delete"
+                    }
+                }
+            }
+
+            async parse_request(req) {
+                const group = this.get_group(req);
+
+                const ops = {
+                    add: parse_transaction_specs(req.body?.add, { label: "add", allow_empty: true }),
+                    update: parse_transaction_updates(req.body?.update),
+                    remove: parse_id_array(req.body?.remove, "remove"),
+                };
+                if ( ops.add.length + ops.update.length + ops.remove.length < 1 ) {
+                    throw new HTTPCodeError(400, "Missing parameter: at least one of add, update, remove");
+                }
+
+                return { group, ops };
+            }
+
+            async respond({ group, ops }) {
+                this.assert_group_editable(group);
+
+                let updated;
+                try {
+                    updated = TransactionGroup.edit_transactions(this.db, group, ops);
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                const invalidation_actions = [
+                    ...money_moved(),
+                    invalidate(QK.transaction_group(group.id)),
+                    ...ops.remove.map((id) => remove(QK.transaction(id))),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { group_id: group.id });
+
+                return {
+                    data: updated.to_api(),
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/TransactionGroupSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter (including ids not in this group, an id referenced twice, or emptying the group)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict (finalized month; allocation/eom_cleanup group)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
+            ]
+        },
+
         class GetTransactions extends Controller {
             static path = "/transactions";
 
@@ -419,7 +662,7 @@ module.exports = class TransactionsCollection extends Collection {
 
             static openapi_Summary = "List Transactions";
 
-            static openapi_Description = "Get a flat list of transactions across groups (read-only: transactions are created and deleted through their groups). You can filter and sort the results using query parameters.";
+            static openapi_Description = "Get a flat list of transactions across groups (transactions are created and deleted through their groups; existing ones may be edited in place via PATCH). You can filter and sort the results using query parameters.";
 
             static query_key = ["transactions"];
 
@@ -530,19 +773,11 @@ module.exports = class TransactionsCollection extends Collection {
             static query_key = [ "transaction", "transaction_id" ];
 
             static openapi_Parameters = [
-                {
-                    name: 'transaction_id',
-                    in: 'path',
-                    description: 'The ID of the transaction',
-                    required: true,
-                    schema: { type: 'integer' }
-                }
+                this.TransactionIDParam
             ]
 
             async parse_request(req) {
-                const transaction_id = to_int(req.params.transaction_id);
-                if ( !transaction_id ) throw new HTTPCodeError(404, "Not found");
-                return assert_found(Transaction.for_id(this.db, transaction_id), `transaction ${transaction_id}`);
+                return this.get_transaction(req);
             }
 
             async respond(transaction) {
@@ -555,6 +790,84 @@ module.exports = class TransactionsCollection extends Collection {
 
             static openapi_ErrorResponses = [
                 { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
+        },
+
+        class PatchTransaction extends Controller {
+            static path = "/transaction/:transaction_id";
+
+            static method = "PATCH";
+
+            static editor = true;
+
+            static openapi_Summary = "Update Transaction";
+
+            static openapi_Description = "Edit a single transaction in place: amount, source/target funds, description, and/or note. The transaction's date is a group-level fact -- change it via PATCH on the group. Creating and deleting transactions also goes through the group (PATCH .../transaction-group/:group_id/transactions). Transactions in finalized months and allocation/eom_cleanup transactions cannot be edited (409).";
+
+            static openapi_Parameters = [
+                this.TransactionIDParam
+            ]
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    source_fund_id: { type: 'integer', minimum: 1 },
+                    target_fund_id: { type: 'integer', minimum: 1 },
+                    amount: { type: 'number', exclusiveMinimum: 0, description: "Currency as a float dollar amount; strictly positive" },
+                    description: { type: 'string' },
+                    note: { type: 'string', nullable: true }
+                }
+            }
+
+            async parse_request(req) {
+                const transaction = this.get_transaction(req);
+                const data = parse_body_fields(req.body, [
+                    [ "amount", only_positive_number, "positive number" ],
+                    [ "source_fund_id", only_id, "positive integer" ],
+                    [ "target_fund_id", only_id, "positive integer" ],
+                    [ "description", only_non_empty_string, "non-empty string" ],
+                    [ "note", nullable(only_string), "string or null" ],
+                ]);
+                return { transaction, data };
+            }
+
+            async respond({ transaction, data }) {
+                this.assert_transaction_editable(transaction);
+
+                let updated;
+                try {
+                    updated = transaction.update(this.db, data);
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                // Amount/fund changes move money; description/note cannot,
+                // so skip the balance refetch for cosmetic edits
+                const money_changed = data.amount !== undefined
+                    || data.source_fund_id !== undefined
+                    || data.target_fund_id !== undefined;
+                const invalidation_actions = [
+                    ...(money_changed ? money_moved() : [ invalidate(QK.transactions) ]),
+                    invalidate(QK.transaction(transaction.id)),
+                    // The group embeds its transactions in to_api()
+                    invalidate(QK.transaction_group(transaction.group_id)),
+                ];
+                if ( !money_changed ) invalidation_actions.push(invalidate(QK.transaction_groups));
+
+                this.broadcast_invalidations(invalidation_actions, { transaction_id: transaction.id });
+
+                return {
+                    data: updated.to_api(),
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/TransactionSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict (finalized month; allocation/eom_cleanup transaction; source == target; fund start-date violation)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
             ]
         }
 
