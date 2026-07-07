@@ -1,7 +1,9 @@
 const { expect } = require("chai");
-const { create_connection, initialize_db } = require("../../lib/db.js");
+const { create_connection, initialize_db, ConflictError, ForeignKeyError } = require("../../lib/db.js");
 const Transaction = require("../../models/Transaction.js");
 const TransactionGroup = require("../../models/TransactionGroup.js");
+const MonthFinalization = require("../../models/MonthFinalization.js");
+const Allocation = require("../../models/Allocation.js");
 const Fund = require("../../models/Fund.js");
 const YDate = require("../../lib/YDate.js");
 
@@ -324,6 +326,141 @@ describe("Transaction Model", () => {
             expect(api_data.description).to.equal("API test");
             expect(api_data.note).to.equal("Test note");
             expect(api_data.created_at).to.be.a("string");
+        });
+    });
+
+    describe("update()", () => {
+        let group, txn;
+
+        beforeEach(() => {
+            group = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-01"),
+                description: "Grocery shopping",
+                note: "Weekly",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 100.00,
+            });
+            txn = group.transactions[0];
+        });
+
+        it("should update amount in place, reflected in derived balances", () => {
+            const updated = txn.update(db, { amount: 150.00 });
+
+            expect(updated.id).to.equal(txn.id);
+            expect(updated.amount).to.equal(150.00);
+            // Derived balances follow with no extra bookkeeping
+            expect(Transaction.net_transfer(db, groceries_fund.id)).to.equal(150.00);
+            expect(Transaction.net_transfer(db, checking_fund.id)).to.equal(-150.00);
+        });
+
+        it("should update source/target funds, moving both funds' balances", () => {
+            const updated = txn.update(db, { target_fund_id: gas_fund.id });
+
+            expect(updated.target_fund_id).to.equal(gas_fund.id);
+            expect(Transaction.net_transfer(db, groceries_fund.id)).to.equal(0);
+            expect(Transaction.net_transfer(db, gas_fund.id)).to.equal(100.00);
+        });
+
+        it("should update description and note", () => {
+            const updated = txn.update(db, { description: "Renamed", note: null });
+
+            expect(updated.description).to.equal("Renamed");
+            expect(updated.note).to.be.null;
+            // Untouched fields survive
+            expect(updated.amount).to.equal(100.00);
+            expect(updated.source_fund_id).to.equal(checking_fund.id);
+        });
+
+        it("should leave omitted fields unchanged (merge semantics)", () => {
+            const updated = txn.update(db, {});
+
+            expect(updated.amount).to.equal(100.00);
+            expect(updated.description).to.equal("Grocery shopping");
+            expect(updated.note).to.equal("Weekly");
+        });
+
+        it("should not touch the group's date/split or other transactions", () => {
+            txn.update(db, { amount: 25.00 });
+
+            const fresh = TransactionGroup.for_id(db, group.id);
+            expect(fresh.date.toString()).to.equal("2026-06-01");
+            expect(fresh.split).to.be.false;
+            expect(fresh.transactions).to.have.lengthOf(1);
+        });
+
+        it("should reject source == target", () => {
+            expect(() => txn.update(db, { source_fund_id: groceries_fund.id }))
+                .to.throw(ConflictError, /same/);
+        });
+
+        it("should reject unknown funds", () => {
+            expect(() => txn.update(db, { target_fund_id: 99999 }))
+                .to.throw(ForeignKeyError, /Target fund does not exist/);
+        });
+
+        it("should reject negative amounts", () => {
+            expect(() => txn.update(db, { amount: -5.00 }))
+                .to.throw(Error, /negative/);
+        });
+
+        it("should reject a fund change that predates the new fund's start_date", () => {
+            const late_fund = Fund.create(db, {
+                name: "Late starter",
+                tracked: true,
+                start_date: YDate.parse("2026-06-15"),
+                start_balance: 0.00,
+            });
+
+            // txn is dated 2026-06-01, before late_fund's start
+            expect(() => txn.update(db, { target_fund_id: late_fund.id }))
+                .to.throw(ConflictError, /predates the target fund's start_date/);
+        });
+
+        it("should reject updates in a finalized month", () => {
+            MonthFinalization.create(db, {
+                month: YDate.parse("2026-06-15"),
+                recursive: true,
+            });
+
+            expect(() => txn.update(db, { amount: 50.00 }))
+                .to.throw(ConflictError, /finalized month/);
+        });
+
+        it("should refuse allocation transactions", () => {
+            Allocation.set(db, {
+                month: YDate.parse("2026-06-01"),
+                fund_id: groceries_fund.id,
+                amount: 200.00,
+            });
+            const alloc_group = TransactionGroup.from_db(db, { allocation: true })[0];
+            const alloc_txn = alloc_group.transactions[0];
+
+            expect(() => alloc_txn.update(db, { amount: 300.00 }))
+                .to.throw(Error, /managed via Allocation.set/);
+        });
+
+        it("should refuse eom_cleanup transactions", () => {
+            MonthFinalization.create(db, {
+                month: YDate.parse("2026-06-15"),
+                recursive: true,
+            });
+            const cleanup_group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+            const cleanup_txn = cleanup_group.transactions[0];
+
+            expect(() => cleanup_txn.update(db, { description: "sneaky" }))
+                .to.throw(Error, /EOM cleanup transactions cannot be edited/);
+        });
+
+        it("should leave the row untouched when validation fails (atomicity)", () => {
+            expect(() => txn.update(db, {
+                amount: 500.00,
+                target_fund_id: 99999, // fails after amount would have changed
+            })).to.throw(ForeignKeyError);
+
+            const fresh = Transaction.for_id(db, txn.id);
+            expect(fresh.amount).to.equal(100.00);
+            expect(fresh.target_fund_id).to.equal(groceries_fund.id);
         });
     });
 

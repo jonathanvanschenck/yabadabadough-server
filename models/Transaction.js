@@ -88,6 +88,14 @@ module.exports = class Transaction extends Base {
                 AND (@since IS NULL OR date >= @since)
             GROUP BY ids.value
         `,
+        // Inline (rather than requiring MonthFinalization) to avoid a circular
+        // require -- mirrors TransactionGroup's guard
+        month_is_finalized: `
+            SELECT 1
+            FROM month_finalizations
+            WHERE eom_date >= @date
+            LIMIT 1
+        `,
         create: `
             INSERT INTO transactions (
                 source_fund_id,
@@ -110,6 +118,24 @@ module.exports = class Transaction extends Base {
                 @eom_cleanup_id,
                 @allocation
             )
+        `,
+        // Money-bearing/cosmetic fields only; date/allocation/group_id/
+        // eom_cleanup_id are group-derived or structural and never change here
+        update: `
+            UPDATE transactions
+            SET source_fund_id = @source_fund_id,
+                target_fund_id = @target_fund_id,
+                amount         = @amount,
+                description    = @description,
+                note           = @note
+            WHERE id = @id
+        `,
+        // Used by TransactionGroup#update's date cascade (keeps the
+        // denormalized date copy in sync with the group)
+        set_date_for_group: `
+            UPDATE transactions
+            SET date = @date
+            WHERE group_id = @group_id
         `,
         delete: `
             DELETE FROM transactions
@@ -354,25 +380,19 @@ module.exports = class Transaction extends Base {
     }
 
     /**
-     * Only for use by the transaction group
+     * Model-level consistency + FK + start-date checks for a transaction's
+     * money-bearing fields against a given date. Shared by _create_with_group
+     * and _update so that creates and edits enforce exactly the same rules.
      */
-    static _create_with_group(db, {
+    static _assert_transaction_valid(db, {
         source_fund_id,
         target_fund_id,
-        group_id,
-        date,
-
         amount,
+        date,
         description,
-        note = null,
-
-        eom_cleanup_id = null,
-        allocation = false,
     }={}) {
         if ( !source_fund_id ) throw new Error("Missing source fund id");
         if ( !target_fund_id ) throw new Error("Missing target fund id");
-        if ( !group_id ) throw new Error("Missing group id");
-        if ( !date ) throw new Error("Missing date");
         if ( source_fund_id == target_fund_id ) throw new ConflictError("Source and target funds cannot be the same")
         // NOTE : zero amounts are allowed here so that eom_cleanup transactions
         //        always exist for monthly funds (even at zero balance). USER
@@ -398,6 +418,33 @@ module.exports = class Transaction extends Base {
         if ( this.get_stmt(db, "fund_starts_after").get({ id: target_fund_id, date: _date }) ) {
             throw new ConflictError("Transaction predates the target fund's start_date");
         }
+    }
+
+    /**
+     * Only for use by the transaction group
+     */
+    static _create_with_group(db, {
+        source_fund_id,
+        target_fund_id,
+        group_id,
+        date,
+
+        amount,
+        description,
+        note = null,
+
+        eom_cleanup_id = null,
+        allocation = false,
+    }={}) {
+        if ( !group_id ) throw new Error("Missing group id");
+        if ( !date ) throw new Error("Missing date");
+        this._assert_transaction_valid(db, {
+            source_fund_id,
+            target_fund_id,
+            amount,
+            date,
+            description,
+        });
 
         // These checks are almost certainly unnecessary, since the caller will have
         // created these things
@@ -456,18 +503,83 @@ module.exports = class Transaction extends Base {
         this.get_stmt(db, "set_source").run({ id, source_fund_id });
     }
 
+    /**
+     * Only for use by TransactionGroup#update's date cascade: rewrite the
+     * denormalized date on every transaction in a group.
+     */
+    static _set_date_for_group(db, group_id, date) {
+        this.get_stmt(db, "set_date_for_group").run({
+            group_id,
+            date: ydate2stmt(date),
+        });
+    }
+
 
     /**
-     * NOTE : we explicitly restrict the update-able fields to prevent db desycn
-     *        you should just delete and re-create a transaction if you need to
-     *        change anything, since that will gaurentee all side-effects take place
+     * Edit this transaction's money-bearing/cosmetic fields IN PLACE --
+     * `amount`, `source_fund_id`, `target_fund_id`, `description`, `note`.
+     * Runs the same consistency checks as creation (via
+     * `_assert_transaction_valid`) inside one sqlite transaction, so a failed
+     * check leaves the row untouched.
+     *
+     * NOT editable here: `date` and `allocation` are group-level facts
+     * (denormalized onto this table) and only change via the group;
+     * `group_id`/`eom_cleanup_id` are structural. Allocation and eom_cleanup
+     * transactions are refused entirely (managed by Allocation /
+     * MonthFinalization). Adding/removing transactions goes through
+     * `TransactionGroup.edit_transactions`.
      */
-    update(db, {
+    static _update(db, transaction, {
+        source_fund_id,
+        target_fund_id,
+        amount,
         description,
         note,
-    }={}) { throw new Error("TODO") }
+    }={}) {
+        if ( transaction.allocation ) {
+            throw new Error("Allocation transactions are managed via Allocation.set(...)");
+        }
+        if ( transaction.eom_cleanup_id != null ) {
+            throw new Error("EOM cleanup transactions cannot be edited");
+        }
 
-    delete() { throw new Error("TODO") }
+        // The transaction's month (its date is the group's date) must be
+        // unfinalized -- this is what keeps stored finalization cache points
+        // (sonm_balance) valid.
+        if ( this.get_stmt(db, "month_is_finalized").get({ date: ydate2stmt(transaction.date) }) ) {
+            throw new ConflictError("Cannot modify transactions in a finalized month");
+        }
+
+        // Merge changes over current values, then validate the FULL result
+        // against the (unchanged) date -- a partial fund change still has to
+        // satisfy every invariant.
+        const next = {
+            source_fund_id: source_fund_id ?? transaction.source_fund_id,
+            target_fund_id: target_fund_id ?? transaction.target_fund_id,
+            amount:         amount ?? transaction.amount,
+            description:    description ?? transaction.description,
+            note:           note !== undefined ? note : transaction.note,
+        };
+        this._assert_transaction_valid(db, { ...next, date: transaction.date });
+
+        this.get_stmt(db, "update").run({
+            id: transaction.id,
+            source_fund_id: next.source_fund_id,
+            target_fund_id: next.target_fund_id,
+            amount: currency2stmt(next.amount),
+            description: next.description,
+            note: next.note ?? null,
+        });
+        return this.for_id(db, transaction.id);
+    }
+
+    update(db, changes={}) {
+        const transaction = this.constructor.build_transaction(
+            db, "update", this.constructor._update.bind(this.constructor));
+        return transaction(db, this, changes);
+    }
+
+    delete() { throw new Error("Transactions are deleted via their group: TransactionGroup#delete or TransactionGroup.edit_transactions"); }
 
 
     static net_transfer(db, fund_id, { until, since }={}) {
