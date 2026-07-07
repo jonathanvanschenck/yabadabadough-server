@@ -3,6 +3,7 @@ const { create_connection, initialize_db, ConflictError, ForeignKeyError } = req
 const TransactionGroup = require("../../models/TransactionGroup.js");
 const BankStatementItem = require("../../models/BankStatementItem.js");
 const MonthFinalization = require("../../models/MonthFinalization.js");
+const Allocation = require("../../models/Allocation.js");
 const Fund = require("../../models/Fund.js");
 const YDate = require("../../lib/YDate.js");
 
@@ -430,6 +431,158 @@ describe("TransactionGroup Model", () => {
             expect(() => group.delete(db))
                 .to.throw("Cannot modify transaction groups in a finalized month");
             expect(TransactionGroup.for_id(db, group.id)).to.not.be.null;
+        });
+    });
+
+    describe("update()", () => {
+        let group;
+
+        beforeEach(() => {
+            group = TransactionGroup.create(db, {
+                date: YDate.parse("2026-06-05"),
+                description: "Split shopping",
+                note: "Costco run",
+                transactions: [
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: groceries_fund.id,
+                        amount: 60.00,
+                        description: "Groceries portion",
+                    },
+                    {
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: gas_fund.id,
+                        amount: 40.00,
+                        description: "Gas portion",
+                    }
+                ]
+            });
+        });
+
+        it("should update description and note without touching transactions", () => {
+            const updated = group.update(db, { description: "Renamed", note: null });
+
+            expect(updated.id).to.equal(group.id);
+            expect(updated.description).to.equal("Renamed");
+            expect(updated.note).to.be.null;
+            expect(updated.date.toString()).to.equal("2026-06-05");
+            expect(updated.transactions).to.have.lengthOf(2);
+            expect(updated.transactions.map(t => t.amount)).to.have.members([60.00, 40.00]);
+        });
+
+        it("should leave omitted fields unchanged (merge semantics)", () => {
+            const updated = group.update(db, {});
+
+            expect(updated.description).to.equal("Split shopping");
+            expect(updated.note).to.equal("Costco run");
+            expect(updated.date.toString()).to.equal("2026-06-05");
+        });
+
+        it("should cascade a date change to every child transaction", () => {
+            const updated = group.update(db, { date: YDate.parse("2026-06-20") });
+
+            expect(updated.date.toString()).to.equal("2026-06-20");
+            updated.transactions.forEach(t => {
+                expect(t.date.toString()).to.equal("2026-06-20");
+            });
+        });
+
+        it("should refuse moving the group into a finalized month", () => {
+            db.prepare(`
+                INSERT INTO month_finalizations (som_date, eom_date, sonm_date)
+                VALUES ('2026-05-01', '2026-05-31', '2026-06-01')
+            `).run();
+
+            expect(() => group.update(db, { date: YDate.parse("2026-05-15") }))
+                .to.throw(ConflictError, /finalized month/);
+        });
+
+        it("should refuse any edit while the group's month is finalized", () => {
+            db.prepare(`
+                INSERT INTO month_finalizations (som_date, eom_date, sonm_date)
+                VALUES ('2026-06-01', '2026-06-30', '2026-07-01')
+            `).run();
+
+            expect(() => group.update(db, { description: "sneaky" }))
+                .to.throw(ConflictError, /finalized month/);
+        });
+
+        it("should refuse a date move that predates a child fund's start_date", () => {
+            const late_fund = Fund.create(db, {
+                name: "Late starter",
+                tracked: true,
+                start_date: YDate.parse("2026-06-01"),
+                start_balance: 0.00,
+            });
+            const late_group = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-06-10"),
+                description: "Late fund spending",
+                source_fund_id: checking_fund.id,
+                target_fund_id: late_fund.id,
+                amount: 10.00,
+            });
+
+            expect(() => late_group.update(db, { date: YDate.parse("2026-05-20") }))
+                .to.throw(ConflictError, /predates the target fund's start_date/);
+
+            // Atomicity: nothing moved
+            const fresh = TransactionGroup.for_id(db, late_group.id);
+            expect(fresh.date.toString()).to.equal("2026-06-10");
+            fresh.transactions.forEach(t => {
+                expect(t.date.toString()).to.equal("2026-06-10");
+            });
+        });
+
+        it("should refuse allocation groups", () => {
+            Allocation.set(db, {
+                month: YDate.parse("2026-06-01"),
+                fund_id: groceries_fund.id,
+                amount: 200.00,
+            });
+            const alloc_group = TransactionGroup.from_db(db, { allocation: true })[0];
+
+            expect(() => alloc_group.update(db, { description: "sneaky" }))
+                .to.throw(Error, /managed via Allocation.set/);
+        });
+
+        it("should refuse eom_cleanup groups", () => {
+            MonthFinalization.create(db, {
+                month: YDate.parse("2026-06-15"),
+                recursive: true,
+            });
+            const cleanup_group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+
+            expect(() => cleanup_group.update(db, { description: "sneaky" }))
+                .to.throw(Error, /EOM cleanup groups cannot be edited/);
+        });
+
+        it("should keep bank statement reconciliation intact (id stable)", () => {
+            const item = BankStatementItem.create(db, {
+                source: "boa",
+                key: "txn-777",
+                amount: -100.00,
+                date: YDate.parse("2026-06-05"),
+                note: "COSTCO",
+            });
+            const linked = TransactionGroup.create_from_statements(db, {
+                statement_ids: [item.id],
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 100.00,
+                    description: "Costco",
+                }]
+            });
+
+            const updated = linked.update(db, {
+                description: "Renamed",
+                date: YDate.parse("2026-06-25"),
+            });
+
+            expect(updated.id).to.equal(linked.id);
+            expect(updated.statements).to.have.lengthOf(1);
+            expect(updated.statements[0].id).to.equal(item.id);
+            expect(BankStatementItem.for_id(db, item.id).group_id).to.equal(linked.id);
         });
     });
 

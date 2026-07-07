@@ -106,6 +106,13 @@ module.exports = class TransactionGroup extends Base {
             ) > 1
             WHERE id = @group_id
         `,
+        update: `
+            UPDATE transaction_groups
+            SET date = @date,
+                description = @description,
+                note = @note
+            WHERE id = @id
+        `,
         delete: `
             DELETE FROM transaction_groups
             WHERE id = @id
@@ -619,13 +626,69 @@ module.exports = class TransactionGroup extends Base {
         return transaction(db, item, { with_group });
     }
 
-    /**
-     * NOTE : we explicitly restrict the update-able fields to prevent db desycn
-     *        you should just delete and re-create a transaction if you need to
-     *        change anything, since that will gaurentee all side-effects take place
-     */
-    update(db, {
+    static _update(db, group, {
         description,
-        note
-    }={}) { throw new Error("TODO") }
+        note,
+        date,
+    }={}) {
+        if ( group.allocation ) {
+            throw new Error("Allocation groups are managed via Allocation.set(...)");
+        }
+        if ( group.eom_cleanup ) {
+            throw new Error("EOM cleanup groups cannot be edited");
+        }
+
+        // The group's current month must be unfinalized...
+        this.assert_month_unfinalized(db, group.date);
+
+        const next_date = date ?? group.date;
+        const date_changed = ydate2stmt(next_date) !== ydate2stmt(group.date);
+        if ( date_changed ) {
+            // ...and it may not MOVE into a finalized month either
+            this.assert_month_unfinalized(db, next_date);
+
+            // Re-run each transaction's start-date invariant against the new
+            // date (the other field checks cannot be affected by a date move)
+            for ( const t of group.transactions ) {
+                Transaction._assert_transaction_valid(db, {
+                    source_fund_id: t.source_fund_id,
+                    target_fund_id: t.target_fund_id,
+                    amount: t.amount,
+                    description: t.description,
+                    date: next_date,
+                });
+            }
+        }
+
+        this.get_stmt(db, "update").run({
+            id: group.id,
+            date: ydate2stmt(next_date),
+            description: description ?? group.description,
+            note: note !== undefined ? note : group.note,
+        });
+        // Cascade to the denormalized date copy on every transaction
+        if ( date_changed ) Transaction._set_date_for_group(db, group.id, next_date);
+
+        return this.for_id(db, group.id);
+    }
+
+    /**
+     * Edit this group's scalar fields IN PLACE -- `description`, `note`,
+     * `date`. A date change cascades to the denormalized date on every child
+     * transaction and re-checks each one's start-date invariant against the
+     * new date. Runs in one sqlite transaction: a failed check leaves
+     * everything untouched.
+     *
+     * The group's id -- and therefore any bank statement reconciliation
+     * pointing at it -- is stable across updates (this is the reason updates
+     * exist instead of delete-and-recreate). Structural changes (adding or
+     * removing transactions) go through `edit_transactions`; allocation and
+     * eom_cleanup groups are refused (managed by Allocation /
+     * MonthFinalization).
+     */
+    update(db, changes={}) {
+        const transaction = this.constructor.build_transaction(
+            db, "update", this.constructor._update.bind(this.constructor));
+        return transaction(db, this, changes);
+    }
 }
