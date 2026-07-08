@@ -98,10 +98,14 @@ const DUMMY_HASH_PROMISE = hash_password(crypto.randomBytes(16).toString("hex"))
  *    (role claims are the EFFECTIVE roles, so request handling never
  *    re-derives the admin-implies-all rule)
  *  - auth (~1w, session-bound): { v, typ: "auth", sub, sid, token }
+ *  - access from an API key (~1h, sessionless): same shape as access but
+ *    sid is null, akid names the minting key, admin is ALWAYS false, and
+ *    reader/editor are the owner's effective roles masked by the key's
+ *    flags (see models/ApiKey.js)
  * Access tokens are verified by signature alone, so logout / revoke-all /
  * admin changes do not kill outstanding access tokens -- they die at their
- * <=1h expiry. NOTE: nothing may assume `sid` is non-null; future API-key
- * credentials will mint access tokens with no session behind them.
+ * <=1h expiry. NOTE: nothing may assume `sid` is non-null (API-key-minted
+ * access tokens have no session behind them).
  */
 module.exports = class User extends Base {
     static ACCESS_TOKEN_TTL_S = 3600;
@@ -549,6 +553,32 @@ module.exports = class User extends Base {
             sub: this.id,
             sid: session.id,
             token: session.token,
+        };
+    }
+
+    /**
+     * Payload for a sessionless (~1h) access token minted from an API key:
+     * sid is null, admin is ALWAYS false (API keys never manage users), and
+     * reader/editor are the user's EFFECTIVE roles masked by the key's
+     * flags. akid records the minting key for observability (ignored by
+     * Access). The API controller signs it and sets exp from
+     * ACCESS_TOKEN_TTL_S, same as the session-backed variant.
+     */
+    to_api_key_access_token_payload(api_key) {
+        if ( !api_key || api_key.user_id !== this.id ) {
+            throw new ConflictError("API key does not belong to user: " + this.id);
+        }
+        const roles = this.roles;
+        return {
+            v: 1,
+            typ: "access",
+            sub: this.id,
+            email: this.email,
+            admin: false,
+            reader: roles.reader && !!api_key.reader,
+            editor: roles.editor && !!api_key.editor,
+            sid: null,
+            akid: api_key.id,
         };
     }
 

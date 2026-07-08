@@ -44,6 +44,34 @@ CREATE TABLE user_sessions (
 CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
 
+-- An API key row + its secret is the right to mint sessionless (sid: null)
+-- access tokens at POST /api/auth/api-token. Revocation = row deletion (no
+-- flag); outstanding access tokens still live out their <=1h expiry.
+CREATE TABLE user_api_keys (
+    id                  INTEGER PRIMARY KEY,
+    user_id             INTEGER NOT NULL REFERENCES users(id)
+                            ON DELETE CASCADE
+                            ON UPDATE CASCADE,
+
+    -- sha256 hex of the full presented key ("ydd_<64hex>"). The plaintext
+    -- leaves ApiKey.create exactly once and is never stored or re-shown.
+    token_hash          TEXT NOT NULL UNIQUE,
+
+    name                TEXT NOT NULL,      -- required human label
+
+    -- Per-key role scope, intersected with the user's EFFECTIVE roles at
+    -- exchange time. Admin is never minted from an API key (no column).
+    reader              INTEGER NOT NULL DEFAULT 1 CHECK (reader IN (0,1)),
+    editor              INTEGER NOT NULL DEFAULT 0 CHECK (editor IN (0,1)),
+
+    expires_at          TEXT,               -- ISO 8601 datetime; NULL = never expires
+    last_used_at        TEXT,               -- ISO 8601, touched on every exchange
+
+    -- Meta data
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+) STRICT;
+CREATE INDEX idx_user_api_keys_user_id ON user_api_keys(user_id);
+
 
 CREATE TABLE funds (
     id                INTEGER PRIMARY KEY,
