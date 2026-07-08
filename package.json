@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "chai": "^6.2.2",
-    "mocha": "^11.7.6"
+    "mocha": "^11.7.6",
+    "socket.io-client": "^4.8.3"
   }
 }

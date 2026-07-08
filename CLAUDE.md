@@ -55,7 +55,7 @@ Express app built from asseverate Collections/Controllers (local wrappers in
 (`access`/`admin`/`editor`/`reader` — reader defaults ON, matching the model default):
 - `req.access` is built ONLY from a signature-verified access-token payload
   (`Access.from_access_token`, used by the Bearer middleware, the cookie middleware, and the
-  future socket.io handshake): identifier = email, plus `user_id`/`session_id` (`session_id`
+  socket.io handshake): identifier = email, plus `user_id`/`session_id` (`session_id`
   may be NULL — API-key credentials will mint sessionless access tokens). Roles come straight
   off the payload (already effective) with ONE twist: `admin` is masked out unless the request
   carries `X-Sudo-Mode: true` (`adminable` says whether sudo would work) — a deliberate
@@ -73,6 +73,16 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   dev only)
 - Credential failures are a UNIFORM 400 + `penalize()` (`penalty_ms` delay): never leak which
   check failed (bad email vs password, bad signature vs dead session, ...)
+- socket.io (in `lib/Webserver.js`, attached to the same http server; `serveClient: false` —
+  the webapp bundles its own client): the READ-ONLY invalidation transport. Handshake auth via
+  `Access.from_access_token` — handshake `auth.token` field first, then the `access_token`
+  cookie (same precedence as the HTTP middlewares); unauthed sockets are disconnected after a
+  `penalty_ms` slow-fail (skipped under `YDD_DISABLE_AUTH`); no sudo masking (sockets never
+  take admin actions). Every connect (re)sends an `["versions"]` invalidation so clients
+  detect redeploys; every controller write broadcasts `clean_queries` to all clients via the
+  `invalidator` (`broadcast_invalidation_array`). A client-emitted `clean_queries` is relayed
+  to every OTHER client (FIXME: to be removed so clients cannot trigger invalidations).
+  Tests: `test/api/test-socketio.js` (socket.io-client devDependency)
 - Utils (`collections/Utils.js`, `/api/utils/versions`): reports webserver/webapp versions
   (currently the same value — they deploy together) and the schema version via
   `schema_version(db)` (the `PRAGMA user_version` helper in `lib/db.js`); authed, no role
@@ -118,7 +128,9 @@ all follow the same shape:
   - `data_invalidations_response(schema)` — the `{ data, invalidations }` response schema
 - **Write responses & invalidations**: every write returns
   `{ data: <to_api() | null-for-delete>, invalidations: [...] }` and broadcasts the same
-  actions via `this.broadcast_invalidations()` (noop invalidator until socket.io lands). The
+  actions via `this.broadcast_invalidations()`, which emits a `clean_queries` socket.io event
+  (`[source, meta, [{ method: "invalidateQueries"|"removeQueries", args: [{ queryKey }] }]]` —
+  tanstack-shaped by `Webserver.generate_tanstack_invalidation`) to every connected client. The
   webapp applies them to its tanstack-query cache. ALL query keys and actions come from
   `collections/lib/query_keys.js` (`QK`, `invalidate`, `remove`, `money_moved()`) — never
   inline key literals; invalidations cross collections constantly (allocation writes touch

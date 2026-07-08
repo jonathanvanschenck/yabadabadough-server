@@ -6,8 +6,8 @@ conventions (`collections/Auth.js`, `collections/Utils.js`, `collections/lib/ass
 
 Every controller declares `query_key` statics chosen for tanstack-query invalidation on the
 webapp side; every write endpoint returns `{ data, invalidations }` and broadcasts the same
-invalidation actions through `this.broadcast_invalidations(...)` (currently a noop invalidator
-in `lib/Webserver.js`; wired up for real when socket.io lands).
+invalidation actions through `this.broadcast_invalidations(...)` (emitted to every connected
+client as a socket.io `clean_queries` event since 2026-07-07).
 
 ---
 
@@ -58,6 +58,19 @@ yet, and why.
   (per-fund reports 0). Unpaginated (tracked funds stay small); `X-Total-Count` is still
   set for symmetry and equals the array length.
 
+- **socket.io invalidation transport (2026-07-07)**: the commented-out handshake/broadcast
+  code in `lib/Webserver.js` went live, exactly as designed — no controller changes needed.
+  The invalidator passed to every collection is now backed by
+  `broadcast_invalidation_array`, which emits `clean_queries` events
+  (`[source, meta, [{ method: "invalidateQueries"|"removeQueries", args: [{ queryKey }] }]]`,
+  translated from the query_keys action arrays by `generate_tanstack_invalidation`) to every
+  connected client. Handshake auth = `Access.from_access_token` on the handshake `auth.token`
+  field or the `access_token` cookie (Bearer-then-cookie precedence, no sudo masking, slow-fail
+  disconnect after `penalty_ms`, bypassed by `YDD_DISABLE_AUTH`); each (re)connect sends the
+  planned `["versions"]` invalidation. The client→client `clean_queries` relay is in with its
+  FIXME (remove once the webapp no longer needs it). Tests: `test/api/test-socketio.js`
+  (`socket.io-client` added as a devDependency).
+
 ### Outstanding — deferred by choice (add when a real need shows up)
 - **Admin per-session revocation** (`DELETE /api/users/user/:user_id/session/:session_id`):
   admins today reset the user's password with `revoke_sessions: true` (kills everything) or
@@ -67,10 +80,6 @@ yet, and why.
 
 ### Outstanding — waiting on future architecture (tracked elsewhere, listed for completeness)
 
-- **socket.io invalidation transport**: the invalidator in `lib/Webserver.js` is a noop and
-  the handshake/`clean_queries` code is commented out. Every write already returns and
-  broadcasts the correct action arrays, so wiring the transport requires no controller
-  changes.
 - **API-key credentials** (sessionless access tokens; `sid: null` is already tolerated
   everywhere by design): needs mint/list/revoke endpoints — probably
   `/api/users/me/api-keys` for self-service plus admin visibility under
@@ -390,7 +399,7 @@ password-change revocation behavior).
 
 | Key | Meaning | Invalidated by |
 |---|---|---|
-| `["versions"]` | existing Utils endpoint | (socket reconnect, already planned) |
+| `["versions"]` | existing Utils endpoint | socket.io (re)connect |
 | `["funds"]` / `["fund", id]` | fund list / single | fund writes; finalize/unfinalize (cache repoints) |
 | `["fund-balance", id]` | computed balances (prefix-invalidated as a whole) | any transaction-affecting write: group create/delete, allocations, statement delete w/ group, finalize/unfinalize, fund hierarchy edits |
 | `["transaction-groups"]` / `["transaction-group", id]` | group list / single | group writes, allocations, statement deletes, finalize/unfinalize |
