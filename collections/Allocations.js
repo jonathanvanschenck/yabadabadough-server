@@ -17,7 +17,7 @@ const {
     only_positive_number,
     only_ydate,
 } = require("./lib/parsers.js");
-const { QK, invalidate, money_moved } = require("./lib/query_keys.js");
+const { QK, invalidate, money_moved } = require("./lib/query_keys.mjs");
 
 const { ConflictError } = require("../lib/db.js");
 const Allocation = require("../models/Allocation.js");

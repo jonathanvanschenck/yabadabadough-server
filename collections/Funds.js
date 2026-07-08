@@ -25,7 +25,7 @@ const {
     only_ydate,
     nullable
 } = require("./lib/parsers.js");
-const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.js");
+const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.mjs");
 
 const Fund = require("../models/Fund.js");
 

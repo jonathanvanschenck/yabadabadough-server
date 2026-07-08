@@ -144,8 +144,12 @@ all follow the same shape:
   (`[source, meta, [{ method: "invalidateQueries"|"removeQueries", args: [{ queryKey }] }]]` —
   tanstack-shaped by `Webserver.generate_tanstack_invalidation`) to every connected client. The
   webapp applies them to its tanstack-query cache. ALL query keys and actions come from
-  `collections/lib/query_keys.js` (`QK`, `invalidate`, `remove`, `money_moved()`) — never
-  inline key literals; invalidations cross collections constantly (allocation writes touch
+  `collections/lib/query_keys.mjs` (`QK`, `invalidate`, `remove`, `money_moved()`) — never
+  inline key literals. The registry is deliberately ESM (.mjs) and runtime-agnostic (no node
+  builtins): the CJS server `require()`s it (Node ≥ 22.12 require(esm)) and the webapp imports
+  the SAME file (via its `src/hooks/queryKeys.js` shim), so the keys the webapp caches under
+  and the keys the server invalidates can never drift.
+  Invalidations cross collections constantly (allocation writes touch
   transaction/balance keys; finalizations touch nearly everything). Key conventions: plural
   list keys (`["funds"]`), singular + STRINGIFIED id singles (`["fund", "3"]`), computed
   subresources under their own top-level key (`["fund-balance", id]`) so hot invalidations

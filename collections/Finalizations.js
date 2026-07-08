@@ -15,7 +15,7 @@ const {
     only_boolean,
     only_ydate,
 } = require("./lib/parsers.js");
-const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.js");
+const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.mjs");
 
 const MonthFinalization = require("../models/MonthFinalization.js");
 const FundFinalization = require("../models/FundFinalization.js");

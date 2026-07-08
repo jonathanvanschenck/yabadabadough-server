@@ -16,7 +16,7 @@ const {
     only_boolean,
     only_positive_number,
 } = require("./lib/parsers.js");
-const { QK, invalidate, remove } = require("./lib/query_keys.js");
+const { QK, invalidate, remove } = require("./lib/query_keys.mjs");
 
 const User = require("../models/User.js");
 const Session = require("../models/Session.js");

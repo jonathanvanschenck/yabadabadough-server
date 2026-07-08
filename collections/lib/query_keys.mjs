@@ -7,6 +7,12 @@
  * touches nearly everything), so key literals must never be inlined in a
  * controller -- always compose from here.
  *
+ * This file is ESM (.mjs) because it is SHARED with the webapp: the CJS
+ * server require()s it (Node >= 22.12 supports require(esm)) and the webapp
+ * imports it (via the src/hooks/queryKeys.js shim), so the keys the webapp
+ * caches under and the keys the server invalidates can never drift. Keep it
+ * runtime-agnostic: no node builtins, no requires of server code.
+ *
  * Conventions:
  * - list key = plural resource name; single = singular + STRINGIFIED id
  *   (tanstack matches by prefix, so ["fund", "3"] also catches any
@@ -19,7 +25,7 @@
  *   list key catches all of them
  * - when in doubt, over-invalidate
  */
-const QK = {
+export const QK = {
     versions: ["versions"],
 
     funds: ["funds"],
@@ -54,17 +60,15 @@ const QK = {
     user_api_keys: (id) => ["user", id.toString(), "api-keys"],
 };
 
-const invalidate = (key) => ({ type: "invalidate", key });
-const remove = (key) => ({ type: "remove", key });
+export const invalidate = (key) => ({ type: "invalidate", key });
+export const remove = (key) => ({ type: "remove", key });
 
 /**
  * Every write that adds/removes/moves transactions changes computed balances
  * and the transaction/group lists -- the shared "money moved" action set.
  */
-const money_moved = () => [
+export const money_moved = () => [
     invalidate(QK.transaction_groups),
     invalidate(QK.transactions),
     invalidate(QK.fund_balances),
 ];
-
-module.exports = { QK, invalidate, remove, money_moved };
