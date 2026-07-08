@@ -52,6 +52,17 @@ const FundBodyProperties = {
     color: { type: 'string', nullable: true }
 };
 
+// Shared between the per-fund and bulk balance routes
+const FundBalanceSchema = {
+    type: 'object',
+    properties: {
+        fund_id: { type: 'integer', minimum: 1 },
+        on: { type: 'string', format: 'date', nullable: true, description: "The date the balance was calculated on; null means the current balance" },
+        balance: { type: 'number', description: "Currency as a float dollar amount" }
+    },
+    required: [ 'fund_id', 'on', 'balance' ]
+};
+
 // Hierarchy/pool edits can repoint allocation sources in unfinalized months
 // (Fund._rederive_allocation_sources), which moves money between funds --
 // deliberately over-invalidate
@@ -301,19 +312,75 @@ module.exports = class FundsCollection extends Collection {
                 };
             }
 
-            static openapi_ResponseSchema = {
-                type: 'object',
-                properties: {
-                    fund_id: { type: 'integer', minimum: 1 },
-                    on: { type: 'string', format: 'date', nullable: true, description: "The date the balance was calculated on; null means the current balance" },
-                    balance: { type: 'number', description: "Currency as a float dollar amount" }
-                },
-                required: [ 'fund_id', 'on', 'balance' ]
-            }
+            static openapi_ResponseSchema = FundBalanceSchema;
 
             static openapi_ErrorResponses = [
                 { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
                 { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
+        },
+
+        class GetFundBalances extends Controller {
+            static path = "/balances";
+
+            static method = "GET";
+
+            static openapi_Summary = "List Fund Balances";
+
+            static openapi_Description = "Calculate every tracked fund's balance in one response -- the bulk companion to the per-fund balance route (one round trip instead of N). Same semantics per fund: the current balance, or -- with `on` -- the balance on that date (every transaction up to AND on it). Funds whose start_date is after `on` are omitted (they had no balance yet); untracked funds are never included. Not paginated.";
+
+            static query_key = [ "fund-balance", "all" ];
+
+            static openapi_Parameters = [
+                {
+                    name: 'on',
+                    in: 'query',
+                    description: 'The date to calculate the balances on (default: today, i.e. all transactions). Funds starting after this date are omitted from the response.',
+                    required: false,
+                    schema: { type: 'string', format: 'date' }
+                }
+            ]
+
+            async parse_request(req) {
+                // Strict: a lenient fallback would silently return the WRONG
+                // balances (the current ones instead of the requested date's)
+                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string") ?? null;
+
+                return { on };
+            }
+
+            async respond({ on }, { res }) {
+                const funds = Fund.from_db(this.db, { tracked: true, limit: null });
+
+                // A fund that had not started by `on` has no balance to
+                // report (the per-fund route 400s) -- omit it rather than
+                // failing the whole response
+                const balances = funds
+                    .filter((fund) => !on || fund.start_date.toJSON() <= on.toJSON())
+                    .map((fund) => ({
+                        fund_id: fund.id,
+                        on: on ? on.toJSON() : null,
+                        balance: on ? fund.calculate_balance_on(this.db, on) : fund.calculate_balance(this.db),
+                    }));
+
+                res.setHeader("X-Total-Count", balances.length);
+                return balances;
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The number of balances returned (the endpoint is not paginated, so this always equals the array length)",
+                    schema: { type: "integer" }
+                }
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'array',
+                items: FundBalanceSchema
+            }
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } }
             ]
         },
 

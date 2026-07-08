@@ -153,6 +153,72 @@ describe("Funds API", () => {
         });
     });
 
+    describe("GET /api/funds/balances", () => {
+        beforeEach(() => {
+            TransactionGroup.create_single(h.db, {
+                date: YDate.parse("2026-01-10"),
+                description: "Grocery run",
+                source_fund_id: checking.id,
+                target_fund_id: groceries.id,
+                amount: 100.00,
+            });
+        });
+
+        it("requires authentication", async () => {
+            const { status } = await h.request("/api/funds/balances");
+            expect(status).to.equal(401);
+        });
+
+        it("reports every tracked fund's current balance (untracked omitted)", async () => {
+            const { status, body, headers } = await h.request("/api/funds/balances", { token: h.tokens.reader });
+            expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("2");
+            expect(body).to.deep.equal([
+                { fund_id: checking.id, on: null, balance: 900 },
+                { fund_id: groceries.id, on: null, balance: 100 },
+            ]);
+        });
+
+        it("reports balances on a date (inclusive)", async () => {
+            let res = await h.request("/api/funds/balances?on=2026-01-09", { token: h.tokens.reader });
+            expect(res.body).to.deep.equal([
+                { fund_id: checking.id, on: "2026-01-09", balance: 1000 },
+                { fund_id: groceries.id, on: "2026-01-09", balance: 0 },
+            ]);
+
+            res = await h.request("/api/funds/balances?on=2026-01-10", { token: h.tokens.reader });
+            expect(res.body.find((b) => b.fund_id === checking.id).balance).to.equal(900);
+        });
+
+        it("omits funds that had not started by the date (never a 400 for the whole response)", async () => {
+            const late = Fund.create(h.db, {
+                name: "Late Starter",
+                tracked: true,
+                start_date: YDate.parse("2026-02-01"),
+                start_balance: 50.00,
+            });
+
+            let res = await h.request("/api/funds/balances?on=2026-01-15", { token: h.tokens.reader });
+            expect(res.status).to.equal(200);
+            expect(res.headers.get("x-total-count")).to.equal("2");
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
+
+            res = await h.request("/api/funds/balances", { token: h.tokens.reader });
+            expect(res.body.map((b) => b.fund_id)).to.include(late.id);
+
+            // A date before every fund's start is an empty list, not an error
+            res = await h.request("/api/funds/balances?on=2025-12-31", { token: h.tokens.reader });
+            expect(res.status).to.equal(200);
+            expect(res.body).to.deep.equal([]);
+        });
+
+        it("400s on a malformed date (never silently-wrong balances)", async () => {
+            const { status, body } = await h.request("/api/funds/balances?on=not-a-date", { token: h.tokens.reader });
+            expect(status).to.equal(400);
+            expect(body.message).to.include("Bad parameter: on");
+        });
+    });
+
     describe("POST /api/funds/funds", () => {
         const good_body = {
             name: "Savings",

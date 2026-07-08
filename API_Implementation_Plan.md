@@ -49,17 +49,21 @@ yet, and why.
   tables: `_from_db_wheres` extracted in Fund/User/Session/MonthFinalization, `count()`
   statics sharing it with `from_db`, respond sets the header from the same filter object.
 
+- **Bulk balances (2026-07-07)**: `GET /api/funds/balances[?on=]` returns every tracked
+  fund's balance in one response (`[{ fund_id, on, balance }]`, same item shape as the
+  per-fund route; webapp key `["fund-balance", "all", on]`). A round-trip optimization for
+  dashboards — the per-fund calculation was already cheap. Divergences from the per-fund
+  route, both because one fund must not fail the whole response: funds whose `start_date`
+  is after `on` are OMITTED (per-fund 400s), and untracked funds are excluded entirely
+  (per-fund reports 0). Unpaginated (tracked funds stay small); `X-Total-Count` is still
+  set for symmetry and equals the array length.
+
 ### Outstanding — deferred by choice (add when a real need shows up)
 - **Admin per-session revocation** (`DELETE /api/users/user/:user_id/session/:session_id`):
   admins today reset the user's password with `revoke_sessions: true` (kills everything) or
   the user self-serves via `/api/users/me/session/:id` and `/api/auth/revoke-all`. A
   surgical admin kill-one-session endpoint adds little until there is a support workflow
   that needs it.
-- **Bulk balances** (`GET /api/funds/balances[?on=]` returning every tracked fund's balance
-  in one response): today the webapp would call `/fund/:id/balance` per fund. If dashboards
-  end up N+1-fetching, add the bulk route under the same `["fund-balance"]` key family
-  (webapp key `["fund-balance", "all", on]` or similar) — the per-fund calculation is cheap
-  (cache point + net transfers), so this is a round-trip optimization, not a server one.
 
 ### Outstanding — waiting on future architecture (tracked elsewhere, listed for completeness)
 
@@ -231,6 +235,7 @@ Establishes the template; everything later copies it.
 | GET | `/` | reader | `["funds"]` | `Fund.from_db` (filters: `id`, `ids` (csv via `string_to_array`+`parse_and_filter_array`), `name`, `name_like`, `started_since/until`, `tracked`, `monthly`, `pool`, `root`, `descendant_of` (self-inclusive subtree; malformed → 400); order: `id`) |
 | GET | `/:fund_id` | reader | `["fund", id]` | `Fund.for_id` |
 | GET | `/:fund_id/balance` | reader | `["fund-balance", id]` | `?on=YYYY-MM-DD` → `calculate_balance_on`, else `calculate_balance`. Response `{ fund_id, on: date\|null, balance }`. 400 when `on` predates `start_date` (the model throws a plain Error — `translate_model_error` applies). Untracked funds return balance 0 (model behavior) — document it |
+| GET | `/balances` | reader | `["fund-balance", "all"]` | Bulk companion (added 2026-07-07): every tracked fund's balance as `[{ fund_id, on, balance }]`; funds starting after `?on=` are omitted, untracked funds excluded; unpaginated |
 | POST | `/` | editor | — | `Fund.create` — body: `name` (required, `only_non_empty_string`), `tracked` (required, `only_boolean`), `parent_id` (`nullable(only_id)`), `start_date` (`nullable(only_ydate)`), `start_balance` (strict number), `monthly`, `pool` (`only_boolean`), `color` (`nullable(only_non_empty_string)`) |
 | PATCH | `/:fund_id` | editor | — | `fund.update` (same fields; all optional) |
 | DELETE | `/:fund_id` | editor | — | `fund.delete` — 409 (ConflictError) while finalizations exist |
