@@ -147,7 +147,7 @@ describe("API: api keys", () => {
             const res = await exchange(secret);
             api_key.delete(h.db);
 
-            // Future exchanges die, outstanding access tokens live out <=1h
+            // Future exchanges die, outstanding access tokens live out <=20m
             expect((await exchange(secret)).status).to.equal(400);
             const reads = await h.request("/api/funds/funds", { token: res.body.tokens.access });
             expect(reads.status).to.equal(200);

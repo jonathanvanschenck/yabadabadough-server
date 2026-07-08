@@ -68,11 +68,11 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   `authenticate` ("check my auth, refresh if stale" — browsers call it with cookies +
   `auto_refresh`; its refresh path rotates too), `logout` (deletes the session row via the full guard, idempotent, always
   clears cookies), `revoke-all` (kills every session for the authed user), `api-token`
-  (exchanges a plaintext API key for a ~1h SESSIONLESS access token — `sid: null`, roles =
+  (exchanges a plaintext API key for a ~20m SESSIONLESS access token — `sid: null`, roles =
   owner's effective roles ∩ the key's flags, `admin` always false; no cookies, programmatic
   clients just re-exchange on expiry), and the
   `check`/`check-admin`/`check-editor`/`check-reader` role probes
-- Cookies: `access_token` (maxAge = 1h TTL, rides on every request) and `auth_token`
+- Cookies: `access_token` (maxAge = 20m TTL, rides on every request) and `auth_token`
   (path-scoped to `/api/auth`, expires with the session); both httpOnly + SameSite Strict;
   `Secure` from `secure_cookies` (`YDD_SECURE_COOKIES`, default true — set false for plain-http
   dev only)
@@ -428,14 +428,14 @@ allocations.
   verify on unknown emails (user-enumeration timing resistance). No last-admin guard by design
 - JWT payloads (signed/verified by `lib/TokenManager.js` at the API layer; the model only
   renders payload objects, with `typ` + `v` claims discriminating kinds):
-  - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, reader, editor, sid }` (effective roles)
+  - access (~20m, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, reader, editor, sid }` (effective roles)
   - auth (~1w, session-bound): `{ v, typ: "auth", sub, sid, token }`
-  - access from an API key (~1h, sessionless): same `typ: "access"` shape but `sid: null`,
+  - access from an API key (~20m, sessionless): same `typ: "access"` shape but `sid: null`,
     `akid` = the minting key's id, `admin` ALWAYS false, `reader`/`editor` masked by the
     key's flags (`user.to_api_key_access_token_payload(api_key)`)
   Rendered by `user.to_access_token_payload(session)` / `to_auth_token_payload(session)`;
   `User.from_token_payload(payload)` is the db-free inverse for access payloads (unsaved
-  instance, `admin` may be ~1h stale — use `for_id` when freshness matters). NOTHING may assume
+  instance, `admin` may be ~20m stale — use `for_id` when freshness matters). NOTHING may assume
   `sid` is non-null: API-key-minted access tokens have no session behind them
 - Bootstrap via `scripts/create-user.js` (also the forgotten-password recovery path)
 
@@ -458,7 +458,7 @@ allocations.
   `ForeignKeyError`); `User` never requires `Session` — list a user's sessions via
   `Session.from_db(db, { user_id, active })`. User deletion cascades sessions at the db layer
 - Accepted staleness window (by design): access tokens are stateless, so logout / revoke-all /
-  admin changes / user deletion do not kill OUTSTANDING access tokens — they die at their ≤1h
+  admin changes / user deletion do not kill OUTSTANDING access tokens — they die at their ≤20m
   expiry. Controllers guarding sensitive actions can re-check with `User.for_id` /
   `Session.for_id`
 
@@ -466,7 +466,7 @@ allocations.
 - An API key row + its secret is the right to mint SESSIONLESS access tokens: the plaintext
   (`ydd_` + 64 hex chars) is exchanged at `POST /api/auth/api-token`
   (`ApiKey.for_exchange(db, secret)` — row exists for the secret's hash, not expired; touches
-  `last_used_at`) for a standard ~1h access token with `sid: null`. Everything downstream
+  `last_used_at`) for a standard ~20m access token with `sid: null`. Everything downstream
   (middlewares, role gates, socket handshake) treats it like any other access token
 - The secret is stored ONLY as `token_hash` (sha256 hex, `UNIQUE`): it leaves `ApiKey.create`
   (which returns `{ api_key, secret }`) exactly once — the POST `/user/:user_id/api-keys`
@@ -482,7 +482,7 @@ allocations.
   `DELETE /api/users/user/:user_id/api-key/:id` (own keys need no role; another user's need
   admin + X-Sudo-Mode, and a key under the wrong user reads as 404) — the admin kill path
   matters because password resets do NOT touch API keys (they are not password-derived).
-  User deletion cascades keys. The ≤1h staleness window applies exactly as for sessions
+  User deletion cascades keys. The ≤20m staleness window applies exactly as for sessions
 - Mint/list via the self-or-admin `GET|POST /api/users/user/:user_id/api-keys` (list takes
   the `active` filter and sets `X-Total-Count`). The query key is the id-scoped
   `["user", <id>, "api-keys"]` with deliberately NO `["me", ...]` variant:

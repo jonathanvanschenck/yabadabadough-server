@@ -22,7 +22,7 @@ const OkResponseSchema = {
 const TokensSchema = {
     type: 'object',
     properties: {
-        access: { type: 'string', format: 'jwt', description: "Short-lived (~1h) stateless access token; carries effective roles" },
+        access: { type: 'string', format: 'jwt', description: "Short-lived (~20m) stateless access token; carries effective roles" },
         auth: {
             type: 'string', format: 'jwt', nullable: true,
             description: "Long-lived session-bound auth token; ONLY good for refreshing, and ROTATED (single-use) by every successful refresh -- always store the one returned here. Null from /authenticate when no auth token was supplied"
@@ -437,7 +437,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Logout";
 
-            static openapi_Description = "Delete this login's session (killing its auth token's right to refresh) and clear the cookies. Idempotent: always returns OK, even when the session is already gone or the token is garbage -- outstanding access tokens still live out their <=1h expiry. Other devices' sessions are untouched.";
+            static openapi_Description = "Delete this login's session (killing its auth token's right to refresh) and clear the cookies. Idempotent: always returns OK, even when the session is already gone or the token is garbage -- outstanding access tokens still live out their <=20m expiry. Other devices' sessions are untouched.";
 
             async parse_request(req) {
                 return { auth: only_non_empty_string(req.body?.auth ?? req.cookies.auth_token) };
@@ -476,7 +476,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Revoke All Logins";
 
-            static openapi_Description = "Delete EVERY session for the authenticated user: all devices lose the ability to refresh and must log in again (their outstanding access tokens still live out their <=1h expiry). Requires a valid access token.";
+            static openapi_Description = "Delete EVERY session for the authenticated user: all devices lose the ability to refresh and must log in again (their outstanding access tokens still live out their <=20m expiry). Requires a valid access token.";
 
             async parse_request(req) {
                 return { user_id: req.access?.user_id };
@@ -514,7 +514,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Exchange an API Key for an Access Token";
 
-            static openapi_Description = "Exchange an API key (minted at POST /api/users/user/:user_id/api-keys) for a short-lived (~1h) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=1h expiry.";
+            static openapi_Description = "Exchange an API key (minted at POST /api/users/user/:user_id/api-keys) for a short-lived (~20m) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=20m expiry.";
 
             static openapi_RequestBodySchema = {
                 type: 'object',
@@ -574,7 +574,7 @@ module.exports = class AuthCollection extends Collection {
                     tokens: {
                         type: 'object',
                         properties: {
-                            access: { type: 'string', format: 'jwt', description: "Short-lived (~1h) sessionless access token; roles = owner's effective roles masked by the key's scope, admin always false" }
+                            access: { type: 'string', format: 'jwt', description: "Short-lived (~20m) sessionless access token; roles = owner's effective roles masked by the key's scope, admin always false" }
                         },
                         required: [ 'access' ]
                     }

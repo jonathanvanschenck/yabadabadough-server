@@ -94,21 +94,21 @@ const DUMMY_HASH_PROMISE = hash_password(crypto.randomBytes(16).toString("hex"))
  * always OUTSIDE the sqlite transaction.
  *
  * Token payloads (signing/verification is the API layer's job):
- *  - access (~1h, stateless):  { v, typ: "access", sub, email, admin, reader, editor, sid }
+ *  - access (~20m, stateless):  { v, typ: "access", sub, email, admin, reader, editor, sid }
  *    (role claims are the EFFECTIVE roles, so request handling never
  *    re-derives the admin-implies-all rule)
  *  - auth (~1w, session-bound): { v, typ: "auth", sub, sid, token }
- *  - access from an API key (~1h, sessionless): same shape as access but
+ *  - access from an API key (~20m, sessionless): same shape as access but
  *    sid is null, akid names the minting key, admin is ALWAYS false, and
  *    reader/editor are the owner's effective roles masked by the key's
  *    flags (see models/ApiKey.js)
  * Access tokens are verified by signature alone, so logout / revoke-all /
  * admin changes do not kill outstanding access tokens -- they die at their
- * <=1h expiry. NOTE: nothing may assume `sid` is non-null (API-key-minted
+ * <=20m expiry. NOTE: nothing may assume `sid` is non-null (API-key-minted
  * access tokens have no session behind them).
  */
 module.exports = class User extends Base {
-    static ACCESS_TOKEN_TTL_S = 3600;
+    static ACCESS_TOKEN_TTL_S = 1200;
 
     static PREPARED_STMTS = {
         for_id: `
@@ -519,7 +519,7 @@ module.exports = class User extends Base {
     }
 
     /**
-     * Payload for the short-lived (~1h) stateless access token. Carries
+     * Payload for the short-lived (~20m) stateless access token. Carries
      * everything request handling needs so the users table is never hit --
      * including the EFFECTIVE roles (admin-implies-all applied at mint
      * time, so consumers never re-derive it).
@@ -557,7 +557,7 @@ module.exports = class User extends Base {
     }
 
     /**
-     * Payload for a sessionless (~1h) access token minted from an API key:
+     * Payload for a sessionless (~20m) access token minted from an API key:
      * sid is null, admin is ALWAYS false (API keys never manage users), and
      * reader/editor are the user's EFFECTIVE roles masked by the key's
      * flags. akid records the minting key for observability (ignored by
@@ -585,7 +585,7 @@ module.exports = class User extends Base {
     /**
      * Db-free construction from a signature-verified ACCESS payload, for
      * stateless request handling: the instance is unsaved (no password_hash,
-     * no created_at) and the role flags may be up to ~1h stale. The payload
+     * no created_at) and the role flags may be up to ~20m stale. The payload
      * carries EFFECTIVE roles, so the instance's flags are effective too
      * (its `roles` getter returns the same set). Anything needing
      * fresh/trusted state should use User.for_id(db, payload.sub) instead.

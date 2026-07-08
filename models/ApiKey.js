@@ -35,7 +35,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * One API-key credential: a row here (plus its secret) IS the right to mint
  * sessionless (sid: null) access tokens at POST /api/auth/api-token.
  * Revocation is row deletion -- no flag -- and outstanding access tokens
- * still live out their <=1h expiry (the same accepted staleness window as
+ * still live out their <=20m expiry (the same accepted staleness window as
  * sessions).
  *
  * The secret is stored ONLY as its sha256 hex (`token_hash`): the plaintext
@@ -137,7 +137,7 @@ module.exports = class ApiKey extends Base {
     }
 
     static openapi_ApiKeySchema = {
-        description: "An API-key credential: exchanged at POST /api/auth/api-token for sessionless access tokens carrying the key's role scope (never admin). The secret itself is shown exactly once at creation and never again. Revoking a key stops future exchanges; already-minted access tokens live out their <=1h expiry.",
+        description: "An API-key credential: exchanged at POST /api/auth/api-token for sessionless access tokens carrying the key's role scope (never admin). The secret itself is shown exactly once at creation and never again. Revoking a key stops future exchanges; already-minted access tokens live out their <=20m expiry.",
         type: 'object',
         properties: {
             id: { type: 'integer', minimum: 1 },
@@ -382,7 +382,7 @@ module.exports = class ApiKey extends Base {
 
     /**
      * Revocation: the secret becomes worthless for future exchanges
-     * (outstanding access tokens still live out their <=1h expiry).
+     * (outstanding access tokens still live out their <=20m expiry).
      */
     delete(db) {
         const transaction = this.constructor.build_transaction(

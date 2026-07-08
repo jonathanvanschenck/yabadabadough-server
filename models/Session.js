@@ -378,7 +378,7 @@ module.exports = class Session extends Base {
 
     /**
      * Logout: the auth token referencing this session becomes worthless
-     * (outstanding access tokens still live out their <=1h expiry).
+     * (outstanding access tokens still live out their <=20m expiry).
      */
     delete(db) {
         const transaction = this.constructor.build_transaction(

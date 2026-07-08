@@ -24,8 +24,8 @@ const ApiKey = require("../models/ApiKey.js");
 
 // Outstanding access tokens are stateless: role edits, password changes,
 // session revocations, and even user deletion leave already-minted access
-// tokens working until their <=1h expiry (the documented staleness window)
-const STALENESS_NOTE = "Outstanding access tokens keep working until their <=1h expiry (they are stateless).";
+// tokens working until their <=20m expiry (the documented staleness window)
+const STALENESS_NOTE = "Outstanding access tokens keep working until their <=20m expiry (they are stateless).";
 
 const RoleFlagProperties = {
     admin: { type: 'boolean' },
@@ -141,7 +141,7 @@ module.exports = class UsersCollection extends Collection {
 
             static openapi_Summary = "Get User";
 
-            static openapi_Description = "Get a single user by ID, FRESH from the database (the access token's roles may be up to ~1h stale). Self-or-admin: your own user needs no role (this is the \"who am I, really\" endpoint); anyone else's requires admin + X-Sudo-Mode and reads as 404 without it.";
+            static openapi_Description = "Get a single user by ID, FRESH from the database (the access token's roles may be up to ~20m stale). Self-or-admin: your own user needs no role (this is the \"who am I, really\" endpoint); anyone else's requires admin + X-Sudo-Mode and reads as 404 without it.";
 
             static query_key = [ "user", "user_id" ];
 
