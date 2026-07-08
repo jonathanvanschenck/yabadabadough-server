@@ -76,6 +76,29 @@ describe("Auth API", () => {
         return body;
     }
 
+    describe("GET /api/auth/mode", () => {
+        it("reports disable_auth false without any credentials", async () => {
+            const { res, body } = await get("/api/auth/mode");
+            expect(res.status).to.equal(200);
+            expect(body).to.deep.equal({ disable_auth: false });
+        });
+
+        it("reports disable_auth true when the server disables auth", async () => {
+            const config = JSON.parse(JSON.stringify(CONFIG));
+            config.api.disable_auth = true;
+
+            const ws2 = new Webserver(config, { db, token_manager: tm });
+            await ws2.start();
+            try {
+                const res = await fetch(`http://127.0.0.1:${ws2.server.address().port}/api/auth/mode`);
+                expect(res.status).to.equal(200);
+                expect(await res.json()).to.deep.equal({ disable_auth: true });
+            } finally {
+                await ws2.stop();
+            }
+        });
+    });
+
     describe("POST /api/auth/login", () => {
         it("logs in and returns user, session, and tokens", async () => {
             const { res, body } = await post("/api/auth/login", {

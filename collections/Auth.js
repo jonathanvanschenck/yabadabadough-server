@@ -142,6 +142,32 @@ module.exports = class AuthCollection extends Collection {
 
     static controllers = [
 
+        class Mode extends Controller {
+            static path = "/mode";
+
+            static method = "GET";
+
+            static access = false;
+
+            static reader = false;
+
+            static openapi_Summary = "Get the Auth Mode";
+
+            static openapi_Description = "Report whether the server enforces authentication. When the server runs with YDD_DISABLE_AUTH (development only), every role gate is bypassed and this reports disable_auth: true -- the webapp uses it to skip the login workflow entirely. Unauthenticated by necessity: clients call it before they could have any token.";
+
+            async respond() {
+                return { disable_auth: !!this.disable_auth };
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'object',
+                properties: {
+                    disable_auth: { type: 'boolean', description: "True when the server bypasses all auth gates (YDD_DISABLE_AUTH development mode)" }
+                },
+                required: [ 'disable_auth' ]
+            };
+        },
+
         class CheckAuth extends Controller {
             static path = "/check";
 

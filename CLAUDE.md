@@ -70,8 +70,10 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   clears cookies), `revoke-all` (kills every session for the authed user), `api-token`
   (exchanges a plaintext API key for a ~20m SESSIONLESS access token — `sid: null`, roles =
   owner's effective roles ∩ the key's flags, `admin` always false; no cookies, programmatic
-  clients just re-exchange on expiry), and the
-  `check`/`check-admin`/`check-editor`/`check-reader` role probes
+  clients just re-exchange on expiry), the
+  `check`/`check-admin`/`check-editor`/`check-reader` role probes, and `mode` (GET,
+  unauthenticated: reports `{ disable_auth }` so the webapp can skip the login workflow
+  entirely when the server runs with `YDD_DISABLE_AUTH`)
 - Cookies: `access_token` (maxAge = 20m TTL, rides on every request) and `auth_token`
   (path-scoped to `/api/auth`, expires with the session); both httpOnly + SameSite Strict;
   `Secure` from `secure_cookies` (`YDD_SECURE_COOKIES`, default true — set false for plain-http
