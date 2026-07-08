@@ -3,6 +3,7 @@ const {
     Controller: _Controller,
     HTTPCodeError,
     parse_body_fields,
+    parse_strict_query_param,
     assert_found,
     translate_model_error,
     parse_list_params,
@@ -11,6 +12,7 @@ const {
 } = require("./lib/asseverate.js");
 const {
     to_int,
+    to_positive_int,
     to_ydate,
     string_to_boolean,
     string_to_array,
@@ -164,6 +166,13 @@ module.exports = class FundsCollection extends Collection {
                     required: false,
                     schema: { type: 'boolean' }
                 },
+                {
+                    name: 'descendant_of',
+                    in: 'query',
+                    description: 'Filter to the subtree rooted at this fund ID (self-inclusive: the fund itself plus all of its descendants). An unknown ID matches nothing; a malformed value is a 400. Composes with the other filters.',
+                    required: false,
+                    schema: { type: 'integer' }
+                },
                 ...openapi_list_parameters([ 'id' ])
             ]
 
@@ -182,6 +191,10 @@ module.exports = class FundsCollection extends Collection {
                 filter.pool = string_to_boolean(req.query?.pool);
                 filter.root = string_to_boolean(req.query?.root);
 
+                // Strict: a lenient fallback would silently return ALL funds
+                // instead of the subtree
+                filter.descendant_of = parse_strict_query_param(req.query, "descendant_of", to_positive_int, "positive integer");
+
                 return filter;
             }
 
@@ -195,6 +208,10 @@ module.exports = class FundsCollection extends Collection {
                     "$ref": '#/components/schemas/FundSchema'
                 }
             }
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } }
+            ]
         },
 
         class GetFund extends Controller {
@@ -254,13 +271,9 @@ module.exports = class FundsCollection extends Collection {
             async parse_request(req) {
                 const fund = this.get_fund(req);
 
-                // Lenient parsing would silently return the WRONG balance,
-                // so a malformed date is a hard 400 here
-                let on = null;
-                if ( req.query?.on !== undefined ) {
-                    on = only_ydate(req.query.on);
-                    if ( on === undefined ) throw new HTTPCodeError(400, `Bad parameter: on (got '${req.query.on}' expected YYYY-MM-DD string)`);
-                }
+                // Strict: a lenient fallback would silently return the WRONG
+                // balance (the current one instead of the requested date's)
+                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string") ?? null;
 
                 return { fund, on };
             }

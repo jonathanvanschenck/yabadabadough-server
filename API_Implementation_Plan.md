@@ -34,13 +34,13 @@ yet, and why.
   - `PATCH /api/transactions/transaction/:transaction_id` — in-place edit of one line; the
     `/transaction` resource's only write (create/delete of lines stays group-scoped)
 
-### Outstanding — blocked on model-layer TODOs
-
-- **`GET /api/funds/fund/:fund_id/descendants`** (the fund's subtree, e.g. for hierarchy
-  views and "what does this pool feed" UI): blocked on `Fund#descendants`, a throwing
-  model TODO. Alternative shape once the model exists: a `descendant_of` filter on
-  `GET /api/funds/funds` instead of a dedicated route — decide when implementing (the filter
-  composes with tracked/monthly/pool filters, so it is probably the better surface).
+- **Fund descendants (2026-07-07)**: shipped as a `descendant_of` filter on
+  `GET /api/funds/funds` (the filter surface won over a dedicated `/descendants` route — it
+  composes with the tracked/monthly/pool filters for free). Self-inclusive subtree
+  (recursive CTE in `Fund.from_db`); an unknown id returns an empty list, a malformed value
+  hard-400s (the documented "silently wrong data" exception to lenient query parsing — the
+  fallback would return ALL funds). The throwing `Fund#descendants` stub was deleted (it had
+  no callers); use `Fund.from_db(db, { descendant_of })`.
 
 ### Outstanding — deferred by choice (add when a real need shows up)
 
@@ -226,7 +226,7 @@ Establishes the template; everything later copies it.
 
 | Method | Path | Role | query_key | Model call |
 |---|---|---|---|---|
-| GET | `/` | reader | `["funds"]` | `Fund.from_db` (filters: `id`, `ids` (csv via `string_to_array`+`parse_and_filter_array`), `name`, `name_like`, `started_since/until`, `tracked`, `monthly`, `pool`, `root`; order: `id`) |
+| GET | `/` | reader | `["funds"]` | `Fund.from_db` (filters: `id`, `ids` (csv via `string_to_array`+`parse_and_filter_array`), `name`, `name_like`, `started_since/until`, `tracked`, `monthly`, `pool`, `root`, `descendant_of` (self-inclusive subtree; malformed → 400); order: `id`) |
 | GET | `/:fund_id` | reader | `["fund", id]` | `Fund.for_id` |
 | GET | `/:fund_id/balance` | reader | `["fund-balance", id]` | `?on=YYYY-MM-DD` → `calculate_balance_on`, else `calculate_balance`. Response `{ fund_id, on: date\|null, balance }`. 400 when `on` predates `start_date` (the model throws a plain Error — `translate_model_error` applies). Untracked funds return balance 0 (model behavior) — document it |
 | POST | `/` | editor | — | `Fund.create` — body: `name` (required, `only_non_empty_string`), `tracked` (required, `only_boolean`), `parent_id` (`nullable(only_id)`), `start_date` (`nullable(only_ydate)`), `start_balance` (strict number), `monthly`, `pool` (`only_boolean`), `color` (`nullable(only_non_empty_string)`) |

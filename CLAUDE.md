@@ -100,11 +100,14 @@ all follow the same shape:
   `only_non_empty_string`, the `nullable(parser)` combinator) — no string coercion; QUERY
   params use the coercive/lenient `to_*` parsers, where invalid values fall back to
   "filter not applied". Exception: a query param whose misparse would silently return wrong
-  data (e.g. `?on=` for balances) hard-400s instead
+  data (e.g. `?on=` for balances, `?descendant_of=` for the funds list — the fallback would
+  return ALL funds) hard-400s instead, via `parse_strict_query_param`
 - **Shared controller helpers** (`collections/lib/asseverate.js`):
   - `parse_body_fields(body, [[key, parser, expected, {required}]])` — the body-validation
     loop; parsers signal failure by returning `undefined` (400 `Bad parameter`/`Missing
     parameter`). Per-element array validation wraps it and prefixes `items[i]:` context
+  - `parse_strict_query_param(query, key, parser, expected)` — the strict query-param
+    exception above: undefined when absent, parsed value, or hard 400 — never lenient
   - `assert_found(value, label)` — 404 for path-id lookups (invalid ids 404 too, never 400)
   - `translate_model_error(err)` — wraps ONLY the model write call: `ConflictError` → 409,
     `ForeignKeyError` → 400 (bad body reference), plain `Error` (model consistency checks)

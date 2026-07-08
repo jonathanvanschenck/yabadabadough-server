@@ -588,6 +588,26 @@ describe("models/Fund.js", () => {
             const results = Fund.from_db(db, { root:true });
             expect(results).to.have.length(3);
         })
+        it("Can get by descendant_of (self-inclusive, deep nesting)", () => {
+            const results = Fund.from_db(db, { descendant_of: 4 });
+            expect(results.map((f) => f.name).sort()).to.deep.equal([
+                "child2", "child3", "fund3", "grandchild1"
+            ]);
+        })
+        it("descendant_of a leaf returns just the fund itself", () => {
+            const results = Fund.from_db(db, { descendant_of: 7 });
+            expect(results.map((f) => f.name)).to.deep.equal([ "grandchild1" ]);
+        })
+        it("descendant_of composes with other filters", () => {
+            const results = Fund.from_db(db, { descendant_of: 4, name_like: "hild" });
+            expect(results.map((f) => f.name).sort()).to.deep.equal([
+                "child2", "child3", "grandchild1"
+            ]);
+        })
+        it("descendant_of an unknown id returns an empty array", () => {
+            const results = Fund.from_db(db, { descendant_of: 999 });
+            expect(results).to.deep.equal([]);
+        })
 
     });
 

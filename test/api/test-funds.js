@@ -63,6 +63,30 @@ describe("Funds API", () => {
             expect(res.body).to.have.lengthOf(2);
         });
 
+        it("filters by descendant_of (self-inclusive, composes with other filters)", async () => {
+            let res = await h.request(`/api/funds/funds?descendant_of=${checking.id}`, { token: h.tokens.reader });
+            expect(res.status).to.equal(200);
+            expect(res.body.map((f) => f.name).sort()).to.deep.equal([ "Checking", "Groceries" ]);
+
+            res = await h.request(`/api/funds/funds?descendant_of=${checking.id}&monthly=true`, { token: h.tokens.reader });
+            expect(res.body.map((f) => f.name)).to.deep.equal([ "Groceries" ]);
+        });
+
+        it("descendant_of an unknown id returns an empty array", async () => {
+            const { status, body } = await h.request("/api/funds/funds?descendant_of=999", { token: h.tokens.reader });
+            expect(status).to.equal(200);
+            expect(body).to.deep.equal([]);
+        });
+
+        it("400s on a malformed descendant_of (never silently returns all funds)", async () => {
+            let res = await h.request("/api/funds/funds?descendant_of=bogus", { token: h.tokens.reader });
+            expect(res.status).to.equal(400);
+            expect(res.body.message).to.match(/descendant_of/);
+
+            res = await h.request("/api/funds/funds?descendant_of=0", { token: h.tokens.reader });
+            expect(res.status).to.equal(400);
+        });
+
         it("supports ordering and pagination", async () => {
             const { body } = await h.request("/api/funds/funds?order_by=id&order_direction=desc&limit=1&offset=1", { token: h.tokens.reader });
             expect(body).to.have.lengthOf(1);

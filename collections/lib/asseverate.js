@@ -44,6 +44,21 @@ function parse_body_fields(body={}, fields=[]) {
 }
 
 /**
+ * The strict query-param parser -- the documented EXCEPTION to lenient query
+ * parsing, for params whose misparse would silently return wrong data (e.g.
+ * `?on=` for balances, `?descendant_of=` for the funds list, where the
+ * "filter not applied" fallback would return ALL funds). Returns undefined
+ * when the param is absent, the parsed value when it parses, and 400s
+ * otherwise -- never falls back.
+ */
+function parse_strict_query_param(query, key, parser, expected) {
+    if ( query?.[key] === undefined ) return undefined;
+    const parsed = parser(query[key]);
+    if ( parsed === undefined ) throw new HTTPCodeError(400, `Bad parameter: ${key} (got '${query[key]}' expected ${expected})`);
+    return parsed;
+}
+
+/**
  * 404 helper for path-id lookups: returns `value` unless it is null/undefined.
  */
 function assert_found(value, label) {
@@ -513,6 +528,7 @@ module.exports = {
     Access,
     log_error,
     parse_body_fields,
+    parse_strict_query_param,
     assert_found,
     translate_model_error,
     parse_list_params,

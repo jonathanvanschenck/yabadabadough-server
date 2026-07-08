@@ -358,6 +358,7 @@ module.exports = class Fund extends Base {
         monthly,
         pool,
         root,
+        descendant_of, // fund id; self-inclusive subtree
         order_by = "id",
         order_direction = "ASC",
         limit = 100,
@@ -421,6 +422,22 @@ module.exports = class Fund extends Base {
                 wheres.push("funds.parent_id IS NOT NULL");
                 keys.push("not_root");
             }
+        }
+        if ( descendant_of !== undefined ) {
+            // Self-inclusive subtree: the fund itself plus everything below
+            // it. An unknown id matches nothing (empty result)
+            wheres.push(
+                "funds.id IN (\n" +
+                "\t\tWITH RECURSIVE subtree(id) AS (\n" +
+                "\t\t\tSELECT @descendant_of\n" +
+                "\t\t\tUNION\n" +
+                "\t\t\tSELECT f.id FROM funds f JOIN subtree ON f.parent_id = subtree.id\n" +
+                "\t\t)\n" +
+                "\t\tSELECT id FROM subtree\n" +
+                "\t)"
+            );
+            params.descendant_of = descendant_of;
+            keys.push("descendant_of");
         }
 
 
@@ -868,9 +885,5 @@ module.exports = class Fund extends Base {
      */
     finalization_history(db, opts={}) {
         return FundFinalization.from_db(db, { ...opts, fund_id: this.id });
-    }
-
-    descendants(db) {
-        throw new Error("TODO");
     }
 }
