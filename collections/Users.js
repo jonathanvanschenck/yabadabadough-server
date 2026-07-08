@@ -14,11 +14,13 @@ const {
     string_to_boolean,
     only_non_empty_string,
     only_boolean,
+    only_positive_number,
 } = require("./lib/parsers.js");
 const { QK, invalidate, remove } = require("./lib/query_keys.js");
 
 const User = require("../models/User.js");
 const Session = require("../models/Session.js");
+const ApiKey = require("../models/ApiKey.js");
 
 // Outstanding access tokens are stateless: role edits, password changes,
 // session revocations, and even user deletion leave already-minted access
@@ -39,6 +41,37 @@ class Controller extends _Controller {
         description: 'The ID of the user',
         required: true,
         schema: { type: 'integer' }
+    }
+
+    static ApiKeyIDParam = {
+        name: 'api_key_id',
+        in: 'path',
+        description: 'The ID of the API key',
+        required: true,
+        schema: { type: 'integer' }
+    }
+
+    static ActiveApiKeyParam = {
+        name: 'active',
+        in: 'query',
+        description: 'Filter to unexpired (true, never-expiring keys count) or expired (false) keys',
+        required: false,
+        schema: { type: 'boolean' }
+    }
+
+    // Foreign/unknown keys 404 (not 403): never leak that the id exists.
+    // owner_id null skips the ownership check (admin paths pass the path
+    // user's id instead).
+    get_api_key(req, owner_id=null) {
+        const api_key_id = to_int(req.params.api_key_id);
+        if ( !api_key_id ) throw new HTTPCodeError(404, "Not found");
+
+        const api_key = assert_found(ApiKey.for_id(this.db, api_key_id), `api key ${api_key_id}`);
+        if ( owner_id !== null && api_key.user_id !== owner_id ) {
+            throw new HTTPCodeError(404, `Not found: api key ${api_key_id}`);
+        }
+
+        return api_key;
     }
 
     get_user(req) {
@@ -269,6 +302,163 @@ module.exports = class UsersCollection extends Collection {
             ]
         },
 
+        class GetMeApiKeys extends Controller {
+            static path = "/me/api-keys";
+
+            static method = "GET";
+
+            static reader = false;
+
+            static openapi_Summary = "List My API Keys";
+
+            static openapi_Description = "List the authenticated user's API keys (all of them by default; filter with active -- expired keys stay listed). The secret is never re-shown. NOTE the query key is id-scoped, not [\"me\", ...]: invalidations broadcast to every client, so the webapp keys this view by its own user id.";
+
+            static query_key = [ "user", "user_id", "api-keys" ];
+
+            static openapi_Parameters = [
+                this.ActiveApiKeyParam,
+                ...openapi_list_parameters([ 'id', 'name', 'expires_at', 'created_at' ])
+            ]
+
+            async parse_request(req) {
+                const filter = parse_list_params(req.query, [ "id", "name", "expires_at", "created_at" ]);
+                filter.active = string_to_boolean(req.query?.active);
+                filter.user_id = this.get_self(req).id;
+                return filter;
+            }
+
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", ApiKey.count(this.db, filter));
+                return ApiKey.from_db(this.db, filter).map((k) => k.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of API keys matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'array',
+                items: {
+                    "$ref": '#/components/schemas/ApiKeySchema'
+                }
+            }
+        },
+
+        class PostMeApiKeys extends Controller {
+            static path = "/me/api-keys";
+
+            static method = "POST";
+
+            static reader = false;
+
+            static openapi_Summary = "Create API Key";
+
+            static openapi_Description = "Mint a new API key for the authenticated user. The response's api_key field is the ONLY time the plaintext secret is ever shown -- store it now. The key's reader/editor flags scope what its exchanged tokens may do (intersected with the owner's roles at exchange time; admin is never minted). Exchange it at POST /api/auth/api-token.";
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    name: { type: 'string', description: "Human label ('metrics dashboard', 'statement importer', ...)" },
+                    reader: { type: 'boolean', description: "Key-level reader scope (default true)" },
+                    editor: { type: 'boolean', description: "Key-level editor scope (default false)" },
+                    ttl_days: { type: 'number', exclusiveMinimum: 0, description: "Days until the key expires; omit for a key that never expires" }
+                },
+                required: [ 'name' ]
+            }
+
+            async parse_request(req) {
+                const data = parse_body_fields(req.body, [
+                    [ "name", only_non_empty_string, "non-empty string", { required: true } ],
+                    [ "reader", only_boolean, "boolean" ],
+                    [ "editor", only_boolean, "boolean" ],
+                    [ "ttl_days", only_positive_number, "positive number" ],
+                ]);
+
+                return { user: this.get_self(req), ...data };
+            }
+
+            async respond({ user, ...data }) {
+                let api_key, secret;
+                try {
+                    ({ api_key, secret } = ApiKey.create(this.db, { ...data, user_id: user.id }));
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                const invalidation_actions = [
+                    invalidate(QK.user_api_keys(user.id)),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { user_id: user.id });
+
+                return {
+                    data: { ...api_key.to_api(), api_key: secret },
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({
+                allOf: [
+                    { "$ref": '#/components/schemas/ApiKeySchema' },
+                    {
+                        type: 'object',
+                        properties: {
+                            api_key: { type: 'string', format: 'password', description: "The plaintext secret ('ydd_...'): shown here ONCE and never again" }
+                        },
+                        required: [ 'api_key' ]
+                    }
+                ]
+            });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } }
+            ]
+        },
+
+        class DeleteMeApiKey extends Controller {
+            static path = "/me/api-key/:api_key_id";
+
+            static method = "DELETE";
+
+            static reader = false;
+
+            static openapi_Summary = "Revoke My API Key";
+
+            static openapi_Description = `Revoke one of the authenticated user's own API keys: its secret loses the right to exchange for access tokens. Another user's key reads as 404 (existence is never leaked). ${STALENESS_NOTE}`;
+
+            static openapi_Parameters = [
+                this.ApiKeyIDParam
+            ]
+
+            async parse_request(req) {
+                return this.get_api_key(req, this.get_self(req).id);
+            }
+
+            async respond(api_key) {
+                api_key.delete(this.db);
+
+                const invalidation_actions = [
+                    invalidate(QK.user_api_keys(api_key.user_id)),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { api_key_id: api_key.id });
+
+                return {
+                    data: null,
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/NullSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 404, description: "Not found (including another user's API key)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
+        },
+
         // ------------------------------------------------------------------
         // User management: admin only (X-Sudo-Mode required)
         // ------------------------------------------------------------------
@@ -434,6 +624,104 @@ module.exports = class UsersCollection extends Collection {
 
             static openapi_ErrorResponses = [
                 { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
+        },
+
+        class GetUserApiKeys extends Controller {
+            static path = "/user/:user_id/api-keys";
+
+            static method = "GET";
+
+            static admin = true;
+
+            static reader = false;
+
+            static openapi_Summary = "List User API Keys";
+
+            static openapi_Description = "List a user's API keys (all of them by default; filter with active). The secret is never shown.";
+
+            static query_key = [ "user", "user_id", "api-keys" ];
+
+            static openapi_Parameters = [
+                this.UserIDParam,
+                this.ActiveApiKeyParam,
+                ...openapi_list_parameters([ 'id', 'name', 'expires_at', 'created_at' ])
+            ]
+
+            async parse_request(req) {
+                const filter = parse_list_params(req.query, [ "id", "name", "expires_at", "created_at" ]);
+                filter.active = string_to_boolean(req.query?.active);
+                filter.user_id = this.get_user(req).id;
+                return filter;
+            }
+
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", ApiKey.count(this.db, filter));
+                return ApiKey.from_db(this.db, filter).map((k) => k.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of API keys matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'array',
+                items: {
+                    "$ref": '#/components/schemas/ApiKeySchema'
+                }
+            }
+
+            static openapi_ErrorResponses = [
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
+        },
+
+        class DeleteUserApiKey extends Controller {
+            static path = "/user/:user_id/api-key/:api_key_id";
+
+            static method = "DELETE";
+
+            static admin = true;
+
+            static reader = false;
+
+            static openapi_Summary = "Revoke User API Key";
+
+            static openapi_Description = `Administratively revoke one of a user's API keys. Unlike sessions, keys survive password resets, so this is the admin kill path for a compromised or orphaned credential. ${STALENESS_NOTE}`;
+
+            static openapi_Parameters = [
+                this.UserIDParam,
+                this.ApiKeyIDParam
+            ]
+
+            async parse_request(req) {
+                // A key under the wrong user 404s: the path names the
+                // resource, it doesn't search for it
+                return this.get_api_key(req, this.get_user(req).id);
+            }
+
+            async respond(api_key) {
+                api_key.delete(this.db);
+
+                const invalidation_actions = [
+                    invalidate(QK.user_api_keys(api_key.user_id)),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { api_key_id: api_key.id });
+
+                return {
+                    data: null,
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/NullSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 404, description: "Not found (unknown user, unknown key, or a key not owned by that user)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 
@@ -640,7 +928,7 @@ module.exports = class UsersCollection extends Collection {
 
             static openapi_Summary = "Delete User";
 
-            static openapi_Description = `Delete a user; their sessions cascade away. Self-deletion is refused (use another admin account). ${STALENESS_NOTE}`;
+            static openapi_Description = `Delete a user; their sessions and API keys cascade away. Self-deletion is refused (use another admin account). ${STALENESS_NOTE}`;
 
             static openapi_Parameters = [
                 this.UserIDParam
@@ -667,6 +955,7 @@ module.exports = class UsersCollection extends Collection {
                     invalidate(QK.users),
                     remove(QK.user(user.id)),
                     remove(QK.user_sessions(user.id)),
+                    remove(QK.user_api_keys(user.id)),
                 ];
 
                 this.broadcast_invalidations(invalidation_actions, { user_id: user.id });

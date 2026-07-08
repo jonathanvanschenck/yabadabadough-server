@@ -45,6 +45,11 @@ const QK = {
     users: ["users"],
     user: (id) => ["user", id.toString()],
     user_sessions: (id) => ["user", id.toString(), "sessions"],
+    // Deliberately id-scoped with NO ["me", ...] variant: invalidations are
+    // broadcast to EVERY connected client, and a viewer-relative key would
+    // spuriously invalidate every other user's own-keys cache. The webapp
+    // builds its self view with its own user id (known from /me).
+    user_api_keys: (id) => ["user", id.toString(), "api-keys"],
     me: ["me"],
     me_sessions: ["me", "sessions"],
 };
