@@ -39,9 +39,10 @@ describe("Funds API", () => {
             expect(status).to.equal(401);
         });
 
-        it("lists all funds", async () => {
-            const { status, body } = await h.request("/api/funds/funds", { token: h.tokens.reader });
+        it("lists all funds with X-Total-Count", async () => {
+            const { status, body, headers } = await h.request("/api/funds/funds", { token: h.tokens.reader });
             expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("3");
             expect(body).to.have.lengthOf(3);
             expect(body.map((f) => f.name)).to.include.members([ "Checking", "Groceries", "Wishlist" ]);
         });
@@ -87,10 +88,15 @@ describe("Funds API", () => {
             expect(res.status).to.equal(400);
         });
 
-        it("supports ordering and pagination", async () => {
-            const { body } = await h.request("/api/funds/funds?order_by=id&order_direction=desc&limit=1&offset=1", { token: h.tokens.reader });
+        it("supports ordering and pagination (X-Total-Count ignores limit, respects filters)", async () => {
+            const { body, headers } = await h.request("/api/funds/funds?order_by=id&order_direction=desc&limit=1&offset=1", { token: h.tokens.reader });
+            expect(headers.get("x-total-count")).to.equal("3");
             expect(body).to.have.lengthOf(1);
             expect(body[0].name).to.equal("Groceries");
+
+            const res = await h.request("/api/funds/funds?tracked=true&limit=1", { token: h.tokens.reader });
+            expect(res.headers.get("x-total-count")).to.equal("2");
+            expect(res.body).to.have.lengthOf(1);
         });
     });
 

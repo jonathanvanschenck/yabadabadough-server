@@ -234,6 +234,17 @@ describe("User Model", () => {
             const all = User.from_db(db, { order_by: "email", order_direction: "ASC" });
             expect(all.map(u => u.email)).to.deep.equal(["a@example.com", "b@example.com"]);
         });
+
+        it("should count with the same filters as from_db, ignoring order/limit/offset", async () => {
+            await User.create(db, { email: "b@example.com", password: "hunter22hunter22" });
+            await User.create(db, { email: "a@example.com", password: "hunter22hunter22", admin: true });
+
+            expect(User.count(db)).to.equal(2);
+            expect(User.count(db, { admin: true })).to.equal(1);
+            // Effective-role filter: the admin counts as an editor
+            expect(User.count(db, { editor: true })).to.equal(1);
+            expect(User.count(db, { order_by: "email", limit: 1, offset: 0 })).to.equal(2);
+        });
     });
 
     describe("update()", () => {

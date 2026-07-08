@@ -37,11 +37,12 @@ describe("Finalizations API", () => {
             expect((await h.request("/api/finalizations/month-finalizations")).status).to.equal(401);
         });
 
-        it("lists finalized months, newest first", async () => {
+        it("lists finalized months, newest first, with X-Total-Count", async () => {
             MonthFinalization.create(h.db, { month: YDate.parse("2026-02-15"), recursive: true });
 
-            const { status, body } = await h.request("/api/finalizations/month-finalizations", { token: h.tokens.reader });
+            const { status, body, headers } = await h.request("/api/finalizations/month-finalizations", { token: h.tokens.reader });
             expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("2");
             expect(body.map((m) => m.som_date)).to.deep.equal([ "2026-02-01", "2026-01-01" ]);
             expect(body[0].eom_date).to.equal("2026-02-28");
             expect(body[0].sonm_date).to.equal("2026-03-01");

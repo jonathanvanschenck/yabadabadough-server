@@ -198,8 +198,16 @@ module.exports = class FundsCollection extends Collection {
                 return filter;
             }
 
-            async respond(filter) {
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", Fund.count(this.db, filter));
                 return Fund.from_db(this.db, filter).map((f) => f.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of funds matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
             }
 
             static openapi_ResponseSchema = {

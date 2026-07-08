@@ -608,6 +608,29 @@ describe("models/Fund.js", () => {
             const results = Fund.from_db(db, { descendant_of: 999 });
             expect(results).to.deep.equal([]);
         })
+        it("an empty ids array matches nothing", () => {
+            expect(Fund.from_db(db, { ids: [] })).to.deep.equal([]);
+            expect(Fund.count(db, { ids: [] })).to.equal(0);
+        })
+
+        describe(".count()", () => {
+            it("counts all funds with no filters", () => {
+                expect(Fund.count(db)).to.equal(7);
+            });
+
+            it("counts with the same filters as from_db", () => {
+                expect(Fund.count(db, { tracked: true })).to.equal(5);
+                expect(Fund.count(db, { root: true })).to.equal(3);
+                expect(Fund.count(db, { descendant_of: 4, name_like: "hild" })).to.equal(3);
+                expect(Fund.count(db, { descendant_of: 999 })).to.equal(0);
+            });
+
+            it("ignores order/limit/offset so it can share the from_db filter object", () => {
+                const filter = { order_by: "id", order_direction: "DESC", limit: 2, offset: 0 };
+                expect(Fund.count(db, filter)).to.equal(7);
+                expect(Fund.from_db(db, filter)).to.have.lengthOf(2);
+            });
+        });
 
     });
 

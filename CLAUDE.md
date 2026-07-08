@@ -126,11 +126,10 @@ all follow the same shape:
   list keys (`["funds"]`), singular + STRINGIFIED id singles (`["fund", "3"]`), computed
   subresources under their own top-level key (`["fund-balance", id]`) so hot invalidations
   don't refetch cold data; when in doubt, over-invalidate
-- **Pagination**: list endpoints on the big tables (transaction groups, transactions,
-  statement items, fund finalizations) set `X-Total-Count` from the model's
+- **Pagination**: EVERY list endpoint sets `X-Total-Count` from the model's
   `count(db, filters)` static (which shares `_from_db_wheres` with `from_db` and ignores
-  order/limit/offset, so one filter object serves both). Small tables (funds, users,
-  sessions, month finalizations) skip it and rely on a generous default limit (1000)
+  order/limit/offset, so one filter object serves both) and declares the header in
+  `openapi_ResponseHeaders`; the API-layer default limit is a generous 1000
 - **API-layer rules on top of the models**: USER transaction/allocation amounts are strictly
   positive (zero is reserved for internal eom_cleanup rows); allocation and eom_cleanup groups
   cannot be deleted OR edited through the transaction-groups API (API-layer 409 guards, with

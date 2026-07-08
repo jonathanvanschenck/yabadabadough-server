@@ -347,7 +347,7 @@ module.exports = class Fund extends Base {
         return this.from_row(stmt.get({ id }) ?? null);
     }
 
-    static from_db(db, {
+    static _from_db_wheres({
         id,
         ids,
         name,
@@ -359,10 +359,6 @@ module.exports = class Fund extends Base {
         pool,
         root,
         descendant_of, // fund id; self-inclusive subtree
-        order_by = "id",
-        order_direction = "ASC",
-        limit = 100,
-        offset =  0
     }={}) {
         const wheres = [];
         const params = {};
@@ -374,7 +370,7 @@ module.exports = class Fund extends Base {
             keys.push("id")
         }
         if ( Array.isArray(ids) ) {
-            if ( ids.length == 0 ) return [];
+            // An empty array matches nothing (json_each('[]') yields no rows)
             wheres.push("funds.id IN (SELECT value FROM json_each(@ids))");
             params.ids = JSON.stringify(ids);
             keys.push("ids")
@@ -440,6 +436,17 @@ module.exports = class Fund extends Base {
             keys.push("descendant_of");
         }
 
+        return { wheres, params, keys };
+    }
+
+    static from_db(db, {
+        order_by = "id",
+        order_direction = "ASC",
+        limit = 100,
+        offset =  0,
+        ...filters
+    }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
                 + `FROM funds\n`
@@ -467,13 +474,36 @@ module.exports = class Fund extends Base {
         }
 
         const stmt = this.build_stmt(
-            db, 
+            db,
             "from_db$" + keys.join(":"),
             sql
         );
 
         return stmt.all(params).map(row => this.from_row(row))
 
+    }
+
+    /**
+     * Total rows matching the same filters as from_db (order/limit/offset
+     * are accepted and ignored, so the API layer can pass one filter object
+     * to both).
+     */
+    static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
+        let sql = `SELECT COUNT(*) AS count\n`
+                + `FROM funds\n`;
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n\t${wheres.join("\n\tAND ")}\n`
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "count$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.get(params).count;
     }
 
     static _create(db, {

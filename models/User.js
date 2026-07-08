@@ -255,14 +255,10 @@ module.exports = class User extends Base {
      * The reader/editor filters match EFFECTIVE roles (admins count), same
      * semantics as user.roles; the admin filter is exact.
      */
-    static from_db(db, {
+    static _from_db_wheres({
         admin,
         reader,
         editor,
-        order_by = "id",
-        order_direction = "ASC",
-        limit = 100,
-        offset = 0
     }={}) {
         const wheres = [];
         const params = {};
@@ -285,6 +281,18 @@ module.exports = class User extends Base {
             params.editor = boolean2stmt(editor);
             keys.push("editor");
         }
+
+        return { wheres, params, keys };
+    }
+
+    static from_db(db, {
+        order_by = "id",
+        order_direction = "ASC",
+        limit = 100,
+        offset = 0,
+        ...filters
+    }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
                 + `FROM users\n`;
@@ -314,6 +322,29 @@ module.exports = class User extends Base {
         );
 
         return stmt.all(params).map(row => this.from_row(row));
+    }
+
+    /**
+     * Total rows matching the same filters as from_db (order/limit/offset
+     * are accepted and ignored, so the API layer can pass one filter object
+     * to both).
+     */
+    static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
+        let sql = `SELECT COUNT(*) AS count\n`
+                + `FROM users\n`;
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "count$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.get(params).count;
     }
 
     static _normalize_email(email) {

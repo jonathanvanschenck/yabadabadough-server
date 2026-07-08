@@ -73,9 +73,10 @@ describe("Users API", () => {
     });
 
     describe("GET /api/users/me/sessions", () => {
-        it("lists own sessions without the secret", async () => {
-            const { status, body } = await h.request("/api/users/me/sessions", { token: h.tokens.reader });
+        it("lists own sessions without the secret, with X-Total-Count", async () => {
+            const { status, body, headers } = await h.request("/api/users/me/sessions", { token: h.tokens.reader });
             expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("1");
             expect(body).to.have.lengthOf(1);
             expect(body[0].user_id).to.equal(h.users.reader.id);
             expect(body[0]).to.not.have.property("token");
@@ -122,13 +123,15 @@ describe("Users API", () => {
     });
 
     describe("GET /api/users/users", () => {
-        it("lists users; effective-role filters count admins", async () => {
-            const { status, body } = await h.request("/api/users/users", { token: h.tokens.admin, sudo: true });
+        it("lists users with X-Total-Count; effective-role filters count admins", async () => {
+            const { status, body, headers } = await h.request("/api/users/users", { token: h.tokens.admin, sudo: true });
             expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("3");
             expect(body).to.have.lengthOf(3);
 
             // editor filter matches the explicit editor AND the admin (effective)
             const res = await h.request("/api/users/users?editor=true", { token: h.tokens.admin, sudo: true });
+            expect(res.headers.get("x-total-count")).to.equal("2");
             expect(res.body.map((u) => u.email)).to.include.members([ "editor@example.com", "admin@example.com" ]);
         });
     });
@@ -160,6 +163,7 @@ describe("Users API", () => {
             expect(body.email).to.equal("editor@example.com");
 
             const sessions = await h.request(`/api/users/user/${h.users.editor.id}/sessions`, { token: h.tokens.admin, sudo: true });
+            expect(sessions.headers.get("x-total-count")).to.equal("1");
             expect(sessions.body).to.have.lengthOf(1);
             expect(sessions.body[0]).to.not.have.property("token");
         });

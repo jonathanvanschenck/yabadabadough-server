@@ -42,12 +42,14 @@ yet, and why.
   fallback would return ALL funds). The throwing `Fund#descendants` stub was deleted (it had
   no callers); use `Fund.from_db(db, { descendant_of })`.
 
-### Outstanding — deferred by choice (add when a real need shows up)
+- **`X-Total-Count` everywhere (2026-07-07)**: the "small-table lists" (funds, users,
+  sessions, month-finalizations) now send the header too — untracked funds can balloon
+  (tracked funds stay under ~100, but nothing bounds the untracked tree), and the count
+  costs almost nothing, so every list endpoint is now symmetric. Same mechanics as the big
+  tables: `_from_db_wheres` extracted in Fund/User/Session/MonthFinalization, `count()`
+  statics sharing it with `from_db`, respond sets the header from the same filter object.
 
-- **`X-Total-Count` on the small-table lists** (funds, users, sessions, month-finalizations):
-  `count()` statics were skipped for tables bounded by real-world size (a personal fund tree,
-  a handful of users); their lists rely on the generous default limit (1000). Mechanical to
-  add via the same `_from_db_wheres` extraction if any of them ever needs paging.
+### Outstanding — deferred by choice (add when a real need shows up)
 - **Admin per-session revocation** (`DELETE /api/users/user/:user_id/session/:session_id`):
   admins today reset the user's password with `revoke_sessions: true` (kills everything) or
   the user self-serves via `/api/users/me/session/:id` and `/api/auth/revoke-all`. A

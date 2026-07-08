@@ -94,8 +94,16 @@ module.exports = class FinalizationsCollection extends Collection {
                 return filter;
             }
 
-            async respond(filter) {
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", MonthFinalization.count(this.db, filter));
                 return MonthFinalization.from_db(this.db, filter).map((m) => m.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of month finalizations matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
             }
 
             static openapi_ResponseSchema = {

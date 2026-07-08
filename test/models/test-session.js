@@ -194,6 +194,20 @@ describe("Session Model", () => {
             expect(expired[0].id).to.equal(stale.id);
         });
 
+        it("should count with the same filters as from_db, ignoring order/limit/offset", async () => {
+            const bob = await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+
+            Session.create(db, { user_id: bob.id });
+            Session.create(db, { user_id: user.id });
+            // Expired sessions are created LAST: any later create would sweep them
+            Session.create(db, { user_id: user.id, ttl_days: -1 });
+
+            expect(Session.count(db)).to.equal(3);
+            expect(Session.count(db, { user_id: user.id })).to.equal(2);
+            expect(Session.count(db, { user_id: user.id, active: true })).to.equal(1);
+            expect(Session.count(db, { user_id: user.id, limit: 1, offset: 0 })).to.equal(2);
+        });
+
         it("should prune only expired sessions", () => {
             const live = Session.create(db, { user_id: user.id });
             Session.create(db, { user_id: user.id, ttl_days: -1 });

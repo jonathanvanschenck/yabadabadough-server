@@ -192,8 +192,16 @@ module.exports = class UsersCollection extends Collection {
                 return filter;
             }
 
-            async respond(filter) {
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", Session.count(this.db, filter));
                 return Session.from_db(this.db, filter).map((s) => s.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of sessions matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
             }
 
             static openapi_ResponseSchema = {
@@ -315,8 +323,16 @@ module.exports = class UsersCollection extends Collection {
                 return filter;
             }
 
-            async respond(filter) {
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", User.count(this.db, filter));
                 return User.from_db(this.db, filter).map((u) => u.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of users matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
             }
 
             static openapi_ResponseSchema = {
@@ -397,8 +413,16 @@ module.exports = class UsersCollection extends Collection {
                 return filter;
             }
 
-            async respond(filter) {
+            async respond(filter, { res }) {
+                res.setHeader("X-Total-Count", Session.count(this.db, filter));
                 return Session.from_db(this.db, filter).map((s) => s.to_api());
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of sessions matching the filter (ignoring limit and offset)",
+                    schema: { type: "integer" }
+                }
             }
 
             static openapi_ResponseSchema = {

@@ -459,6 +459,16 @@ describe("models/MonthFinalization.js", () => {
             expect(MonthFinalization.for_id(db, jan.id).som_date.toString()).to.equal("2026-01-01");
         });
 
+        it(".count() matches from_db filters, ignoring order/limit/offset", () => {
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+            MonthFinalization.create(db, { month: YDate.parse("2026-02-15") });
+
+            expect(MonthFinalization.count(db)).to.equal(2);
+            expect(MonthFinalization.count(db, { until: YDate.parse("2026-01-31") })).to.equal(1);
+            expect(MonthFinalization.count(db, { since: YDate.parse("2026-03-01") })).to.equal(0);
+            expect(MonthFinalization.count(db, { limit: 1, offset: 0 })).to.equal(2);
+        });
+
         it(".to_api() serializes dates", () => {
             const jan = MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
             const api = jan.to_api();

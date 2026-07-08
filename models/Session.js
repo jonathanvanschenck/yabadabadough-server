@@ -161,13 +161,9 @@ module.exports = class Session extends Base {
         return this.from_row(stmt.get({ id }) ?? null);
     }
 
-    static from_db(db, {
+    static _from_db_wheres({
         user_id,
         active,  // true: not expired, false: expired
-        order_by = "id",
-        order_direction = "ASC",
-        limit = 100,
-        offset = 0
     }={}) {
         const wheres = [];
         const params = {};
@@ -183,6 +179,18 @@ module.exports = class Session extends Base {
             params.now = datetime2stmt(new Date());
             keys.push("active_" + (active ? 1 : 0));
         }
+
+        return { wheres, params, keys };
+    }
+
+    static from_db(db, {
+        order_by = "id",
+        order_direction = "ASC",
+        limit = 100,
+        offset = 0,
+        ...filters
+    }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
 
         let sql = `SELECT ${SELECT_COLUMNS.join(", ")}\n`
                 + `FROM user_sessions\n`;
@@ -212,6 +220,29 @@ module.exports = class Session extends Base {
         );
 
         return stmt.all(params).map(row => this.from_row(row));
+    }
+
+    /**
+     * Total rows matching the same filters as from_db (order/limit/offset
+     * are accepted and ignored, so the API layer can pass one filter object
+     * to both).
+     */
+    static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
+        const { wheres, params, keys } = this._from_db_wheres(filters);
+
+        let sql = `SELECT COUNT(*) AS count\n`
+                + `FROM user_sessions\n`;
+        if ( wheres.length ) {
+            sql = sql + `WHERE\n    ${wheres.join("\n    AND ")}\n`;
+        }
+
+        const stmt = this.build_stmt(
+            db,
+            "count$" + keys.join(":"),
+            sql
+        );
+
+        return stmt.get(params).count;
     }
 
     static _create(db, { user_id, token, expires_at, note }={}) {
