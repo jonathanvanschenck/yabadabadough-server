@@ -56,7 +56,7 @@ Express app built from asseverate Collections/Controllers (local wrappers in
 - `req.access` is built ONLY from a signature-verified access-token payload
   (`Access.from_access_token`, used by the Bearer middleware, the cookie middleware, and the
   socket.io handshake): identifier = email, plus `user_id`/`session_id` (`session_id`
-  may be NULL — API-key credentials will mint sessionless access tokens). Roles come straight
+  IS NULL on API-key-minted access tokens — nothing may assume it exists). Roles come straight
   off the payload (already effective) with ONE twist: `admin` is masked out unless the request
   carries `X-Sudo-Mode: true` (`adminable` says whether sudo would work) — a deliberate
   guard against accidental admin calls
@@ -65,7 +65,10 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   token; runs `Session.for_auth_payload`; auth token returned unchanged — no rotation in v1),
   `authenticate` ("check my auth, refresh if stale" — browsers call it with cookies +
   `auto_refresh`), `logout` (deletes the session row via the full guard, idempotent, always
-  clears cookies), `revoke-all` (kills every session for the authed user), and the
+  clears cookies), `revoke-all` (kills every session for the authed user), `api-token`
+  (exchanges a plaintext API key for a ~1h SESSIONLESS access token — `sid: null`, roles =
+  owner's effective roles ∩ the key's flags, `admin` always false; no cookies, programmatic
+  clients just re-exchange on expiry), and the
   `check`/`check-admin`/`check-editor`/`check-reader` role probes
 - Cookies: `access_token` (maxAge = 1h TTL, rides on every request) and `auth_token`
   (path-scoped to `/api/auth`, expires with the session); both httpOnly + SameSite Strict;
@@ -148,7 +151,9 @@ all follow the same shape:
   the model refusals as backstop); bank-statement deletion defaults to
   `with_group=true` and its OpenAPI description carries the re-import double-count hazard;
   password changes revoke sessions by default (`revoke_sessions: true` — API-layer policy per
-  the model docs); self-deletion of users is refused; foreign sessions read as 404, not 403
+  the model docs — but API keys deliberately survive password changes); self-deletion of users
+  is refused; foreign sessions AND foreign API keys read as 404, not 403; the API-key mint
+  response is the only surface that ever shows the key's plaintext secret
 - **Transaction editing** (three PATCH routes, all in `collections/Transactions.js`; group ids
   are stable across all of them, so bank statement reconciliation survives edits):
   `PATCH /transaction-group/:id` (scalars — description/note/date; a date edit broadcasts
@@ -414,10 +419,13 @@ allocations.
   renders payload objects, with `typ` + `v` claims discriminating kinds):
   - access (~1h, `User.ACCESS_TOKEN_TTL_S`, stateless): `{ v, typ: "access", sub, email, admin, reader, editor, sid }` (effective roles)
   - auth (~1w, session-bound): `{ v, typ: "auth", sub, sid, token }`
+  - access from an API key (~1h, sessionless): same `typ: "access"` shape but `sid: null`,
+    `akid` = the minting key's id, `admin` ALWAYS false, `reader`/`editor` masked by the
+    key's flags (`user.to_api_key_access_token_payload(api_key)`)
   Rendered by `user.to_access_token_payload(session)` / `to_auth_token_payload(session)`;
   `User.from_token_payload(payload)` is the db-free inverse for access payloads (unsaved
   instance, `admin` may be ~1h stale — use `for_id` when freshness matters). NOTHING may assume
-  `sid` is non-null: future API-key credentials will mint access tokens with no session
+  `sid` is non-null: API-key-minted access tokens have no session behind them
 - Bootstrap via `scripts/create-user.js` (also the forgotten-password recovery path)
 
 **Sessions** (`user_sessions` table, `models/Session.js`):
@@ -440,6 +448,34 @@ allocations.
   admin changes / user deletion do not kill OUTSTANDING access tokens — they die at their ≤1h
   expiry. Controllers guarding sensitive actions can re-check with `User.for_id` /
   `Session.for_id`
+
+**API Keys** (`user_api_keys` table, `models/ApiKey.js`):
+- An API key row + its secret is the right to mint SESSIONLESS access tokens: the plaintext
+  (`ydd_` + 64 hex chars) is exchanged at `POST /api/auth/api-token`
+  (`ApiKey.for_exchange(db, secret)` — row exists for the secret's hash, not expired; touches
+  `last_used_at`) for a standard ~1h access token with `sid: null`. Everything downstream
+  (middlewares, role gates, socket handshake) treats it like any other access token
+- The secret is stored ONLY as `token_hash` (sha256 hex, `UNIQUE`): it leaves `ApiKey.create`
+  (which returns `{ api_key, secret }`) exactly once — the POST `/me/api-keys` response is the
+  only API surface that ever shows it. Lookup is BY hash, so no timing-safe compare is needed
+  (unlike `Session.token`, which is stored plaintext and compared)
+- Per-key role scope: `reader` (default 1) / `editor` (default 0) flags mask the OWNER's
+  effective roles at exchange time; `admin` is never minted from an API key (no column — user
+  management stays interactive-login-only). Hierarchy: minted roles = user effective ∩ key flags
+- `expires_at` is NULLABLE (null = never expires); expired keys refuse exchange but stay
+  listed (no prune sweep — visibility over housekeeping; negative `ttl_days` fabricates
+  expired keys in tests, and there is no create-time sweep to worry about, unlike sessions)
+- Revocation = row deletion (`api_key.delete`), self-service via
+  `DELETE /api/users/me/api-key/:id` (foreign keys read as 404) or admin via
+  `DELETE /api/users/user/:user_id/api-key/:id` — the admin kill path matters because
+  password resets do NOT touch API keys (they are not password-derived). User deletion
+  cascades keys. The ≤1h staleness window applies exactly as for sessions
+- List endpoints: `GET /api/users/me/api-keys` and `GET /api/users/user/:user_id/api-keys`
+  (admin), both with the `active` filter and `X-Total-Count`. Their query key is the
+  id-scoped `["user", <id>, "api-keys"]` with deliberately NO `["me", ...]` variant:
+  invalidations broadcast to every socket.io client, and a viewer-relative key would
+  spuriously invalidate other users' own-keys caches (the webapp keys its self view by its
+  own user id, known from `/me`)
 
 ### YDate Class (`lib/YDate.js`)
 

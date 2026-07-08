@@ -58,6 +58,23 @@ yet, and why.
   (per-fund reports 0). Unpaginated (tracked funds stay small); `X-Total-Count` is still
   set for symmetry and equals the array length.
 
+- **API-key credentials (2026-07-07)**: the "waiting on future architecture" item landed —
+  sessionless access tokens are now real. A `user_api_keys` row (`models/ApiKey.js`; secret
+  stored as sha256 only, per-key `reader`/`editor` scope, nullable `expires_at`) is exchanged
+  at `POST /api/auth/api-token` for a standard ~1h access token with `sid: null` (and an
+  `akid` claim), roles = owner's effective roles ∩ key flags, `admin` NEVER — minted by the
+  new `User.to_api_key_access_token_payload`. Nothing downstream changed: `sid: null` was
+  already tolerated everywhere by design. Mint/list/revoke live at
+  `GET|POST /api/users/me/api-keys` + `DELETE /api/users/me/api-key/:id` (the mint response
+  is the ONLY place the plaintext appears; foreign keys 404), with admin visibility AND an
+  admin revoke under `/api/users/user/:user_id/api-key(s)...` — unlike sessions, admins need
+  a kill path because password resets do not touch API keys. Query key: id-scoped
+  `["user", <id>, "api-keys"]` only, deliberately no `["me", ...]` variant (broadcast
+  invalidations reach every client, so viewer-relative keys spuriously invalidate other
+  users' caches). Schema note: `user_api_keys` was added directly to `_schema.sql` with NO
+  `user_version` bump (pre-production stance — schema changes overwrite, no migrations yet).
+  Tests: `test/models/test-api-key.js`, `test/api/test-api-keys.js`
+
 - **socket.io invalidation transport (2026-07-07)**: the commented-out handshake/broadcast
   code in `lib/Webserver.js` went live, exactly as designed — no controller changes needed.
   The invalidator passed to every collection is now backed by
@@ -80,11 +97,6 @@ yet, and why.
 
 ### Outstanding — waiting on future architecture (tracked elsewhere, listed for completeness)
 
-- **API-key credentials** (sessionless access tokens; `sid: null` is already tolerated
-  everywhere by design): needs mint/list/revoke endpoints — probably
-  `/api/users/me/api-keys` for self-service plus admin visibility under
-  `/api/users/user/:user_id/api-keys` — and a token-minting path that skips Session. No
-  model exists yet.
 - **Auth-token rotation on refresh**: v1 `/api/auth/refresh` returns the auth token
   unchanged; `Session.token` (the per-session secret) is the designed hook. Rotation is an
   Auth-collection change, not a new endpoint.
