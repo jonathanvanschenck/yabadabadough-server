@@ -102,6 +102,37 @@ describe("Session Model", () => {
             expect(refreshed.expires_at.getTime()).to.equal(session.expires_at.getTime());
         });
 
+        it("should not rotate the secret by default", () => {
+            const refreshed = Session.for_auth_payload(db, payload);
+
+            expect(refreshed.token).to.equal(session.token);
+            // The same payload keeps refreshing
+            Session.for_auth_payload(db, payload);
+        });
+
+        it("should rotate the secret with rotate: true, making the payload single-use", () => {
+            const refreshed = Session.for_auth_payload(db, payload, { rotate: true });
+
+            expect(refreshed.id).to.equal(session.id);
+            expect(refreshed.token).to.match(/^[0-9a-f]{32}$/);
+            expect(refreshed.token).to.not.equal(session.token);
+            expect(refreshed.last_used_at).to.be.a("Date");
+            // Rotation never extends the session
+            expect(refreshed.expires_at.getTime()).to.equal(session.expires_at.getTime());
+
+            // The presented payload is spent; one built on the fresh secret works
+            expect(() => Session.for_auth_payload(db, payload)).to.throw(ConflictError);
+            Session.for_auth_payload(db, user.to_auth_token_payload(refreshed));
+        });
+
+        it("should not rotate on a failed guard", () => {
+            expect(() => Session.for_auth_payload(db, { ...payload, sub: user.id + 1 }, { rotate: true }))
+                .to.throw(ConflictError);
+
+            // The secret survives the rejected attempt
+            expect(Session.for_id(db, session.id).token).to.equal(session.token);
+        });
+
         it("should reject a wrong token secret", () => {
             expect(() => Session.for_auth_payload(db, { ...payload, token: "f".repeat(32) }))
                 .to.throw(ConflictError);

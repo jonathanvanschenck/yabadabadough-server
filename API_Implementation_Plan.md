@@ -88,18 +88,41 @@ yet, and why.
   FIXME (remove once the webapp no longer needs it). Tests: `test/api/test-socketio.js`
   (`socket.io-client` added as a devDependency).
 
+- **Auth-token rotation on refresh (2026-07-07)**: landed exactly on the designed hook.
+  `Session.for_auth_payload(db, payload, { rotate: true })` regenerates the per-session
+  secret inside the same guard transaction (failures never rotate), and the shared
+  `refresh_flow` in `collections/Auth.js` uses it — every successful `/refresh` (and
+  `/authenticate` auto_refresh) now returns AND cookie-sets a NEW auth token, making the
+  presented one single-use. Expiry still mirrors the session (rotation never slides it);
+  logout keeps using the non-rotating guard. Clients must store the auth token returned by
+  every refresh. Tests: `test/models/test-session.js`, `test/api/test-auth.js`.
+
+- **`/me` routes removed → self-or-admin `/user/:user_id` routes (2026-07-07)**: all seven
+  `/api/users/me*` endpoints are gone — they invited viewer-relative `["me", ...]` query
+  keys, which break under broadcast invalidations (every client invalidates on every user's
+  self-writes; the keys are deleted from `query_keys.js`). Their `/user/:user_id` variants
+  (superseding the `/me` paths named in the API-key entry above) are now SELF-OR-ADMIN via
+  `get_target_user` in `collections/Users.js`: any authed user acts on their own id with no
+  role and no sudo; anyone else's id needs admin + X-Sudo-Mode (declared as the OPTIONAL
+  `X-Sudo-Mode` OpenAPI param, since the static admin flag would make it required), reading
+  as 404 for non-admins (existence never leaks) and 403 for admins missing sudo.
+  `GET /user/:id` (fresh self view), `GET /user/:id/sessions`, `GET|POST /user/:id/api-keys`,
+  and `DELETE /user/:id/api-key/:id` follow that rule directly;
+  `DELETE /user/:id/session/:id` is NEW (incidentally landing the admin per-session
+  revocation previously deferred below); `POST /user/:id/password` merges both old
+  semantics, split on sudo-mode admin rights (without: self only + `current_password`
+  verified with the uniform penalized 400; with: administrative reset, any target).
+  `GET|POST /users`, `PATCH|DELETE /user/:id` stay strictly admin. Clients learn their own
+  user id from the login/authenticate response (there is no `/me` to ask). Tests:
+  `test/api/test-users.js`, `test/api/test-api-keys.js`.
+
 ### Outstanding — deferred by choice (add when a real need shows up)
-- **Admin per-session revocation** (`DELETE /api/users/user/:user_id/session/:session_id`):
-  admins today reset the user's password with `revoke_sessions: true` (kills everything) or
-  the user self-serves via `/api/users/me/session/:id` and `/api/auth/revoke-all`. A
-  surgical admin kill-one-session endpoint adds little until there is a support workflow
-  that needs it.
+- ~~**Admin per-session revocation**~~ (2026-07-07): landed incidentally with the `/me`
+  removal — `DELETE /api/users/user/:user_id/session/:session_id` is self-or-admin, so
+  admins now have the surgical kill-one-session path.
 
 ### Outstanding — waiting on future architecture (tracked elsewhere, listed for completeness)
 
-- **Auth-token rotation on refresh**: v1 `/api/auth/refresh` returns the auth token
-  unchanged; `Session.token` (the per-session secret) is the designed hook. Rotation is an
-  Auth-collection change, not a new endpoint.
 - **Hierarchy restructuring / snapshotting** ("X stops being a pool as of month M" without
   rewriting earlier months — see the Future direction note in CLAUDE.md): routing is
   currently write-once against history, so no endpoints exist for point-in-time hierarchy

@@ -154,9 +154,9 @@ describe("API: api keys", () => {
         });
     });
 
-    describe("POST /api/users/me/api-keys", () => {
-        it("should mint a key and show the secret exactly once", async () => {
-            const res = await h.request("/api/users/me/api-keys", {
+    describe("POST /api/users/user/:user_id/api-keys", () => {
+        it("should mint a key for yourself and show the secret exactly once", async () => {
+            const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, {
                 method: "POST",
                 token: h.tokens.reader,
                 body: { name: "dashboard" },
@@ -175,12 +175,12 @@ describe("API: api keys", () => {
 
             // The minted secret exchanges, and the list never re-shows it
             expect((await exchange(res.body.data.api_key)).status).to.equal(200);
-            const list = await h.request("/api/users/me/api-keys", { token: h.tokens.reader });
+            const list = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, { token: h.tokens.reader });
             expect(JSON.stringify(list.body)).to.not.include(res.body.data.api_key);
         });
 
         it("should honor role flags and ttl_days", async () => {
-            const res = await h.request("/api/users/me/api-keys", {
+            const res = await h.request(`/api/users/user/${h.users.editor.id}/api-keys`, {
                 method: "POST",
                 token: h.tokens.editor,
                 body: { name: "importer", reader: false, editor: true, ttl_days: 30 },
@@ -200,7 +200,7 @@ describe("API: api keys", () => {
                 { name: "x", ttl_days: "soon" },       // non-numeric ttl
                 { name: "x", editor: "yes" },          // non-boolean flag
             ] ) {
-                const res = await h.request("/api/users/me/api-keys", {
+                const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, {
                     method: "POST",
                     token: h.tokens.reader,
                     body,
@@ -210,21 +210,43 @@ describe("API: api keys", () => {
         });
 
         it("should 401 unauthenticated", async () => {
-            const res = await h.request("/api/users/me/api-keys", {
+            const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, {
                 method: "POST",
                 body: { name: "sneaky" },
             });
 
             expect(res.status).to.equal(401);
         });
+
+        it("should 404 minting for another user without admin, and allow it with sudo", async () => {
+            const denied = await h.request(`/api/users/user/${h.users.editor.id}/api-keys`, {
+                method: "POST",
+                token: h.tokens.reader,
+                body: { name: "sneaky" },
+            });
+            expect(denied.status).to.equal(404);
+
+            // Admin onboarding path: the key belongs to (and is scoped by) the target
+            const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, {
+                method: "POST",
+                token: h.tokens.admin,
+                sudo: true,
+                body: { name: "handed over" },
+            });
+            expect(res.status).to.equal(200);
+            expect(res.body.data.user_id).to.equal(h.users.reader.id);
+            expect(res.body.invalidations).to.deep.equal([
+                { type: "invalidate", key: ["user", h.users.reader.id.toString(), "api-keys"] },
+            ]);
+        });
     });
 
-    describe("GET /api/users/me/api-keys", () => {
-        it("should list only the caller's keys, with X-Total-Count", async () => {
+    describe("GET /api/users/user/:user_id/api-keys", () => {
+        it("should list only that user's keys, with X-Total-Count", async () => {
             ApiKey.create(h.db, { user_id: h.users.editor.id, name: "not mine" });
             ApiKey.create(h.db, { user_id: h.users.reader.id, name: "mine" });
 
-            const res = await h.request("/api/users/me/api-keys", { token: h.tokens.reader });
+            const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, { token: h.tokens.reader });
 
             expect(res.status).to.equal(200);
             expect(res.body.map(k => k.name)).to.deep.equal(["mine"]);
@@ -235,22 +257,22 @@ describe("API: api keys", () => {
             ApiKey.create(h.db, { user_id: h.users.reader.id, name: "live" });
             ApiKey.create(h.db, { user_id: h.users.reader.id, name: "stale", ttl_days: -1 });
 
-            const all = await h.request("/api/users/me/api-keys", { token: h.tokens.reader });
+            const all = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, { token: h.tokens.reader });
             expect(all.body.map(k => k.name)).to.have.members(["live", "stale"]);
 
-            const active = await h.request("/api/users/me/api-keys?active=true", { token: h.tokens.reader });
+            const active = await h.request(`/api/users/user/${h.users.reader.id}/api-keys?active=true`, { token: h.tokens.reader });
             expect(active.body.map(k => k.name)).to.deep.equal(["live"]);
         });
     });
 
-    describe("DELETE /api/users/me/api-key/:api_key_id", () => {
+    describe("DELETE /api/users/user/:user_id/api-key/:api_key_id", () => {
         it("should revoke the caller's own key", async () => {
             const { api_key, secret } = ApiKey.create(h.db, {
                 user_id: h.users.reader.id,
                 name: "doomed",
             });
 
-            const res = await h.request(`/api/users/me/api-key/${api_key.id}`, {
+            const res = await h.request(`/api/users/user/${h.users.reader.id}/api-key/${api_key.id}`, {
                 method: "DELETE",
                 token: h.tokens.reader,
             });
@@ -261,14 +283,14 @@ describe("API: api keys", () => {
             expect((await exchange(secret)).status).to.equal(400);
         });
 
-        it("should 404 another user's key and unknown/invalid ids", async () => {
+        it("should 404 a key under the wrong user and unknown/invalid ids", async () => {
             const { api_key } = ApiKey.create(h.db, {
                 user_id: h.users.editor.id,
                 name: "not yours",
             });
 
             for ( const id of [ api_key.id, 999, "nonsense" ] ) {
-                const res = await h.request(`/api/users/me/api-key/${id}`, {
+                const res = await h.request(`/api/users/user/${h.users.reader.id}/api-key/${id}`, {
                     method: "DELETE",
                     token: h.tokens.reader,
                 });
@@ -324,13 +346,13 @@ describe("API: api keys", () => {
             expect(ApiKey.for_id(h.db, api_key.id)).to.be.null;
         });
 
-        it("should refuse non-admins", async () => {
+        it("should 404 non-admins targeting another user (existence is never leaked)", async () => {
             const res = await h.request(`/api/users/user/${h.users.reader.id}/api-keys`, {
                 token: h.tokens.editor,
                 sudo: true,
             });
 
-            expect(res.status).to.equal(403);
+            expect(res.status).to.equal(404);
         });
     });
 

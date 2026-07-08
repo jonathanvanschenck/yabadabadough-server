@@ -43,15 +43,15 @@ const QK = {
     fund_finalization: (id) => ["fund-finalization", id.toString()],
 
     users: ["users"],
+    // User keys are deliberately id-scoped with NO viewer-relative
+    // ["me", ...] variants (and the API has no /me routes to want them):
+    // invalidations are broadcast to EVERY connected client, and a
+    // viewer-relative key would spuriously invalidate every other user's
+    // self-view cache. The webapp keys its self views by its own user id
+    // (known from the login/authenticate response).
     user: (id) => ["user", id.toString()],
     user_sessions: (id) => ["user", id.toString(), "sessions"],
-    // Deliberately id-scoped with NO ["me", ...] variant: invalidations are
-    // broadcast to EVERY connected client, and a viewer-relative key would
-    // spuriously invalidate every other user's own-keys cache. The webapp
-    // builds its self view with its own user id (known from /me).
     user_api_keys: (id) => ["user", id.toString(), "api-keys"],
-    me: ["me"],
-    me_sessions: ["me", "sessions"],
 };
 
 const invalidate = (key) => ({ type: "invalidate", key });

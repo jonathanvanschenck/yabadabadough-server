@@ -33,11 +33,13 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  *
  * `token` is a per-session random secret embedded in the auth-token payload
  * and required to match (timing-safe) at refresh: it defends against sqlite
- * reusing integer ids, and is the hook for future refresh-token rotation.
- * It is never exposed via to_api.
+ * reusing integer ids, and is what refresh-token rotation regenerates
+ * (for_auth_payload's `rotate` option -- the API layer rotates on every
+ * refresh, making each auth token single-use). It is never exposed via
+ * to_api.
  *
  * Expiry is fixed at creation (no sliding window): refreshes never extend
- * expires_at, they only touch last_used_at.
+ * expires_at, they only touch last_used_at (and rotate the secret).
  *
  * Require direction is strictly Session -> User (users are checked via the
  * FK); User never requires Session -- list a user's sessions with
@@ -68,6 +70,11 @@ module.exports = class Session extends Base {
         touch: `
             UPDATE user_sessions
             SET last_used_at = @last_used_at
+            WHERE id = @id
+        `,
+        rotate: `
+            UPDATE user_sessions
+            SET token = @token, last_used_at = @last_used_at
             WHERE id = @id
         `,
         delete: `
@@ -297,7 +304,7 @@ module.exports = class Session extends Base {
         return transaction(db, { user_id, token, expires_at, note });
     }
 
-    static _for_auth_payload(db, payload={}) {
+    static _for_auth_payload(db, { payload={}, rotate=false }={}) {
         const session = this.for_id(db, payload.sid);
         if ( !session ) {
             throw new ForeignKeyError("Session does not exist: " + payload.sid);
@@ -318,10 +325,18 @@ module.exports = class Session extends Base {
             throw new ConflictError("Session is expired: " + session.id);
         }
 
-        this.get_stmt(db, "touch").run({
-            id: session.id,
-            last_used_at: datetime2stmt(new Date()),
-        });
+        if ( rotate ) {
+            this.get_stmt(db, "rotate").run({
+                id: session.id,
+                token: crypto.randomBytes(TOKEN_BYTES).toString("hex"),
+                last_used_at: datetime2stmt(new Date()),
+            });
+        } else {
+            this.get_stmt(db, "touch").run({
+                id: session.id,
+                last_used_at: datetime2stmt(new Date()),
+            });
+        }
 
         return this.for_id(db, session.id);
     }
@@ -332,8 +347,14 @@ module.exports = class Session extends Base {
      * expired), touches last_used_at, and returns the fresh Session. The
      * controller then mints a new access token via
      * User.for_id(db, session.user_id).to_access_token_payload(session).
+     *
+     * With `rotate: true` the per-session secret is regenerated in the same
+     * transaction as the guard, so the presented payload is single-use: the
+     * controller must mint a NEW auth token from the returned session (still
+     * against the session's fixed expires_at -- rotation never extends a
+     * session). Guard failures never rotate.
      */
-    static for_auth_payload(db, payload={}) {
+    static for_auth_payload(db, payload={}, { rotate=false }={}) {
         if ( payload.v !== 1 ) {
             throw new Error("Unsupported token payload version: " + payload.v);
         }
@@ -343,7 +364,7 @@ module.exports = class Session extends Base {
 
         const transaction = this.build_transaction(
             db, "for_auth_payload", this._for_auth_payload.bind(this));
-        return transaction(db, payload);
+        return transaction(db, { payload, rotate });
     }
 
     static _delete(db, session) {

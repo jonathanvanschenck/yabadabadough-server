@@ -13,13 +13,13 @@ describe("Users API", () => {
 
     afterEach(() => h.stop());
 
-    describe("GET /api/users/me", () => {
-        it("requires authentication (but no role)", async () => {
-            expect((await h.request("/api/users/me")).status).to.equal(401);
+    describe("GET /api/users/user/:user_id (self-or-admin)", () => {
+        it("requires authentication (but no role for your own user)", async () => {
+            expect((await h.request(`/api/users/user/${h.users.reader.id}`)).status).to.equal(401);
         });
 
-        it("returns the authenticated user, fresh", async () => {
-            const { status, body } = await h.request("/api/users/me", { token: h.tokens.reader });
+        it("returns the authenticated user's own record, fresh", async () => {
+            const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}`, { token: h.tokens.reader });
             expect(status).to.equal(200);
             expect(body.email).to.equal("reader@example.com");
             expect(body.roles).to.deep.equal({ admin: false, reader: true, editor: false });
@@ -28,34 +28,55 @@ describe("Users API", () => {
             // Fresh from the db: a role change shows up immediately, even
             // though the access token still carries the old roles
             h.users.reader.update(h.db, { editor: true });
-            const fresh = await h.request("/api/users/me", { token: h.tokens.reader });
+            const fresh = await h.request(`/api/users/user/${h.users.reader.id}`, { token: h.tokens.reader });
             expect(fresh.body.roles.editor).to.be.true;
+        });
+
+        it("404s another user for non-admins (indistinguishable from missing)", async () => {
+            const foreign = await h.request(`/api/users/user/${h.users.editor.id}`, { token: h.tokens.reader });
+            const missing = await h.request("/api/users/user/9999", { token: h.tokens.reader });
+            expect(foreign.status).to.equal(404);
+            expect(missing.status).to.equal(404);
+        });
+
+        it("admins reach other users with sudo, and get the 403 hint without it", async () => {
+            expect((await h.request(`/api/users/user/${h.users.reader.id}`, { token: h.tokens.admin })).status).to.equal(403);
+
+            const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}`, { token: h.tokens.admin, sudo: true });
+            expect(status).to.equal(200);
+            expect(body.email).to.equal("reader@example.com");
+        });
+
+        it("404s on missing (admin with sudo)", async () => {
+            expect((await h.request("/api/users/user/9999", { token: h.tokens.admin, sudo: true })).status).to.equal(404);
         });
     });
 
-    describe("POST /api/users/me/password", () => {
-        it("changes the password and revokes every session by default", async () => {
-            const { status, body } = await h.request("/api/users/me/password", {
+    describe("POST /api/users/user/:user_id/password", () => {
+        it("self-service: changes the password (verifying the current one) and revokes every session by default", async () => {
+            const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
                 method: "POST", token: h.tokens.reader,
                 body: { current_password: "hunter22hunter22", password: "newpassword123" }
             });
             expect(status).to.equal(200);
-            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["me", "sessions"] });
+            expect(body.invalidations).to.deep.equal([
+                { type: "invalidate", key: ["user", h.users.reader.id.toString(), "sessions"] },
+            ]);
 
             expect(await User.authenticate(h.db, { email: "reader@example.com", password: "newpassword123" })).to.not.be.null;
             expect(Session.from_db(h.db, { user_id: h.users.reader.id })).to.have.lengthOf(0);
         });
 
-        it("keeps sessions with revoke_sessions=false", async () => {
-            await h.request("/api/users/me/password", {
+        it("self-service: keeps sessions with revoke_sessions=false", async () => {
+            await h.request(`/api/users/user/${h.users.reader.id}/password`, {
                 method: "POST", token: h.tokens.reader,
                 body: { current_password: "hunter22hunter22", password: "newpassword123", revoke_sessions: false }
             });
             expect(Session.from_db(h.db, { user_id: h.users.reader.id })).to.have.lengthOf(1);
         });
 
-        it("uniformly 400s on a wrong current password", async () => {
-            const { status, body } = await h.request("/api/users/me/password", {
+        it("self-service: uniformly 400s a wrong current password", async () => {
+            const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
                 method: "POST", token: h.tokens.reader,
                 body: { current_password: "wrong-password", password: "newpassword123" }
             });
@@ -63,18 +84,44 @@ describe("Users API", () => {
             expect(body.message).to.equal("Bad password");
         });
 
-        it("400s on a too-short new password (model rule)", async () => {
-            const { status } = await h.request("/api/users/me/password", {
+        it("self-service: 400s a missing current_password", async () => {
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
+                method: "POST", token: h.tokens.reader,
+                body: { password: "newpassword123" }
+            });
+            expect(status).to.equal(400);
+        });
+
+        it("400s a too-short new password (model rule)", async () => {
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
                 method: "POST", token: h.tokens.reader,
                 body: { current_password: "hunter22hunter22", password: "short" }
             });
             expect(status).to.equal(400);
         });
+
+        it("admin: resets another user's password without current_password and revokes their sessions", async () => {
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
+                method: "POST", token: h.tokens.admin, sudo: true,
+                body: { password: "adminreset123" }
+            });
+            expect(status).to.equal(200);
+            expect(await User.authenticate(h.db, { email: "reader@example.com", password: "adminreset123" })).to.not.be.null;
+            expect(Session.from_db(h.db, { user_id: h.users.reader.id })).to.have.lengthOf(0);
+        });
+
+        it("404s another user for non-admins", async () => {
+            const { status } = await h.request(`/api/users/user/${h.users.editor.id}/password`, {
+                method: "POST", token: h.tokens.reader,
+                body: { current_password: "hunter22hunter22", password: "newpassword123" }
+            });
+            expect(status).to.equal(404);
+        });
     });
 
-    describe("GET /api/users/me/sessions", () => {
+    describe("GET /api/users/user/:user_id/sessions", () => {
         it("lists own sessions without the secret, with X-Total-Count", async () => {
-            const { status, body, headers } = await h.request("/api/users/me/sessions", { token: h.tokens.reader });
+            const { status, body, headers } = await h.request(`/api/users/user/${h.users.reader.id}/sessions`, { token: h.tokens.reader });
             expect(status).to.equal(200);
             expect(headers.get("x-total-count")).to.equal("1");
             expect(body).to.have.lengthOf(1);
@@ -87,28 +134,54 @@ describe("Users API", () => {
             //        Session.create sweeps expired rows
             Session.create(h.db, { user_id: h.users.reader.id, ttl_days: -1 });
 
-            let res = await h.request("/api/users/me/sessions?active=true", { token: h.tokens.reader });
+            let res = await h.request(`/api/users/user/${h.users.reader.id}/sessions?active=true`, { token: h.tokens.reader });
             expect(res.body).to.have.lengthOf(1);
 
-            res = await h.request("/api/users/me/sessions?active=false", { token: h.tokens.reader });
+            res = await h.request(`/api/users/user/${h.users.reader.id}/sessions?active=false`, { token: h.tokens.reader });
             expect(res.body).to.have.lengthOf(1);
+        });
+
+        it("admins list another user's sessions with sudo; non-admins 404", async () => {
+            const sessions = await h.request(`/api/users/user/${h.users.editor.id}/sessions`, { token: h.tokens.admin, sudo: true });
+            expect(sessions.status).to.equal(200);
+            expect(sessions.headers.get("x-total-count")).to.equal("1");
+            expect(sessions.body[0]).to.not.have.property("token");
+
+            expect((await h.request(`/api/users/user/${h.users.editor.id}/sessions`, { token: h.tokens.reader })).status).to.equal(404);
         });
     });
 
-    describe("DELETE /api/users/me/session/:session_id", () => {
+    describe("DELETE /api/users/user/:user_id/session/:session_id", () => {
         it("deletes an owned session", async () => {
             const [ session ] = Session.from_db(h.db, { user_id: h.users.reader.id });
-            const { status, body } = await h.request(`/api/users/me/session/${session.id}`, { method: "DELETE", token: h.tokens.reader });
+            const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}/session/${session.id}`, { method: "DELETE", token: h.tokens.reader });
             expect(status).to.equal(200);
             expect(body.data).to.be.null;
+            expect(body.invalidations).to.deep.equal([
+                { type: "invalidate", key: ["user", h.users.reader.id.toString(), "sessions"] },
+            ]);
             expect(Session.for_id(h.db, session.id)).to.be.null;
         });
 
-        it("404s (not 403s) on another user's session", async () => {
+        it("404s (not 403s) another user's session for non-admins", async () => {
             const [ foreign ] = Session.from_db(h.db, { user_id: h.users.editor.id });
-            const { status } = await h.request(`/api/users/me/session/${foreign.id}`, { method: "DELETE", token: h.tokens.reader });
+            const { status } = await h.request(`/api/users/user/${h.users.editor.id}/session/${foreign.id}`, { method: "DELETE", token: h.tokens.reader });
             expect(status).to.equal(404);
             expect(Session.for_id(h.db, foreign.id)).to.not.be.null;
+        });
+
+        it("404s a session under the wrong user, even for admins", async () => {
+            const [ foreign ] = Session.from_db(h.db, { user_id: h.users.editor.id });
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/session/${foreign.id}`, { method: "DELETE", token: h.tokens.admin, sudo: true });
+            expect(status).to.equal(404);
+            expect(Session.for_id(h.db, foreign.id)).to.not.be.null;
+        });
+
+        it("admins delete another user's session with sudo (the support kill switch)", async () => {
+            const [ session ] = Session.from_db(h.db, { user_id: h.users.reader.id });
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/session/${session.id}`, { method: "DELETE", token: h.tokens.admin, sudo: true });
+            expect(status).to.equal(200);
+            expect(Session.for_id(h.db, session.id)).to.be.null;
         });
     });
 
@@ -157,22 +230,6 @@ describe("Users API", () => {
         });
     });
 
-    describe("GET /api/users/user/:user_id (+ sessions)", () => {
-        it("returns a user and their sessions", async () => {
-            const { body } = await h.request(`/api/users/user/${h.users.editor.id}`, { token: h.tokens.admin, sudo: true });
-            expect(body.email).to.equal("editor@example.com");
-
-            const sessions = await h.request(`/api/users/user/${h.users.editor.id}/sessions`, { token: h.tokens.admin, sudo: true });
-            expect(sessions.headers.get("x-total-count")).to.equal("1");
-            expect(sessions.body).to.have.lengthOf(1);
-            expect(sessions.body[0]).to.not.have.property("token");
-        });
-
-        it("404s on missing", async () => {
-            expect((await h.request("/api/users/user/9999", { token: h.tokens.admin, sudo: true })).status).to.equal(404);
-        });
-    });
-
     describe("PATCH /api/users/user/:user_id", () => {
         it("updates roles and email", async () => {
             const { status, body } = await h.request(`/api/users/user/${h.users.reader.id}`, {
@@ -185,24 +242,12 @@ describe("Users API", () => {
             expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["user", h.users.reader.id.toString()] });
         });
 
-        it("adds a me invalidation when editing yourself", async () => {
-            const { body } = await h.request(`/api/users/user/${h.users.admin.id}`, {
-                method: "PATCH", token: h.tokens.admin, sudo: true,
+        it("stays admin-only, even against your own user", async () => {
+            const { status } = await h.request(`/api/users/user/${h.users.reader.id}`, {
+                method: "PATCH", token: h.tokens.reader,
                 body: { editor: true }
             });
-            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["me"] });
-        });
-    });
-
-    describe("POST /api/users/user/:user_id/password", () => {
-        it("resets the password and revokes their sessions by default", async () => {
-            const { status } = await h.request(`/api/users/user/${h.users.reader.id}/password`, {
-                method: "POST", token: h.tokens.admin, sudo: true,
-                body: { password: "adminreset123" }
-            });
-            expect(status).to.equal(200);
-            expect(await User.authenticate(h.db, { email: "reader@example.com", password: "adminreset123" })).to.not.be.null;
-            expect(Session.from_db(h.db, { user_id: h.users.reader.id })).to.have.lengthOf(0);
+            expect(status).to.equal(403);
         });
     });
 

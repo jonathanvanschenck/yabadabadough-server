@@ -43,6 +43,17 @@ class Controller extends _Controller {
         schema: { type: 'integer' }
     }
 
+    // The self-or-admin routes take sudo OPTIONALLY (it is only needed for
+    // foreign targets), so they declare this instead of the required header
+    // the static admin flag would inject
+    static OptionalSudoParam = {
+        name: "X-Sudo-Mode",
+        in: "header",
+        required: false,
+        schema: { type: "string", enum: ["true"] },
+        description: "Required (along with the admin role) when acting on another user; unnecessary when acting on yourself."
+    }
+
     static ApiKeyIDParam = {
         name: 'api_key_id',
         in: 'path',
@@ -80,11 +91,28 @@ class Controller extends _Controller {
         return assert_found(User.for_id(this.db, user_id), `user ${user_id}`);
     }
 
-    // Only unreachable outside disable_auth mode (access controllers always
-    // carry a user_id)
-    get_self(req) {
-        if ( req.access?.user_id == null ) throw new HTTPCodeError(400, "No authenticated user");
-        return assert_found(User.for_id(this.db, req.access.user_id), "authenticated user");
+    // Self-or-admin: any authenticated user may act on THEIR OWN user id;
+    // anyone else's takes the admin role + X-Sudo-Mode (like every admin
+    // call, but checked here because self access must not require it). A
+    // foreign target reads as 404 for non-admins -- indistinguishable from a
+    // nonexistent id, existence is never leaked -- while an admin who merely
+    // forgot sudo gets the standard 403 hint.
+    get_target_user(req) {
+        if ( !this.disable_auth ) {
+            const user_id = to_int(req.params.user_id);
+            if ( req.access?.user_id !== user_id && !req.access?.roles?.admin ) {
+                if ( req.access?.roles?.adminable ) throw HTTPCodeError.standard(403);
+                throw new HTTPCodeError(404, `Not found: user ${user_id}`);
+            }
+        }
+        return this.get_user(req);
+    }
+
+    // Whether the request carries live (sudo-mode) admin rights -- the
+    // discriminator for endpoints whose semantics differ between self-service
+    // and administration. disable_auth counts as admin
+    is_sudo_admin(req) {
+        return this.disable_auth || !!req.access?.roles?.admin;
     }
 }
 
@@ -96,24 +124,34 @@ module.exports = class UsersCollection extends Collection {
     static controllers = [
 
         // ------------------------------------------------------------------
-        // Self-service: any authenticated user, no role needed
+        // Self-or-admin: any authed user on THEIR OWN user id; admin
+        // (X-Sudo-Mode) on anyone's. There are deliberately NO /me routes:
+        // viewer-relative endpoints would want viewer-relative ["me", ...]
+        // query keys, which break under broadcast invalidations (every
+        // client would invalidate on every user's self-writes). Clients
+        // learn their own user id from the login/authenticate response.
         // ------------------------------------------------------------------
 
-        class GetMe extends Controller {
-            static path = "/me";
+        class GetUser extends Controller {
+            static path = "/user/:user_id";
 
             static method = "GET";
 
             static reader = false;
 
-            static openapi_Summary = "Get Current User";
+            static openapi_Summary = "Get User";
 
-            static openapi_Description = "Get the authenticated user, FRESH from the database (the access token's roles may be up to ~1h stale).";
+            static openapi_Description = "Get a single user by ID, FRESH from the database (the access token's roles may be up to ~1h stale). Self-or-admin: your own user needs no role (this is the \"who am I, really\" endpoint); anyone else's requires admin + X-Sudo-Mode and reads as 404 without it.";
 
-            static query_key = ["me"];
+            static query_key = [ "user", "user_id" ];
+
+            static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam
+            ]
 
             async parse_request(req) {
-                return this.get_self(req);
+                return this.get_target_user(req);
             }
 
             async respond(user) {
@@ -123,91 +161,29 @@ module.exports = class UsersCollection extends Collection {
             static openapi_ResponseSchema = {
                 "$ref": '#/components/schemas/UserSchema'
             }
-        },
-
-        class PostMePassword extends Controller {
-            static path = "/me/password";
-
-            static method = "POST";
-
-            static reader = false;
-
-            static openapi_Summary = "Change My Password";
-
-            static openapi_Description = `Change the authenticated user's password, verifying the current one first (uniform, penalized 400 on failure). By default every session is revoked -- including this one, so the client must log in again. ${STALENESS_NOTE}`;
-
-            static openapi_RequestBodySchema = {
-                type: 'object',
-                properties: {
-                    current_password: { type: 'string', format: 'password' },
-                    password: { type: 'string', format: 'password', description: "The new password (min 8 chars)" },
-                    revoke_sessions: { type: 'boolean', description: "Revoke EVERY session, including this one (default true)" }
-                },
-                required: [ 'current_password', 'password' ]
-            }
-
-            async parse_request(req) {
-                const data = parse_body_fields(req.body, [
-                    [ "current_password", only_non_empty_string, "non-empty string", { required: true } ],
-                    [ "password", only_non_empty_string, "non-empty string", { required: true } ],
-                    [ "revoke_sessions", only_boolean, "boolean" ],
-                ]);
-
-                return { user: this.get_self(req), ...data };
-            }
-
-            async respond({ user, current_password, password, revoke_sessions=true }) {
-                // Uniform failure: never confirms the current password was
-                // the problem vs anything else about the account
-                if ( !await user.verify_password(current_password) ) {
-                    await this.penalize();
-                    throw new HTTPCodeError(400, "Bad password");
-                }
-
-                try {
-                    await user.set_password(this.db, password);
-                } catch (err) {
-                    translate_model_error(err);
-                }
-
-                // Password changed: kill every session (API-layer policy --
-                // the model deliberately leaves this to us)
-                if ( revoke_sessions ) Session.revoke_all(this.db, user.id);
-
-                const invalidation_actions = [
-                    invalidate(QK.me_sessions),
-                    invalidate(QK.user_sessions(user.id)),
-                ];
-
-                this.broadcast_invalidations(invalidation_actions, { user_id: user.id });
-
-                return {
-                    data: user.to_api(),
-                    invalidations: invalidation_actions
-                };
-            }
-
-            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/UserSchema' });
 
             static openapi_ErrorResponses = [
-                { code: 400, description: "Bad parameter or bad password (uniform)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } }
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (including another user, for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 
-        class GetMeSessions extends Controller {
-            static path = "/me/sessions";
+        class GetUserSessions extends Controller {
+            static path = "/user/:user_id/sessions";
 
             static method = "GET";
 
             static reader = false;
 
-            static openapi_Summary = "List My Sessions";
+            static openapi_Summary = "List User Sessions";
 
-            static openapi_Description = "List the authenticated user's login sessions (all of them by default; filter with active). The per-session secret is never exposed.";
+            static openapi_Description = "List a user's login sessions (all of them by default; filter with active). The per-session secret is never exposed. Self-or-admin: your own sessions need no role; anyone else's require admin + X-Sudo-Mode.";
 
-            static query_key = [ "me", "sessions" ];
+            static query_key = [ "user", "user_id", "sessions" ];
 
             static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam,
                 {
                     name: 'active',
                     in: 'query',
@@ -221,7 +197,7 @@ module.exports = class UsersCollection extends Collection {
             async parse_request(req) {
                 const filter = parse_list_params(req.query, [ "id", "expires_at", "created_at" ]);
                 filter.active = string_to_boolean(req.query?.active);
-                filter.user_id = this.get_self(req).id;
+                filter.user_id = this.get_target_user(req).id;
                 return filter;
             }
 
@@ -243,20 +219,27 @@ module.exports = class UsersCollection extends Collection {
                     "$ref": '#/components/schemas/SessionSchema'
                 }
             }
+
+            static openapi_ErrorResponses = [
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (including another user, for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
         },
 
-        class DeleteMeSession extends Controller {
-            static path = "/me/session/:session_id";
+        class DeleteUserSession extends Controller {
+            static path = "/user/:user_id/session/:session_id";
 
             static method = "DELETE";
 
             static reader = false;
 
-            static openapi_Summary = "Delete My Session";
+            static openapi_Summary = "Delete User Session";
 
-            static openapi_Description = `Delete one of the authenticated user's own sessions (log that device out): its auth token loses the right to refresh. Another user's session reads as 404 (existence is never leaked). ${STALENESS_NOTE}`;
+            static openapi_Description = `Delete one of a user's sessions: its auth token loses the right to refresh. Self-or-admin: deleting your own sessions (logging your own devices out) needs no role; another user's require admin + X-Sudo-Mode. A session under the wrong user reads as 404 (the path names the resource, it doesn't search for it). ${STALENESS_NOTE}`;
 
             static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam,
                 {
                     name: 'session_id',
                     in: 'path',
@@ -267,14 +250,15 @@ module.exports = class UsersCollection extends Collection {
             ]
 
             async parse_request(req) {
-                const self = this.get_self(req);
+                const user = this.get_target_user(req);
 
                 const session_id = to_int(req.params.session_id);
                 if ( !session_id ) throw new HTTPCodeError(404, "Not found");
 
                 const session = assert_found(Session.for_id(this.db, session_id), `session ${session_id}`);
-                // Foreign sessions 404 (not 403): never leak that the id exists
-                if ( session.user_id !== self.id ) throw new HTTPCodeError(404, `Not found: session ${session_id}`);
+                // A session under the wrong user 404s: never leak that the
+                // id exists
+                if ( session.user_id !== user.id ) throw new HTTPCodeError(404, `Not found: session ${session_id}`);
 
                 return session;
             }
@@ -283,7 +267,6 @@ module.exports = class UsersCollection extends Collection {
                 session.delete(this.db);
 
                 const invalidation_actions = [
-                    invalidate(QK.me_sessions),
                     invalidate(QK.user_sessions(session.user_id)),
                 ];
 
@@ -298,24 +281,27 @@ module.exports = class UsersCollection extends Collection {
             static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/NullSchema' });
 
             static openapi_ErrorResponses = [
-                { code: 404, description: "Not found (including another user's session)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (unknown user, unknown session, a session not owned by that user, or another user entirely for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 
-        class GetMeApiKeys extends Controller {
-            static path = "/me/api-keys";
+        class GetUserApiKeys extends Controller {
+            static path = "/user/:user_id/api-keys";
 
             static method = "GET";
 
             static reader = false;
 
-            static openapi_Summary = "List My API Keys";
+            static openapi_Summary = "List User API Keys";
 
-            static openapi_Description = "List the authenticated user's API keys (all of them by default; filter with active -- expired keys stay listed). The secret is never re-shown. NOTE the query key is id-scoped, not [\"me\", ...]: invalidations broadcast to every client, so the webapp keys this view by its own user id.";
+            static openapi_Description = "List a user's API keys (all of them by default; filter with active -- expired keys stay listed). The secret is never re-shown. Self-or-admin: your own keys need no role; anyone else's require admin + X-Sudo-Mode.";
 
             static query_key = [ "user", "user_id", "api-keys" ];
 
             static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam,
                 this.ActiveApiKeyParam,
                 ...openapi_list_parameters([ 'id', 'name', 'expires_at', 'created_at' ])
             ]
@@ -323,7 +309,7 @@ module.exports = class UsersCollection extends Collection {
             async parse_request(req) {
                 const filter = parse_list_params(req.query, [ "id", "name", "expires_at", "created_at" ]);
                 filter.active = string_to_boolean(req.query?.active);
-                filter.user_id = this.get_self(req).id;
+                filter.user_id = this.get_target_user(req).id;
                 return filter;
             }
 
@@ -345,10 +331,15 @@ module.exports = class UsersCollection extends Collection {
                     "$ref": '#/components/schemas/ApiKeySchema'
                 }
             }
+
+            static openapi_ErrorResponses = [
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (including another user, for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+            ]
         },
 
-        class PostMeApiKeys extends Controller {
-            static path = "/me/api-keys";
+        class PostUserApiKeys extends Controller {
+            static path = "/user/:user_id/api-keys";
 
             static method = "POST";
 
@@ -356,7 +347,12 @@ module.exports = class UsersCollection extends Collection {
 
             static openapi_Summary = "Create API Key";
 
-            static openapi_Description = "Mint a new API key for the authenticated user. The response's api_key field is the ONLY time the plaintext secret is ever shown -- store it now. The key's reader/editor flags scope what its exchanged tokens may do (intersected with the owner's roles at exchange time; admin is never minted). Exchange it at POST /api/auth/api-token.";
+            static openapi_Description = "Mint a new API key for a user. The response's api_key field is the ONLY time the plaintext secret is ever shown -- store it now. The key's reader/editor flags scope what its exchanged tokens may do (intersected with the OWNER's roles at exchange time; admin is never minted). Exchange it at POST /api/auth/api-token. Self-or-admin: minting your own keys needs no role; minting for another user requires admin + X-Sudo-Mode (and hands YOU their secret -- an onboarding convenience, not a routine path).";
+
+            static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam
+            ]
 
             static openapi_RequestBodySchema = {
                 type: 'object',
@@ -377,7 +373,7 @@ module.exports = class UsersCollection extends Collection {
                     [ "ttl_days", only_positive_number, "positive number" ],
                 ]);
 
-                return { user: this.get_self(req), ...data };
+                return { user: this.get_target_user(req), ...data };
             }
 
             async respond({ user, ...data }) {
@@ -414,27 +410,33 @@ module.exports = class UsersCollection extends Collection {
             });
 
             static openapi_ErrorResponses = [
-                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } }
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (including another user, for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 
-        class DeleteMeApiKey extends Controller {
-            static path = "/me/api-key/:api_key_id";
+        class DeleteUserApiKey extends Controller {
+            static path = "/user/:user_id/api-key/:api_key_id";
 
             static method = "DELETE";
 
             static reader = false;
 
-            static openapi_Summary = "Revoke My API Key";
+            static openapi_Summary = "Revoke User API Key";
 
-            static openapi_Description = `Revoke one of the authenticated user's own API keys: its secret loses the right to exchange for access tokens. Another user's key reads as 404 (existence is never leaked). ${STALENESS_NOTE}`;
+            static openapi_Description = `Revoke one of a user's API keys: its secret loses the right to exchange for access tokens. Self-or-admin: revoking your own keys needs no role; another user's require admin + X-Sudo-Mode -- and the admin path matters, because keys survive password resets (this is the kill switch for a compromised or orphaned credential). A key under the wrong user reads as 404. ${STALENESS_NOTE}`;
 
             static openapi_Parameters = [
+                this.UserIDParam,
+                this.OptionalSudoParam,
                 this.ApiKeyIDParam
             ]
 
             async parse_request(req) {
-                return this.get_api_key(req, this.get_self(req).id);
+                // A key under the wrong user 404s: the path names the
+                // resource, it doesn't search for it
+                return this.get_api_key(req, this.get_target_user(req).id);
             }
 
             async respond(api_key) {
@@ -455,7 +457,8 @@ module.exports = class UsersCollection extends Collection {
             static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/NullSchema' });
 
             static openapi_ErrorResponses = [
-                { code: 404, description: "Not found (including another user's API key)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (unknown user, unknown key, a key not owned by that user, or another user entirely for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 
@@ -531,198 +534,6 @@ module.exports = class UsersCollection extends Collection {
                     "$ref": '#/components/schemas/UserSchema'
                 }
             }
-        },
-
-        class GetUser extends Controller {
-            static path = "/user/:user_id";
-
-            static method = "GET";
-
-            static admin = true;
-
-            static reader = false;
-
-            static openapi_Summary = "Get User";
-
-            static openapi_Description = "Get a single user by ID.";
-
-            static query_key = [ "user", "user_id" ];
-
-            static openapi_Parameters = [
-                this.UserIDParam
-            ]
-
-            async parse_request(req) {
-                return this.get_user(req);
-            }
-
-            async respond(user) {
-                return user.to_api();
-            }
-
-            static openapi_ResponseSchema = {
-                "$ref": '#/components/schemas/UserSchema'
-            }
-
-            static openapi_ErrorResponses = [
-                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
-            ]
-        },
-
-        class GetUserSessions extends Controller {
-            static path = "/user/:user_id/sessions";
-
-            static method = "GET";
-
-            static admin = true;
-
-            static reader = false;
-
-            static openapi_Summary = "List User Sessions";
-
-            static openapi_Description = "List a user's login sessions (all of them by default; filter with active).";
-
-            static query_key = [ "user", "user_id", "sessions" ];
-
-            static openapi_Parameters = [
-                this.UserIDParam,
-                {
-                    name: 'active',
-                    in: 'query',
-                    description: 'Filter to unexpired (true) or expired (false) sessions',
-                    required: false,
-                    schema: { type: 'boolean' }
-                },
-                ...openapi_list_parameters([ 'id', 'expires_at', 'created_at' ])
-            ]
-
-            async parse_request(req) {
-                const filter = parse_list_params(req.query, [ "id", "expires_at", "created_at" ]);
-                filter.active = string_to_boolean(req.query?.active);
-                filter.user_id = this.get_user(req).id;
-                return filter;
-            }
-
-            async respond(filter, { res }) {
-                res.setHeader("X-Total-Count", Session.count(this.db, filter));
-                return Session.from_db(this.db, filter).map((s) => s.to_api());
-            }
-
-            static openapi_ResponseHeaders = {
-                "X-Total-Count": {
-                    description: "The total number of sessions matching the filter (ignoring limit and offset)",
-                    schema: { type: "integer" }
-                }
-            }
-
-            static openapi_ResponseSchema = {
-                type: 'array',
-                items: {
-                    "$ref": '#/components/schemas/SessionSchema'
-                }
-            }
-
-            static openapi_ErrorResponses = [
-                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
-            ]
-        },
-
-        class GetUserApiKeys extends Controller {
-            static path = "/user/:user_id/api-keys";
-
-            static method = "GET";
-
-            static admin = true;
-
-            static reader = false;
-
-            static openapi_Summary = "List User API Keys";
-
-            static openapi_Description = "List a user's API keys (all of them by default; filter with active). The secret is never shown.";
-
-            static query_key = [ "user", "user_id", "api-keys" ];
-
-            static openapi_Parameters = [
-                this.UserIDParam,
-                this.ActiveApiKeyParam,
-                ...openapi_list_parameters([ 'id', 'name', 'expires_at', 'created_at' ])
-            ]
-
-            async parse_request(req) {
-                const filter = parse_list_params(req.query, [ "id", "name", "expires_at", "created_at" ]);
-                filter.active = string_to_boolean(req.query?.active);
-                filter.user_id = this.get_user(req).id;
-                return filter;
-            }
-
-            async respond(filter, { res }) {
-                res.setHeader("X-Total-Count", ApiKey.count(this.db, filter));
-                return ApiKey.from_db(this.db, filter).map((k) => k.to_api());
-            }
-
-            static openapi_ResponseHeaders = {
-                "X-Total-Count": {
-                    description: "The total number of API keys matching the filter (ignoring limit and offset)",
-                    schema: { type: "integer" }
-                }
-            }
-
-            static openapi_ResponseSchema = {
-                type: 'array',
-                items: {
-                    "$ref": '#/components/schemas/ApiKeySchema'
-                }
-            }
-
-            static openapi_ErrorResponses = [
-                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
-            ]
-        },
-
-        class DeleteUserApiKey extends Controller {
-            static path = "/user/:user_id/api-key/:api_key_id";
-
-            static method = "DELETE";
-
-            static admin = true;
-
-            static reader = false;
-
-            static openapi_Summary = "Revoke User API Key";
-
-            static openapi_Description = `Administratively revoke one of a user's API keys. Unlike sessions, keys survive password resets, so this is the admin kill path for a compromised or orphaned credential. ${STALENESS_NOTE}`;
-
-            static openapi_Parameters = [
-                this.UserIDParam,
-                this.ApiKeyIDParam
-            ]
-
-            async parse_request(req) {
-                // A key under the wrong user 404s: the path names the
-                // resource, it doesn't search for it
-                return this.get_api_key(req, this.get_user(req).id);
-            }
-
-            async respond(api_key) {
-                api_key.delete(this.db);
-
-                const invalidation_actions = [
-                    invalidate(QK.user_api_keys(api_key.user_id)),
-                ];
-
-                this.broadcast_invalidations(invalidation_actions, { api_key_id: api_key.id });
-
-                return {
-                    data: null,
-                    invalidations: invalidation_actions
-                };
-            }
-
-            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/NullSchema' });
-
-            static openapi_ErrorResponses = [
-                { code: 404, description: "Not found (unknown user, unknown key, or a key not owned by that user)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
-            ]
         },
 
         class PostUsers extends Controller {
@@ -819,10 +630,10 @@ module.exports = class UsersCollection extends Collection {
                     [ "editor", only_boolean, "boolean" ],
                 ]);
 
-                return { user: this.get_user(req), patch, self_id: req.access?.user_id };
+                return { user: this.get_user(req), patch };
             }
 
-            async respond({ user, patch, self_id }) {
+            async respond({ user, patch }) {
                 let new_user;
                 try {
                     new_user = user.update(this.db, patch);
@@ -834,7 +645,6 @@ module.exports = class UsersCollection extends Collection {
                     invalidate(QK.users),
                     invalidate(QK.user(user.id)),
                 ];
-                if ( user.id === self_id ) invalidation_actions.push(invalidate(QK.me));
 
                 this.broadcast_invalidations(invalidation_actions, { user_id: user.id });
 
@@ -858,21 +668,21 @@ module.exports = class UsersCollection extends Collection {
 
             static method = "POST";
 
-            static admin = true;
-
             static reader = false;
 
             static openapi_Summary = "Set User Password";
 
-            static openapi_Description = `Administratively reset a user's password (no current password needed). By default every one of THEIR sessions is revoked. ${STALENESS_NOTE}`;
+            static openapi_Description = `Set a user's password. Self-or-admin, with split semantics: WITHOUT sudo-mode admin rights you may only change your own password and must supply current_password (verified with a uniform, penalized 400 on failure); WITH them (any target, including yourself) it is an administrative reset and current_password is not required. By default every one of the TARGET's sessions is revoked -- when changing your own, that includes this one, so the client must log in again. API keys deliberately survive password changes. ${STALENESS_NOTE}`;
 
             static openapi_Parameters = [
-                this.UserIDParam
+                this.UserIDParam,
+                this.OptionalSudoParam
             ]
 
             static openapi_RequestBodySchema = {
                 type: 'object',
                 properties: {
+                    current_password: { type: 'string', format: 'password', description: "The user's current password; required unless the caller has sudo-mode admin rights" },
                     password: { type: 'string', format: 'password', description: "The new password (min 8 chars)" },
                     revoke_sessions: { type: 'boolean', description: "Revoke every one of the user's sessions (default true)" }
                 },
@@ -881,20 +691,36 @@ module.exports = class UsersCollection extends Collection {
 
             async parse_request(req) {
                 const data = parse_body_fields(req.body, [
+                    [ "current_password", only_non_empty_string, "non-empty string" ],
                     [ "password", only_non_empty_string, "non-empty string", { required: true } ],
                     [ "revoke_sessions", only_boolean, "boolean" ],
                 ]);
 
-                return { user: this.get_user(req), ...data };
+                return { user: this.get_target_user(req), admin: this.is_sudo_admin(req), ...data };
             }
 
-            async respond({ user, password, revoke_sessions=true }) {
+            async respond({ user, admin, current_password, password, revoke_sessions=true }) {
+                // Self-service path: verify the current password first.
+                // Uniform failure: never confirms the current password was
+                // the problem vs anything else about the account
+                if ( !admin ) {
+                    if ( current_password === undefined ) {
+                        throw new HTTPCodeError(400, "Missing parameter: current_password (expected non-empty string)");
+                    }
+                    if ( !await user.verify_password(current_password) ) {
+                        await this.penalize();
+                        throw new HTTPCodeError(400, "Bad password");
+                    }
+                }
+
                 try {
                     await user.set_password(this.db, password);
                 } catch (err) {
                     translate_model_error(err);
                 }
 
+                // Password changed: kill every session (API-layer policy --
+                // the model deliberately leaves this to us)
                 if ( revoke_sessions ) Session.revoke_all(this.db, user.id);
 
                 const invalidation_actions = [
@@ -912,8 +738,9 @@ module.exports = class UsersCollection extends Collection {
             static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/UserSchema' });
 
             static openapi_ErrorResponses = [
-                { code: 400, description: "Bad parameter (including short password)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
-                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
+                { code: 400, description: "Bad parameter (including short password) or bad current password (uniform)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 403, description: "Forbidden (an admin targeting another user without X-Sudo-Mode)", schema: { "$ref": '#/components/schemas/ForbiddenResponseSchema' } },
+                { code: 404, description: "Not found (including another user, for non-admins)", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } }
             ]
         },
 

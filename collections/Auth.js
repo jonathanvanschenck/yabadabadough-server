@@ -25,7 +25,7 @@ const TokensSchema = {
         access: { type: 'string', format: 'jwt', description: "Short-lived (~1h) stateless access token; carries effective roles" },
         auth: {
             type: 'string', format: 'jwt', nullable: true,
-            description: "Long-lived session-bound auth token; ONLY good for refreshing. Null from /authenticate when no auth token was supplied"
+            description: "Long-lived session-bound auth token; ONLY good for refreshing, and ROTATED (single-use) by every successful refresh -- always store the one returned here. Null from /authenticate when no auth token was supplied"
         }
     },
     required: [ 'access', 'auth' ]
@@ -97,11 +97,14 @@ function clear_auth_cookies(res) {
 /**
  * The refresh flow shared by /refresh and /authenticate: signature-verify the
  * auth token, run the session guard (row exists, secret matches, owner, not
- * expired -- touches last_used_at), and mint a fresh access token. The auth
- * token is returned UNCHANGED: v1 has no rotation (Session.token is the hook).
+ * expired -- touches last_used_at) WITH ROTATION -- the per-session secret is
+ * regenerated, so the presented auth token is single-use -- and mint fresh
+ * access AND auth tokens. The new auth token still expires with the session
+ * (rotation never slides the expiry). Callers must store/set BOTH tokens.
  *
  * Every failure is penalized and reported as the SAME 400 -- never leak which
- * check failed.
+ * check failed. Failures never rotate, so a rejected refresh does not burn
+ * the (possibly still valid) presented token.
  */
 async function refresh_flow(controller, auth_token) {
     const fail = async () => {
@@ -114,7 +117,7 @@ async function refresh_flow(controller, auth_token) {
 
     let session;
     try {
-        session = Session.for_auth_payload(controller.db, payload);
+        session = Session.for_auth_payload(controller.db, payload, { rotate: true });
     } catch (err) {
         if ( err instanceof ForeignKeyError || err instanceof ConflictError ) await fail();
         else throw err;
@@ -128,13 +131,7 @@ async function refresh_flow(controller, auth_token) {
     return {
         user,
         session,
-        tokens: {
-            access: controller.token_manager.tokenize(
-                user.to_access_token_payload(session),
-                { ttl_s: User.ACCESS_TOKEN_TTL_S }
-            ),
-            auth: auth_token,
-        },
+        tokens: mint_tokens(controller.token_manager, user, session),
     };
 }
 
@@ -299,7 +296,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Refresh Tokens";
 
-            static openapi_Description = "Mint a fresh access token from an auth token (request body, or the auth_token cookie set at login). ONLY the auth token is needed: it is checked against its session row, so logout / revoke-all make it worthless. The auth token itself is returned unchanged (no rotation, and its expiry never slides).";
+            static openapi_Description = "Mint fresh tokens from an auth token (request body, or the auth_token cookie set at login). ONLY the auth token is needed: it is checked against its session row, so logout / revoke-all make it worthless. The auth token is ROTATED on every successful refresh -- the presented one is single-use and a NEW auth token is returned (and set as a cookie); store it in place of the old one. Rotation never slides the session's expiry. A failed refresh does not rotate.";
 
             init({ secure_cookies, ...args }={}) {
                 super.init(args);
@@ -330,6 +327,7 @@ module.exports = class AuthCollection extends Collection {
                 const { user, session, tokens } = await refresh_flow(this, auth);
 
                 set_access_cookie(res, tokens.access, this);
+                set_auth_cookie(res, tokens.auth, session, this);
 
                 return {
                     user: user.to_api(),
@@ -354,7 +352,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Authenticate (Check and Refresh)";
 
-            static openapi_Description = "\"Check my auth is good, and refresh it if it isn't\": if the access token (body or cookie) still verifies, returns the current info without minting anything; otherwise, with auto_refresh, runs the refresh flow off the auth token. Browsers can call this with no body at all and let the cookies do the work.";
+            static openapi_Description = "\"Check my auth is good, and refresh it if it isn't\": if the access token (body or cookie) still verifies, returns the current info without minting anything; otherwise, with auto_refresh, runs the refresh flow off the auth token (which ROTATES it -- see /refresh -- with both new tokens returned and set as cookies). Browsers can call this with no body at all and let the cookies do the work.";
 
             init({ secure_cookies, ...args }={}) {
                 super.init(args);
@@ -414,6 +412,7 @@ module.exports = class AuthCollection extends Collection {
                 const { user, session, tokens } = await refresh_flow(this, auth);
 
                 set_access_cookie(res, tokens.access, this);
+                set_auth_cookie(res, tokens.auth, session, this);
 
                 return {
                     user: user.to_api(),
@@ -515,7 +514,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Exchange an API Key for an Access Token";
 
-            static openapi_Description = "Exchange an API key (minted at POST /api/users/me/api-keys) for a short-lived (~1h) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=1h expiry.";
+            static openapi_Description = "Exchange an API key (minted at POST /api/users/user/:user_id/api-keys) for a short-lived (~1h) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=1h expiry.";
 
             static openapi_RequestBodySchema = {
                 type: 'object',

@@ -167,18 +167,54 @@ describe("Auth API", () => {
     });
 
     describe("POST /api/auth/refresh", () => {
-        it("mints a fresh access token from the auth token alone", async () => {
+        it("mints a fresh access token and a ROTATED auth token from the auth token alone", async () => {
             const { tokens, session } = await login();
 
             const { res, body } = await post("/api/auth/refresh", { auth: tokens.auth });
 
             expect(res.status).to.equal(200);
-            expect(body.tokens.auth).to.equal(tokens.auth); // no rotation in v1
             expect(body.session.id).to.equal(session.id);
             expect(body.session.last_used_at).to.not.be.null;
 
+            // Rotation: a NEW auth token, same session, same fixed expiry
+            expect(body.tokens.auth).to.not.equal(tokens.auth);
+            const payload = tm.verify(body.tokens.auth);
+            expect(payload.typ).to.equal("auth");
+            expect(payload.sid).to.equal(session.id);
+            expect(payload.exp).to.equal(Math.floor(new Date(session.expires_at).getTime() / 1000));
+
+            // Both cookies are (re)set
+            const cookies = res.headers.getSetCookie();
+            expect(cookies.find(c => c.startsWith("access_token="))).to.include(body.tokens.access);
+            const auth_cookie = cookies.find(c => c.startsWith("auth_token="));
+            expect(auth_cookie).to.include(body.tokens.auth);
+            expect(auth_cookie).to.include("Path=/api/auth");
+
             const check = await get("/api/auth/check", { authorization: `Bearer ${body.tokens.access}` });
             expect(check.res.status).to.equal(200);
+        });
+
+        it("rotation makes each auth token single-use", async () => {
+            const { tokens } = await login();
+
+            const first = await post("/api/auth/refresh", { auth: tokens.auth });
+            expect(first.res.status).to.equal(200);
+
+            // The presented token lost its right to refresh...
+            expect((await post("/api/auth/refresh", { auth: tokens.auth })).res.status).to.equal(400);
+
+            // ...the rotated one holds it, and rotates again in turn
+            const second = await post("/api/auth/refresh", { auth: first.body.tokens.auth });
+            expect(second.res.status).to.equal(200);
+            expect(second.body.tokens.auth).to.not.equal(first.body.tokens.auth);
+        });
+
+        it("a FAILED refresh does not rotate (the valid token survives)", async () => {
+            const { tokens } = await login();
+
+            // Garbage attempt: rejected without burning alice's token
+            expect((await post("/api/auth/refresh", { auth: "not-a-token" })).res.status).to.equal(400);
+            expect((await post("/api/auth/refresh", { auth: tokens.auth })).res.status).to.equal(200);
         });
 
         it("accepts the auth token from its cookie", async () => {
@@ -226,6 +262,10 @@ describe("Auth API", () => {
             });
             expect(res.status).to.equal(200);
             expect(body.tokens.access).to.not.equal(expired);
+            // The refresh path rotates the auth token here too
+            expect(body.tokens.auth).to.not.equal(tokens.auth);
+            expect((await post("/api/auth/refresh", { auth: tokens.auth })).res.status).to.equal(400);
+            expect((await post("/api/auth/refresh", { auth: body.tokens.auth })).res.status).to.equal(200);
 
             const check = await get("/api/auth/check", { authorization: `Bearer ${body.tokens.access}` });
             expect(check.res.status).to.equal(200);
