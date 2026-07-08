@@ -26,8 +26,12 @@ const {
     nullable
 } = require("./lib/parsers.js");
 const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.mjs");
+const { FUND_COLORS } = require("../lib/fund_colors.mjs");
 
 const Fund = require("../models/Fund.js");
+
+// only_*-style body parser (undefined on failure) for the palette-slug color
+const only_fund_color = (value) => FUND_COLORS.includes(value) ? value : undefined;
 
 // Shared between POST (with required flags) and PATCH (all optional)
 const FUND_BODY_FIELDS = {
@@ -38,7 +42,7 @@ const FUND_BODY_FIELDS = {
     parent_id: [ "parent_id", nullable(only_id), "positive integer or null" ],
     start_date: [ "start_date", nullable(only_ydate), "YYYY-MM-DD string or null" ],
     start_balance: [ "start_balance", nullable(only_number), "number or null" ],
-    color: [ "color", nullable(only_non_empty_string), "non-empty string or null" ],
+    color: [ "color", nullable(only_fund_color), "palette color slug or null" ],
 };
 
 const FundBodyProperties = {
@@ -49,7 +53,7 @@ const FundBodyProperties = {
     parent_id: { type: 'integer', nullable: true },
     start_date: { type: 'string', format: 'date', nullable: true, description: "Required (non-null) when tracked" },
     start_balance: { type: 'number', nullable: true, description: "Forward balance entering start_date; required (non-null) when tracked" },
-    color: { type: 'string', nullable: true }
+    color: { type: 'string', nullable: true, enum: [ ...FUND_COLORS, null ], description: "Palette color slug (see lib/fund_colors.mjs)" }
 };
 
 // Shared between the per-fund and bulk balance routes

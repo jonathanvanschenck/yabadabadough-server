@@ -2,6 +2,8 @@
 
 Personal finance server application built with Node.js and SQLite. Manages funds (hierarchical), transactions, allocations, and bank statement reconciliation. Supports monthly budgets with end-of-month finalization.
 
+The React webapp lives in `webapp/` and has its own conventions file at `webapp/CLAUDE.md` (loaded automatically when working under that directory).
+
 ## Commands
 
 ### Testing
@@ -282,6 +284,11 @@ TransactionGroup, `finalized_months_since` in Fund).
 - History-affecting fields (`start_date`, `start_balance`, `tracked`, `monthly`, `pool`, and the
   `parent_id` of any fund that is or contains a monthly fund) are immutable while any
   finalizations exist (`fund.assert_unfinalized`)
+- `color` is a palette SLUG (never a hex) from `lib/fund_colors.mjs` — an ESM registry shared
+  with the webapp exactly like the query-key registry (webapp shim: `src/hooks/fundColors.js`;
+  hex values live only in `webapp/public/styles.css` as `--fund-<slug>` variables). Validated
+  at the model layer and by the strict API parser, with a `CHECK` constraint as backstop;
+  adding/renaming a slug means updating registry + styles.css + schema in one commit
 
 **Transaction Groups** (`transaction_groups` table):
 - Container for one or more related transactions

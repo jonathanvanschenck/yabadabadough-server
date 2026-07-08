@@ -102,7 +102,16 @@ CREATE TABLE funds (
     pool              INTEGER NOT NULL DEFAULT 0
                         CHECK (pool IN (0,1)),
 
-    color             TEXT,
+    -- Palette color SLUG (see lib/fund_colors.mjs, the shared
+    -- registry; the webapp maps slugs to its --fund-<slug> CSS variables).
+    -- Backstops the model/API validation, like the flag CHECKs above
+    color             TEXT
+                        CHECK (color IS NULL OR color IN (
+                            'red', 'orange', 'amber', 'yellow', 'lime', 'green',
+                            'teal', 'cyan', 'blue', 'indigo', 'purple', 'pink',
+                            'deep-red', 'deep-orange', 'deep-amber', 'deep-yellow', 'deep-lime', 'deep-green',
+                            'deep-teal', 'deep-cyan', 'deep-blue', 'deep-indigo', 'deep-purple', 'deep-pink'
+                        )),
 
 
     -- Meta data

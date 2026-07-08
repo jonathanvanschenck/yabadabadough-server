@@ -274,16 +274,21 @@ describe("Funds API", () => {
         });
 
         it("updates only the provided fields", async () => {
-            const { status, body } = await h.request(`/api/funds/fund/${checking.id}`, { method: "PATCH", token: h.tokens.editor, body: { name: "Main Checking", color: "#00ff00" } });
+            const { status, body } = await h.request(`/api/funds/fund/${checking.id}`, { method: "PATCH", token: h.tokens.editor, body: { name: "Main Checking", color: "lime" } });
             expect(status).to.equal(200);
             expect(body.data.name).to.equal("Main Checking");
-            expect(body.data.color).to.equal("#00ff00");
+            expect(body.data.color).to.equal("lime");
             expect(body.data.start).to.deep.equal({ date: "2026-01-01", forward_balance: 1000 });
             expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["fund", checking.id.toString()] });
         });
 
         it("400s on a bad parameter", async () => {
             const { status } = await h.request(`/api/funds/fund/${checking.id}`, { method: "PATCH", token: h.tokens.editor, body: { name: 5 } });
+            expect(status).to.equal(400);
+        });
+
+        it("400s on a color outside the palette", async () => {
+            const { status } = await h.request(`/api/funds/fund/${checking.id}`, { method: "PATCH", token: h.tokens.editor, body: { color: "#00ff00" } });
             expect(status).to.equal(400);
         });
 

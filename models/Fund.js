@@ -9,6 +9,8 @@ const {
     ForeignKeyError
 } = require("../lib/db.js");
 
+const { FUND_COLORS } = require("../lib/fund_colors.mjs");
+
 const {
     currency2stmt,
     stmt2currency,
@@ -270,7 +272,7 @@ module.exports = class Fund extends Base {
                 },
                 required: [ 'tracked', 'monthly', 'pool', 'root' ]
             },
-            color: { type: 'string', nullable: true },
+            color: { type: 'string', nullable: true, enum: [ ...FUND_COLORS, null ], description: "Palette color slug (see lib/fund_colors.mjs)" },
             created_at: { type: 'string', format: 'date-time' }
         },
         required: [ 'id', 'name', 'parent_id', 'start', 'cache', 'status', 'color', 'created_at' ]
@@ -631,6 +633,11 @@ module.exports = class Fund extends Base {
             throw new Error("Cannot create a fund that is both pool and monthly");
         }
 
+        // Colors are palette slugs from the shared registry (db CHECK backstops)
+        if ( color != null && !FUND_COLORS.includes(color) ) {
+            throw new Error("Unknown fund color: "+color);
+        }
+
         const transaction =  this.build_transaction(db, "create", this._create.bind(this));
         return transaction(db, {
             name,
@@ -780,6 +787,9 @@ module.exports = class Fund extends Base {
         }
 
         // Same consistency rules as create
+        if ( next.color != null && !FUND_COLORS.includes(next.color) ) {
+            throw new Error("Unknown fund color: "+next.color);
+        }
         if ( next.tracked && next.start_date == null ) {
             throw new Error("Cannot set tracked without also providing start_date");
         }

@@ -427,10 +427,15 @@ describe("models/Fund.js", () => {
 
             const updated = Fund.for_id(db, fund.id).update(db, {
                 name: "renamed",
-                color: "#ff0000",
+                color: "red",
             });
             expect(updated.name).to.equal("renamed");
-            expect(updated.color).to.equal("#ff0000");
+            expect(updated.color).to.equal("red");
+        });
+
+        it("rejects colors outside the palette registry", () => {
+            expect(() => fund.update(db, { color: "#ff0000" }))
+                .to.throw("Unknown fund color");
         });
 
         it("rejects history-affecting changes on finalized funds", () => {
