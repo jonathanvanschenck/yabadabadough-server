@@ -4,6 +4,7 @@ const { only_non_empty_string } = require("./lib/parsers.js");
 const { ConflictError, ForeignKeyError } = require("../lib/db.js");
 const User = require("../models/User.js");
 const Session = require("../models/Session.js");
+const ApiKey = require("../models/ApiKey.js");
 
 // The long-lived auth token only ever needs to reach the auth endpoints, so
 // its cookie is path-scoped here (the short-lived access token rides on every
@@ -501,6 +502,96 @@ module.exports = class AuthCollection extends Collection {
                 },
                 required: [ 'message', 'revoked' ]
             };
+        },
+
+        class ApiToken extends Controller {
+            static path = "/api-token";
+
+            static method = "POST";
+
+            static access = false;
+
+            static reader = false;
+
+            static openapi_Summary = "Exchange an API Key for an Access Token";
+
+            static openapi_Description = "Exchange an API key (minted at POST /api/users/me/api-keys) for a short-lived (~1h) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=1h expiry.";
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    api_key: { type: 'string', format: 'password', description: "The plaintext API key ('ydd_...'), shown once at creation" }
+                },
+                required: [ 'api_key' ]
+            }
+
+            async parse_request(req) {
+                const api_key = only_non_empty_string(req.body?.api_key);
+
+                if ( !api_key ) {
+                    await this.penalize();
+                    throw new HTTPCodeError(400, "Bad API key");
+                }
+
+                return { api_key };
+            }
+
+            async respond({ api_key }) {
+                // Uniform 400: never says WHICH check failed (unknown vs
+                // expired vs revoked key)
+                const fail = async () => {
+                    await this.penalize();
+                    throw new HTTPCodeError(400, "Bad API key");
+                };
+
+                let key;
+                try {
+                    key = ApiKey.for_exchange(this.db, api_key);
+                } catch (err) {
+                    if ( err instanceof ForeignKeyError || err instanceof ConflictError ) await fail();
+                    else throw err;
+                }
+
+                // FK cascade makes a key without its user impossible, but the
+                // check is cheap and this is the auth path
+                const user = User.for_id(this.db, key.user_id);
+                if ( !user ) await fail();
+
+                return {
+                    user: user.to_api(),
+                    tokens: {
+                        access: this.token_manager.tokenize(
+                            user.to_api_key_access_token_payload(key),
+                            { ttl_s: User.ACCESS_TOKEN_TTL_S }
+                        ),
+                    },
+                };
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'object',
+                properties: {
+                    user: { '$ref': '#/components/schemas/UserSchema' },
+                    tokens: {
+                        type: 'object',
+                        properties: {
+                            access: { type: 'string', format: 'jwt', description: "Short-lived (~1h) sessionless access token; roles = owner's effective roles masked by the key's scope, admin always false" }
+                        },
+                        required: [ 'access' ]
+                    }
+                },
+                required: [ 'user', 'tokens' ]
+            };
+
+            static openapi_ErrorResponses = [ {
+                code: 400,
+                description: "Bad API key (deliberately uniform: never says WHICH check failed)",
+                schema: {
+                    type: 'object',
+                    properties: { message: { type: 'string', example: "Bad API key" } },
+                    required: ['message']
+                }
+            } ];
         }
 
     ]
