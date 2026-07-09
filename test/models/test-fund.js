@@ -427,10 +427,10 @@ describe("models/Fund.js", () => {
 
             const updated = Fund.for_id(db, fund.id).update(db, {
                 name: "renamed",
-                color: "red",
+                color: "rose",
             });
             expect(updated.name).to.equal("renamed");
-            expect(updated.color).to.equal("red");
+            expect(updated.color).to.equal("rose");
         });
 
         it("rejects colors outside the palette registry", () => {

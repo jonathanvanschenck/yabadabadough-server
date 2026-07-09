@@ -107,10 +107,8 @@ CREATE TABLE funds (
     -- Backstops the model/API validation, like the flag CHECKs above
     color             TEXT
                         CHECK (color IS NULL OR color IN (
-                            'red', 'orange', 'amber', 'yellow', 'lime', 'green',
-                            'teal', 'cyan', 'blue', 'indigo', 'purple', 'pink',
-                            'deep-red', 'deep-orange', 'deep-amber', 'deep-yellow', 'deep-lime', 'deep-green',
-                            'deep-teal', 'deep-cyan', 'deep-blue', 'deep-indigo', 'deep-purple', 'deep-pink'
+                            'ember', 'amber', 'citron', 'fern', 'teal',
+                            'sky', 'indigo', 'purple', 'magenta', 'rose'
                         )),
 
 
