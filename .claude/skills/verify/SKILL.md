@@ -3,7 +3,7 @@ name: verify
 description: Launch this server against a scratch db and drive the HTTP API to verify changes end-to-end.
 ---
 
-# Verifying yabadabadoh/server changes
+# Verifying yabadabadough/server changes
 
 The surface is the HTTP API (plus socket.io on the same port). Run the REAL server
 (`index.js`) against a scratch db and drive it with curl — don't rely on `npm test` for
