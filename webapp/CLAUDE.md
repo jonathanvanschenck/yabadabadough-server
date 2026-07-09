@@ -1,8 +1,7 @@
 # Webapp Conventions
 
 React webapp for the finance server, served by the backend from `dist/`. Structure and
-conventions were carried over from a prior project ("hyperspace"); `src/pages/` still
-contains template pages (manufacturers) that are being ported to this domain.
+conventions were carried over from a prior project ("hyperspace").
 
 ## Stack
 
