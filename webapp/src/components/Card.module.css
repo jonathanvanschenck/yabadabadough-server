@@ -1,0 +1,144 @@
+
+.card {
+    background: var(--bg-secondary-color);
+    border: 1px solid var(--font-primary-color);
+    border-radius: 10px;
+    padding: 1.5rem;
+    box-shadow: 0 0 8px 2px var(--glow-color);
+}
+
+.cardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--font-muted);
+}
+
+
+.cardHeaderTitleContainer {
+    flex: 1;
+    min-width: 0; /* Allow content to shrink */
+}
+
+.cardHeaderTitle {
+    margin: 0 0 0.25rem 0;
+    color: var(--font-primary-color);
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.cardHeaderActions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .cardHeader {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+    
+    .cardHeaderActions {
+        justify-content: flex-end;
+    }
+}
+
+.cardSection {
+    margin-bottom: 2rem;
+}
+.cardSection:last-child {
+    margin-bottom: 0;
+}  
+
+.cardSection h3 {
+    margin: 0 0 1rem 0;
+    color: var(--font-secondary-color);
+    font-size: 1.25rem;
+    border-bottom: 1px solid var(--font-muted);
+    padding-bottom: 0.5rem;
+}
+
+.collapsibleHeader {
+    cursor: pointer;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: center;
+    transition: color 0.2s ease;
+    user-select: none;
+}
+
+.collapsibleHeader:hover {
+    color: var(--font-color);
+}
+
+.collapsibleHeader:focus {
+    color: var(--font-color);
+    outline: none; /* prevent outline when tabbing to focus */
+}
+
+
+.collapsibleContent {
+    max-height: 99999px; /* Set to a large value to allow expansion */
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    opacity: 1;
+}
+
+.collapsibleContent.collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+}
+
+
+
+@media (max-width: 768px) {
+    .cardAutoGridCollapsing {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+.cardActionFooter {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    padding-bottom: 0.2rem; /* prevent box-shadow clipping on buttons */
+    border-top: 1px solid var(--font-muted);
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+}
+
+
+.cardErrorSection {
+    background: var(--bg-danger-color);
+    color: var(--font-primary-color);
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 1rem 1rem;
+}
+
+.cardErrorSectionMessage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+.cardErrorSectionMessage span {
+    font-weight: bold;
+}
+
+.cardErrorSectionMessageDetails {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    text-align: center;
+}

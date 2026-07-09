@@ -1,0 +1,103 @@
+
+.dangerConfirmButton {
+    background: var(--u-danger);
+    border-color: var(--u-danger);
+    color: var(--u-danger-ink);
+}
+
+.wideModalCard {
+    max-width: 60rem;
+    width: 90vw;
+}
+
+.modalHint {
+    color: var(--font-secondary-color);
+    font-size: 0.9rem;
+    margin: 0 0 0.75rem 0;
+}
+
+.modalWarning {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--u-warn-border);
+    background: var(--u-warn-bg);
+    color: var(--u-warn-text);
+    margin: 0 0 0.75rem 0;
+}
+
+.importSuccess {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--u-success-border);
+    background: var(--u-success-bg);
+    color: var(--u-success-text);
+    margin: 0;
+}
+
+
+.transactionLinesEditor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.transactionLineContainer {
+    padding: 1rem;
+    border: 1px solid;
+    border-radius: 0.5rem;
+}
+
+.transactionLineHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.transactionLineTitle {
+    color: var(--font-secondary-color);
+    font-size: 0.9rem;
+    user-select: none;
+}
+
+
+.statementItemsList {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.statementItem {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid;
+    border-radius: 0.5rem;
+}
+
+.statementItemNote {
+    color: var(--font-secondary-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+
+.processCSVButton {}
+
+
+.secretContainer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid;
+    border-radius: 0.5rem;
+}
+
+.secretValue {
+    font-family: monospace;
+    word-break: break-all;
+    user-select: all;
+}

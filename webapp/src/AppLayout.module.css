@@ -1,0 +1,120 @@
+
+.container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: row;
+}
+
+.sudoOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allow clicks to pass through */
+    z-index: 900; /* Ensure it overlays other content, but not modals */
+}
+.sudoOverlay::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 2rem 1rem var(--accent-color);
+    animation: sudoPulse 3s ease-in-out infinite;
+    opacity: 0;
+    transition: opacity 2s ease;
+}
+.sudoOverlay[data-admin="true"]::before {
+    opacity: 1;
+}
+@keyframes sudoPulse {
+    0%, 100% {
+        box-shadow: inset 0 0 2rem 1rem var(--accent-color);
+    }
+    50% {
+        box-shadow: inset 0 0 4rem 1.5rem var(--accent-color);
+    }
+}
+
+.iconContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+.iconContainer img {
+    width: 5rem;
+    height: 5rem;
+}
+
+.navBar {
+    width: 10vw;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--font-muted);
+    padding: 0.5rem 0.2rem;
+}
+.navBarLinks {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    gap: 0.5rem;
+}
+
+.mainContents {
+    flex-grow: 1;
+    height: 100%;
+
+    /* Scrollbar styles */
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+
+
+.navBarLinks a {
+    text-decoration: none;
+    color: var(--font-muted);
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    transition: font-weight 0.2s, color 0.2s;
+    word-break: break-word; /* eventually, this should be a popout to the right, which will allow non-breaking text */
+}
+.navBarLinks a[aria-current="page"] {
+    font-weight: bold;
+    color: var(--font-primary);
+}
+
+.logoutButton {
+    background-color: var(--font-muted);
+    padding: 0.25rem 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.versionLabel {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--font-muted);
+    text-align: center;
+}
+
+.escalationToggle {
+    padding: 0.25rem 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.plebMode {
+    color: var(--font-muted);
+    opacity: 0.8;
+}
+
+.plebMode:hover {
+    opacity: 1;
+}
+
+
+.sudoMode {
+    background-color: var(--accent-color);
+    color: var(--accent-ink-color);
+}

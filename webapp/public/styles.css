@@ -1,0 +1,291 @@
+:root {
+    /* ---- Surfaces (Warm Stone: coffee-brown, layered: page < body < card < elevated) ---- */
+    --bg-primary-color: #0f0c08;    /* deepest plane (page edges, toast text) */
+    --bg-secondary-color: #16120d;  /* app/body background (coffee-brown) */
+    --fg-primary-color: #201a13;    /* card / panel surface */
+    --bg-elevated-color: #2a2218;   /* modals, popouts, hover surfaces */
+    --bg-hover-color: #2a2218;      /* row/hover wash (matches elevated) */
+    --border-color: #342c20;        /* hairline borders / dividers */
+    --input-border-color: #3b3324;  /* button / input outlines (a touch warmer) */
+
+    /* ---- Text ---- */
+    --font-primary-color: #f4ede0;
+    --font-secondary-color: #bca890; /* warm stone: quiet companion for headings / emphasis */
+    --font-terciary-color: #e08a3c;  /* amber: attention / callouts */
+    --font-muted: #a59a86;
+    --font-faint: #847b68;           /* labels, timestamps */
+
+    /* ---- Interactive accent (amber is the ONLY bright color — use sparingly) ---- */
+    --accent-color: #e08a3c;
+    --accent-ink-color: #241802;     /* near-black text on amber fills */
+    --accent-muted-color: rgba(224, 138, 60, 0.16); /* selection washes, row highlights */
+    --stone-color: #bca890;          /* warm-stone companion (chart bars, category dots) */
+
+    /* ---- Status / utility roles ----
+     * Four semantic roles (success/warn/danger/info), each a full ramp:
+     *   <role>        fill (buttons)      <role>-hover  fill hover
+     *   <role>-ink    text ON the fill    <role>-text   text/icon on dark
+     *   <role>-bg     alert surface       <role>-border alert-surface border
+     *   <role>-wash   translucent field tint (change / validity washes)
+     * DANGER takes LIGHT ink (its fill is the darkest); the other three take
+     * dark ink. The amber brand accent stays the default/positive CTA —
+     * reserve green success for explicit confirm/complete states so it doesn't
+     * compete with the brand button.
+     */
+    --u-success:        oklch(0.70 0.15 150);
+    --u-success-hover:  oklch(0.66 0.15 150);
+    --u-success-ink:    oklch(0.20 0.04 150);
+    --u-success-text:   oklch(0.86 0.11 150);
+    --u-success-bg:     oklch(0.30 0.05 150);
+    --u-success-border: oklch(0.42 0.06 150);
+    --u-success-wash:   color-mix(in oklab, var(--u-success) 16%, transparent);
+
+    --u-warn:        oklch(0.80 0.15 85);
+    --u-warn-hover:  oklch(0.76 0.15 85);
+    --u-warn-ink:    oklch(0.24 0.05 85);
+    --u-warn-text:   oklch(0.87 0.12 85);
+    --u-warn-bg:     oklch(0.30 0.05 85);
+    --u-warn-border: oklch(0.42 0.06 85);
+
+    --u-danger:        oklch(0.62 0.20 25);
+    --u-danger-hover:  oklch(0.58 0.20 25);
+    --u-danger-ink:    oklch(0.97 0.02 25);
+    --u-danger-text:   oklch(0.80 0.15 25);
+    --u-danger-bg:     oklch(0.30 0.07 25);
+    --u-danger-border: oklch(0.42 0.10 25);
+    --u-danger-wash:   color-mix(in oklab, var(--u-danger) 14%, transparent);
+
+    --u-info:        oklch(0.68 0.13 235);
+    --u-info-hover:  oklch(0.64 0.13 235);
+    --u-info-ink:    oklch(0.20 0.04 235);
+    --u-info-text:   oklch(0.85 0.11 235);
+    --u-info-bg:     oklch(0.30 0.05 235);
+    --u-info-border: oklch(0.42 0.06 235);
+
+    /* ---- Status ---- legacy names, now aliases onto the utility roles above
+     * so existing consumers stay consistent with the new ramps. */
+    --bg-ok-color: var(--u-success);       /* bright green fill / glow */
+    --bg-danger-color: var(--u-danger);    /* red fill */
+    --font-ok-color: var(--u-success-text);    /* status as small text on dark */
+    --font-danger-color: var(--u-danger-text);
+    --font-warn-color: var(--u-warn-text);
+
+    /* ---- Neutral overlays (centralized so every surface pulls one value) ---- */
+    --scrim-color: rgba(0, 0, 0, 0.4);       /* modal backdrops */
+    --shadow-color: rgba(0, 0, 0, 0.4);      /* drop shadows / elevation */
+    --glow-color: rgba(255, 255, 255, 0.08); /* soft light halo on dark cards */
+
+    /* ---- Type ---- */
+    --font-display: 'Newsreader', Georgia, serif;   /* titles / headlines */
+    --font-body: 'Source Serif 4', Georgia, serif;  /* body / UI */
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace; /* numbers, dates, tags */
+
+    /* ---- Fund colors (user-selectable entity palette) ----
+     * 10 hues, evenly spaced around the OKLCH wheel. Each slug carries FOUR
+     * tone-matched variants (same formula per hue H) for the Warm Stone surfaces:
+     *   --fund-<slug>        main  : L=0.30 — dark row background
+     *   --fund-<slug>-muted  muted : L=0.255 — dark alt-row background
+     *   --fund-<slug>-text   text  : L=0.86 C=0.10 — readable label on dark
+     *   --fund-<slug>-dot    dot   : L=0.80 C=0.13 — bright fill for dots/swatches/marks
+     * Store the SLUG (e.g. "teal") on the fund, not the color, so the rendered
+     * palette can be retuned without touching stored data. The webapp selects a
+     * variant via fundColorVar(slug, variant) (default 'dot').
+     *
+     * NOTE: contrast/CVD re-validation against the Warm Stone surfaces is a
+     * tracked follow-up (the prior 24-swatch checks no longer apply). Charts
+     * drawing many funds must still carry direct labels.
+     */
+    /* dot / main (row bg) / muted (alt row) / text — same formula per hue H */
+    --fund-ember:   oklch(0.30 0.052 30);  --fund-ember-muted:   oklch(0.255 0.043 30);  --fund-ember-text:   oklch(0.86 0.10 30);  --fund-ember-dot:   oklch(0.80 0.13 30);
+    --fund-amber:   oklch(0.30 0.052 65);  --fund-amber-muted:   oklch(0.255 0.043 65);  --fund-amber-text:   oklch(0.86 0.10 65);  --fund-amber-dot:   oklch(0.80 0.13 65);
+    --fund-citron:  oklch(0.30 0.052 110); --fund-citron-muted:  oklch(0.255 0.043 110); --fund-citron-text:  oklch(0.86 0.10 110); --fund-citron-dot:  oklch(0.80 0.13 110);
+    --fund-fern:    oklch(0.30 0.052 150); --fund-fern-muted:    oklch(0.255 0.043 150); --fund-fern-text:    oklch(0.86 0.10 150); --fund-fern-dot:    oklch(0.80 0.13 150);
+    --fund-teal:    oklch(0.30 0.052 190); --fund-teal-muted:    oklch(0.255 0.043 190); --fund-teal-text:    oklch(0.86 0.10 190); --fund-teal-dot:    oklch(0.80 0.13 190);
+    --fund-sky:     oklch(0.30 0.052 230); --fund-sky-muted:     oklch(0.255 0.043 230); --fund-sky-text:     oklch(0.86 0.10 230); --fund-sky-dot:     oklch(0.80 0.13 230);
+    --fund-indigo:  oklch(0.30 0.052 275); --fund-indigo-muted:  oklch(0.255 0.043 275); --fund-indigo-text:  oklch(0.86 0.10 275); --fund-indigo-dot:  oklch(0.80 0.13 275);
+    --fund-purple:  oklch(0.30 0.052 305); --fund-purple-muted:  oklch(0.255 0.043 305); --fund-purple-text:  oklch(0.86 0.10 305); --fund-purple-dot:  oklch(0.80 0.13 305);
+    --fund-magenta: oklch(0.30 0.052 330); --fund-magenta-muted: oklch(0.255 0.043 330); --fund-magenta-text: oklch(0.86 0.10 330); --fund-magenta-dot: oklch(0.80 0.13 330);
+    --fund-rose:    oklch(0.30 0.052 8);   --fund-rose-muted:    oklch(0.255 0.043 8);   --fund-rose-text:    oklch(0.86 0.10 8);   --fund-rose-dot:    oklch(0.80 0.13 8);
+
+    /* Fallback for funds with NO explicit color (a near-neutral warm taupe).
+     * Not a selectable slug — the fund's stored color stays null; the webapp
+     * resolves null through fundColorVar() to these. Same four-variant shape. */
+    --fund-default:       oklch(0.29 0.018 75);  /* main / row bg */
+    --fund-default-muted: oklch(0.25 0.015 75);  /* alt row */
+    --fund-default-text:  oklch(0.85 0.03 75);   /* text on dark */
+    --fund-default-dot:   oklch(0.72 0.035 75);  /* picker / legend dot */
+
+    /* Aliases used by some component modules */
+    --font-color: var(--font-primary-color);
+    --font-primary: var(--font-primary-color);
+}
+body {
+    font-family: var(--font-body);
+    background-color: var(--bg-secondary-color);
+    color: var(--font-primary-color);
+    margin: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+/* Editorial serif headlines (Newsreader); numbers/labels use mono via .tabular-nums */
+h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--font-primary-color);
+}
+
+input {
+    background-color: transparent;
+    color: var(--font-primary-color);
+    border: none;
+    box-shadow: 0 0 3px 1px; /* Inherit color from text */
+
+}
+input:disabled::placeholder {
+    opacity: 0.7;
+    color: var(--font-muted);
+}
+input:hover:enabled{
+    box-shadow: 0 0 3px 2px; /* Inherit color from text */
+}
+
+input[type="email"],[type="password"],[type="text"] {
+    border-radius: 10px;
+    padding: 0.25rem 0.5rem;
+}
+/* Thanks to https://stackoverflow.com/questions/61083813/how-to-avoid-internal-autofill-selected-style-to-be-applied*/
+/* Make the input not an ugly white when auto filled*/
+input:-webkit-autofill,
+input:-webkit-autofill::first-line,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  transition: background-color 600000s 0s, color 600000s 0s;
+  font-family: var(--font-body) !important;
+  font-size: inherit;
+}
+
+/* Numbers, dates, tags: monospace + aligned columns (JetBrains Mono) */
+.tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Normalize font inheritance */
+input,
+textarea,
+select,
+button,
+meter,
+progress {
+  font-family: inherit;
+  font-size: 100%; /* also often reset */
+  line-height: inherit;
+}
+
+/* Optional: match text color */
+input::placeholder,
+textarea::placeholder {
+  color: inherit;
+  opacity: 0.7;
+}
+
+
+button {
+    background-color: transparent;
+    color: var(--font-primary-color);
+    border-radius: 10px;
+    border: 1px solid; /* Inherit color from text */
+  -webkit-touch-callout: none; /* iOS Safari */
+    -webkit-user-select: none; /* Safari */
+     -khtml-user-select: none; /* Konqueror HTML */
+       -moz-user-select: none; /* Old versions of Firefox */
+        -ms-user-select: none; /* Internet Explorer/Edge */
+            user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome, Edge, Opera and Firefox */
+    padding: 0.5rem 0.75rem;
+}
+button:hover:not(:disabled) {
+    box-shadow: 0 0 2px 2px;  /* Inherit color from text */
+}
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+
+a {
+    padding: 0.25rem 0.5rem;
+    text-align: center;
+    color: unset; /* Ensure links keep the same color as normal text */
+    border-radius: 10px;
+    -webkit-touch-callout: none; /* iOS Safari */
+      -webkit-user-select: none; /* Safari */
+       -khtml-user-select: none; /* Konqueror HTML */
+         -moz-user-select: none; /* Old versions of Firefox */
+          -ms-user-select: none; /* Internet Explorer/Edge */
+              user-select: none; /* Non-prefixed version, currently
+                                    supported by Chrome, Edge, Opera and Firefox */
+}
+a:link, a:visited {
+    color: unset; /* Ensure links keep the same color as normal text */
+}
+a:hover, a:active {
+    box-shadow: 0 0 1px 1px var(--font-muted); /* Slight highlight on hover */
+}
+
+
+.noselect {
+  -webkit-touch-callout: none; /* iOS Safari */
+    -webkit-user-select: none; /* Safari */
+     -khtml-user-select: none; /* Konqueror HTML */
+       -moz-user-select: none; /* Old versions of Firefox */
+        -ms-user-select: none; /* Internet Explorer/Edge */
+            user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome, Edge, Opera and Firefox */
+}
+
+
+
+.flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+
+/** Scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary-color);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--font-muted);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--font-secondary-color);
+}
+
+
+
+/* Slide Down Animation NOTE: assumes all padding and margins are on an inner div */
+.slide-down {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  overflow: hidden;
+  transition:
+    max-height 400ms cubic-bezier(0.25, 0.8, 0.25, 1),
+    opacity 400ms ease,
+    transform 400ms ease;
+}
+
+.slide-down.open {
+  max-height: 9999px;
+  opacity: 1;
+  transform: translateY(0);
+}

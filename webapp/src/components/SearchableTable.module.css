@@ -1,0 +1,147 @@
+.tableContainer {
+    overflow-y: auto;
+    position: relative;
+}
+
+.searchContainer {
+    padding: 1rem 0.2rem;
+    margin-bottom: 1rem;
+    position: sticky;
+    top: 0;
+    background-color: var(--bg-secondary-color);
+    z-index: 2;
+}
+
+.searchInputWrapper {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+
+.searchInput {
+    width: 100%;
+    font-size: larger;
+    padding: 0.5rem 2.5rem 0.5rem 0.5rem; /* Add right padding for clear button */
+    box-sizing: border-box;
+}
+
+.searchClearButton {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--font-muted);
+    border-radius: 0.25rem;
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.searchClearButton:hover {
+    color: var(--font-color);
+    background-color: var(--bg-hover-color);
+}
+
+.searchClearButton:focus {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.searchInput::placeholder {
+    color: var(--font-muted);
+}
+
+.loadingOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-secondary-color);
+    opacity: 0.8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    z-index: 3;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    opacity: 1;
+    transition: opacity 0.2s;
+}
+
+.table.isStale {
+    opacity: 0.7;
+}
+
+.table th, .table td {
+    padding: 8px;
+    text-align: left;
+}
+
+.stickyHeader {
+    background-color: var(--bg-secondary-color);
+    position: sticky;
+    top: 4rem;
+    z-index: 1;
+    box-shadow: 0 2px 5px -1px var(--shadow-color);
+}
+
+.header {
+    background-color: inherit;
+    color: var(--font-secondary-color);
+}
+
+.sortableHeader {
+    cursor: pointer;
+    user-select: none;
+    opacity: 1;
+    transition: opacity 0.2s;
+    background-color: inherit;
+    color: var(--font-secondary-color);
+}
+
+.sortableHeader.isPending {
+    opacity: 0.7;
+}
+
+.sortableHeader:hover {
+    background-color: var(--bg-hover-color);
+}
+
+.sortIcon {
+    margin-left: 0.2rem;
+}
+
+.hiddenIcon {
+    opacity: 0;
+}
+
+.row {
+    transition: background-color 0.2s;
+}
+
+.clickableRow {
+    cursor: pointer;
+}
+
+.clickableRow:hover {
+    background-color: var(--bg-hover-color);
+}
+
+.highlightedRow {
+    background-color: var(--accent-muted-color);
+}
+
+.highlightedRow:hover {
+    background-color: var(--accent-muted-color);
+}

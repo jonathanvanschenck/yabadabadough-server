@@ -1,0 +1,102 @@
+.loginModal {
+    border-radius: 1rem;
+    border: 1px solid var(--font-primary-color);
+    background-color: var(--bg-primary-color);
+    color: var(--font-primary-color);
+    padding: 0.5rem;
+
+    /* Smooth transition for opacity and scale */
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    opacity: 1;
+    transform: scale(1);
+}
+.loginModal.closing {
+    /* Smooth transition for opacity and scale */
+    opacity: 0;
+    transform: scale(0.8);
+}
+
+.loginModal::backdrop {
+    backdrop-filter: blur(10px);
+    /* Animate backdrop blur */
+    transition: backdrop-filter 0.3s ease;
+}
+.loginModal.closing::backdrop {
+    backdrop-filter: blur(0px);
+}
+
+.loginContainer {
+    display: flex;
+    flex-direction: row;
+}
+
+
+.iconContainer {
+    width: 10rem;
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+    margin-left: 2rem;
+}
+
+.spacer {
+    border: 1px solid var(--font-primary-color);
+    margin: 1rem 2rem;
+}
+
+.formContainer {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0.5rem;
+    justify-content: space-around;
+}
+
+.loginForm > h3 {
+    text-align: center;
+    font-size: xx-large;
+    margin-bottom: 0;
+}
+.loginForm > p {
+    margin-bottom: 1.25rem;
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: small;
+}
+.loginForm > div {
+    display: flex;
+    margin: 0.5rem;
+}
+.loginModal input {
+    width: 15rem;
+    text-align: center;
+}
+.loginModal label {
+    width: 8rem;
+}
+.loginModal button {
+    flex-grow: 1;
+}
+
+.loginButton {
+    margin-top: 0.75rem;
+}
+.loginButton:disabled {
+    opacity: 1; /* override global disabled styles */
+    background-color: var(--font-muted);
+}
+.loginErrorMsg {
+    color: var(--font-terciary-color);
+    width: 100%;
+    text-align: center;
+    font-size: small;
+    margin: 0;
+}
+
+
+.row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+
+

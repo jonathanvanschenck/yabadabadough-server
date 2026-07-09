@@ -1,0 +1,12 @@
+
+.fundTypeIcon {
+    color: var(--font-terciary-color);
+    opacity: 0.7;
+}
+
+.fundColorDot {
+    display: inline-block;
+    border-radius: 50%;
+    vertical-align: -0.05em;
+    flex-shrink: 0;
+}

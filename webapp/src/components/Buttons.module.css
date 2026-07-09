@@ -1,0 +1,34 @@
+
+
+/* Primary call-to-action: the one amber fill. Near-black ink for contrast.
+ * Overrides the border the base `button` rule inherits from text color. */
+.primaryButton {
+    background-color: var(--accent-color);
+    color: var(--accent-ink-color);
+    border-color: var(--accent-color);
+    font-weight: 600;
+}
+.primaryButton:hover:not(:disabled) {
+    box-shadow: 0 0 2px 2px var(--accent-color);
+}
+
+
+.spinnerButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+
+.iconButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.tightIconButton {
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+}

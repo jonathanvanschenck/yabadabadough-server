@@ -1,0 +1,164 @@
+/* Overlay */
+.overlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 800; /* Below the sudo overlay and modals */
+    display: flex;
+    justify-content: right;
+}
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+.popout {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary-color);
+    border-left: 1px solid var(--font-primary-color);
+    box-shadow: -2px 0 8px var(--shadow-color);
+    animation: slideIn 0.3s ease-out;
+
+    overflow-y: auto; /* Allow vertical scrolling if content exceeds viewport height */
+}
+
+/* Header */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--font-muted);
+    background: var(--bg-secondary-color);
+    padding: 1rem;
+}
+
+.title {
+    margin: 0;
+    flex-grow: 1;
+    color: var(--font-secondary-color);
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+/* Sections */
+.section {
+    padding: 1rem;
+    border-bottom: 1px solid var(--font-muted);
+}
+
+.section:last-child {
+    border-bottom: none;
+}
+
+.sectionTitle {
+    margin: 0 0 0.75rem 0;
+    color: var(--font-primary-color);
+    font-size: 1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.sectionContent {
+    color: var(--font-primary-color);
+}
+
+/* Detail fields (for vendor popout compatibility) */
+.section .detailField {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.section .detailField:last-child {
+    margin-bottom: 0;
+}
+
+.section .detailField label {
+    font-weight: 600;
+    color: var(--font-secondary-color);
+    min-width: 5rem;
+    flex-shrink: 0;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    padding-top: 0.125rem;
+}
+
+.section .detailField span {
+    color: var(--font-primary-color);
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+/* Loading state */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    .popout {
+        margin: 1rem;
+        max-width: calc(100vw - 2rem);
+        max-height: calc(100vh - 2rem);
+    }
+    
+    .positionRight,
+    .positionLeft {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+        height: auto;
+        border-radius: 10px;
+    }
+    
+    .positionTop,
+    .positionBottom {
+        margin: 0;
+        max-width: 100vw;
+    }
+    
+    .header {
+        padding: 0.75rem;
+    }
+    
+    .section {
+        padding: 0.75rem;
+    }
+}
+
+
+.labeledValue {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+    gap: 0.25rem;
+}
+
+.labeledValue label {
+    font-weight: bold;
+    color: var(--font-secondary-color);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.labeledValue span {
+    color: var(--font-primary-color);
+    padding: 0.25rem 0;
+    word-break: break-word;
+}

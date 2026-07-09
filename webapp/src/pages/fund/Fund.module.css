@@ -1,0 +1,69 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    height: 100%;
+    padding: 0 1rem;
+    max-width: 70rem;
+    margin: 0 auto;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--bg-secondary-color);
+}
+
+.header h1 {
+    margin: 0;
+    color: var(--font-primary-color);
+    flex: 1;
+}
+
+.content {
+    flex: 1;
+}
+
+.loadingContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 1rem;
+    color: var(--font-primary-color);
+    font-size: 1.2rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 0.5rem;
+    }
+
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+}
+
+.buttonHasChanges {
+    color: var(--bg-ok-color); /* changes border and box shadow color too */
+}
+
+.deleteButton {
+    background: var(--bg-danger-color);
+}
+
+.mutedNote {
+    color: var(--font-muted);
+    margin: 0;
+}
+
+.subFundsTable {
+    max-height: 50vh; /* Set limit so that the table will start overflowing */
+    min-height: 20rem; /* Ensure it doesn't shrink too much -- important when the query returns no results */
+}

@@ -1,0 +1,42 @@
+
+
+.modalContainer {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1000;
+    background-color: var(--scrim-color);
+    backdrop-filter: blur(5px);
+    margin: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+
+}
+
+.modalContainer:focus {
+  outline: none;
+}
+
+
+.cardBaseStyles {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  padding: 1rem; /* bring in the padding slightly compared to a full card */
+}
+.modalFormContainer {
+    overflow-y: auto;
+    flex-grow: 1;
+
+    padding: 0 0.25rem; /* add some padding to not collide with scrollbar */
+}
+
+.errorText {
+    color: var(--bg-danger-color);
+    text-align: right;
+}
