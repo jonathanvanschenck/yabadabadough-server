@@ -1165,6 +1165,105 @@ export function EditTransactionModal({ isOpen, setIsOpen, transaction }) {
     );
 }
 
+/**
+ * View (and edit in place) the note on a transaction group or a single
+ * transaction: pass exactly one of `group`/`transaction`. Managed
+ * allocation/eom_cleanup rows are read-only (their PATCH routes 409), as are
+ * non-editor viewers.
+ */
+export function TransactionNoteModal({ isOpen, setIsOpen, group = null, transaction = null }) {
+
+    const entity = group ?? transaction;
+    const roles = useAuthRoles();
+
+    const [ note, setNote ] = useState(null);
+    const [ isEditing, setIsEditing ] = useState(false);
+    const [ submitError, setSubmitError ] = useState(null);
+
+    useEffect(() => {
+        if (isOpen) {
+            setNote(entity?.note ?? null);
+            setIsEditing(false);
+            setSubmitError(null);
+        }
+    }, [isOpen, entity]);
+
+    const isManaged = group
+        ? (group.status?.allocation || group.status?.eom_cleanup)
+        : (transaction?.allocation || transaction?.eom_cleanup_id != null);
+    const canEdit = roles.editor && !isManaged;
+    const isChanged = (note ?? null) !== (entity?.note ?? null);
+
+    const {
+        mutate: patchGroupMutate,
+        isPending: patchGroupIsPending
+    } = usePatchTransactionGroupMutation();
+    const {
+        mutate: patchTransactionMutate,
+        isPending: patchTransactionIsPending
+    } = usePatchTransactionMutation();
+
+    const handleSubmit = useCallback(() => {
+        const mutate = group ? patchGroupMutate : patchTransactionMutate;
+        mutate(
+            { formData: { id: entity.id, note: note?.trim() ? note : null } },
+            {
+                onSuccess: () => setIsOpen(false),
+                onError: (err) => setSubmitError({
+                    message: err.message,
+                    details: err.details?.message
+                })
+            }
+        );
+    }, [group, entity, note, patchGroupMutate, patchTransactionMutate, setIsOpen]);
+
+    return (
+        <CardModal
+            title={`Note: ${entity?.description ?? ''}`}
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+        >
+            <CardSection>
+                <LabeledTextArea
+                    label={group ? "Transaction group note" : "Transaction note"}
+                    value={note}
+                    isFrozen={!isEditing}
+                    isChanged={isChanged}
+                    minHeight="6rem"
+                    collapseWhenFrozen={false}
+                    nullPlaceholder="(none)"
+                    onChange={(value) => { setNote(value); setSubmitError(null); }}
+                    allowNull={true}
+                />
+            </CardSection>
+
+            <CardActionFooter>
+                { !isEditing
+                    ? <IconButton
+                        text="Edit"
+                        icon="fa-pen-to-square"
+                        ariaLabel="Edit note"
+                        disabled={!canEdit}
+                        title={ !canEdit ? "This note cannot be edited" : undefined }
+                        onClick={() => setIsEditing(true)}
+                    />
+                    : <SpinnerButton
+                        isPending={patchGroupIsPending || patchTransactionIsPending}
+                        disabled={!isChanged || submitError != null}
+                        text="Save Note"
+                        ariaLabel="Save note"
+                        onClick={handleSubmit}
+                    />
+                }
+            </CardActionFooter>
+
+            { submitError &&
+                <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
+            }
+        </CardModal>
+    );
+}
+
 
 // ---------------------------------------------------------------------------
 // Bank statements

@@ -1,0 +1,434 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+/* ---- Top bar: add button | month selector | finalized badge ---- */
+
+.topBar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-top: 0.5rem;
+}
+
+.topBarSide {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.topBarRight {
+    justify-content: flex-end;
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.pageTitle {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+/* ---- Hidden-columns strip ---- */
+
+.hiddenStrip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+}
+
+.hiddenStripLabel {
+    color: var(--font-faint);
+}
+
+.hiddenChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid var(--border-color);
+    border-radius: 1rem;
+    background-color: var(--fg-primary-color);
+    color: var(--font-faint);
+    padding: 0.05rem 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.hiddenChip:hover {
+    background-color: var(--bg-hover-color);
+    color: var(--font-primary-color);
+}
+
+.hiddenStripShowAll {
+    border: none;
+    background: none;
+    color: var(--font-terciary-color);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0 0.25rem;
+}
+
+.hiddenStripShowAll:hover {
+    text-decoration: underline;
+}
+
+/* ---- Loading / error / empty states ---- */
+
+.centerState {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.errorTitle {
+    color: var(--font-danger-color);
+    margin: 0;
+}
+
+.emptyState {
+    text-align: center;
+    color: var(--font-faint);
+    padding: 1.5rem 0.5rem;
+    font-style: italic;
+}
+
+/* ---- The spreadsheet ----
+ *
+ * One scroll container in both axes. Sticky layers (z-index):
+ *   1        body sticky-left cells
+ *   2        totals-row cells (sticky top)
+ *   3        totals-row sticky-left cells
+ *   ~80..N   fund header cells (DESCENDING inline z-index, see the JSX: a
+ *            column's angled label overhangs the columns to its right and
+ *            must paint above their opaque backgrounds)
+ *   90       header sticky-left corner cells
+ * Every sticky cell needs a SOLID background or lower layers bleed through.
+ * --thead-height is set inline by the page (it grows with fund-tree depth)
+ * and positions the sticky totals row just beneath the header.
+ */
+
+.tableScroll {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.table {
+    border-collapse: separate; /* collapse breaks sticky borders */
+    border-spacing: 0;
+    font-size: 0.78rem;
+    width: max-content;
+}
+
+.table td,
+.table th {
+    padding: 0.15rem 0.4rem;
+    background-color: var(--bg-secondary-color);
+}
+
+.table td {
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* ---- Sticky lead columns (date / description / total) ---- */
+
+.stickyCol1,
+.stickyCol2,
+.stickyCol3 {
+    position: sticky;
+    z-index: 1;
+}
+
+.stickyCol1 {
+    left: 0;
+    width: 4.5rem;
+    min-width: 4.5rem;
+    max-width: 4.5rem;
+    white-space: nowrap;
+}
+
+.stickyCol2 {
+    left: 4.5rem;
+    width: 13rem;
+    min-width: 13rem;
+    max-width: 13rem;
+}
+
+.stickyCol3 {
+    left: 17.5rem;
+    border-right: 1px solid var(--input-border-color);
+}
+
+/* ---- Header ---- */
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    height: var(--thead-height);
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 500;
+    color: var(--font-secondary-color);
+    text-align: left;
+}
+
+.table thead th.stickyCol1,
+.table thead th.stickyCol2,
+.table thead th.stickyCol3 {
+    z-index: 90;
+}
+
+.leadTh {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+}
+
+.leadThAmount {
+    text-align: right;
+}
+
+/* Fund columns: narrow, with the name angled 45° up from the base of the
+ * header, the group bars under the labels (one stacked segment per nesting
+ * level -- adjacent segments of one group join into a single colored bar
+ * spanning that group's subtree), and the tiny collapse/hide controls at
+ * the base. The label's `bottom` is set inline (it clears the bar rows). */
+.fundTh {
+    position: relative;
+    width: 4.25rem;
+    min-width: 4.25rem;
+    max-width: 4.25rem;
+}
+
+/* The label is anchored at the split line (`bottom` = --fund-base-height, set
+ * inline) and rotated up from there, so it lives entirely in the top
+ * parallelogram. `left` centers the text ACROSS the slanted strip: half the
+ * column width plus half the (rotated) text thickness projected back to the
+ * horizontal -- see .fundThSlant. */
+.fundThLabel {
+    position: absolute;
+    left: calc(50% + 0.5rem);
+    transform: rotate(-45deg);
+    transform-origin: bottom left;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.fundThLabel > span {
+    display: inline-block;
+    max-width: 8.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.75rem;
+}
+
+/* The header's column-hover highlight is two stacked pieces meeting at the
+ * "split line" (--fund-base-height above the cell base, set inline -- it's the
+ * label's baseline and clears the bar/control rows):
+ *   - fundThBase: an upright rectangle over the bottom section, so it lines up
+ *     with the bars and collapse/hide controls (which are centered normally,
+ *     NOT skewed).
+ *   - fundThSlant: a parallelogram over the top section, its sides skewed
+ *     parallel to the angled label -- bottom edge on the split line, top edge
+ *     overhanging to the right, exactly like the label itself.
+ * Both are painted under the label/bars/controls (they come first) and never
+ * intercept the pointer. */
+.fundThBase {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--fund-base-height);
+    pointer-events: none;
+}
+
+.fundThSlant {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: var(--fund-base-height);
+    transform: skewX(-45deg);
+    transform-origin: bottom left;
+    pointer-events: none;
+}
+
+.fundTh.colHover .fundThBase,
+.fundTh.colHover .fundThSlant {
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+.fundThBars {
+    position: absolute;
+    bottom: 1.45rem;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.fundThBar {
+    height: 0.25rem;
+    margin-top: 0.15rem;
+}
+
+.fundThControls {
+    position: absolute;
+    bottom: 0.15rem;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 0.125rem;
+}
+
+/* Room for the last angled label to overhang to the right */
+.spacerTh,
+.spacerCell {
+    min-width: 6rem;
+    border-bottom: none !important;
+}
+
+/* ---- Rows ----
+ *
+ * Hover highlights compose as background-image glow layers (not
+ * background-color: the fund columns carry inline background colors, which
+ * would win over any stylesheet color). Row and column highlights stack, so
+ * the hovered row × column intersection pops double.
+ */
+
+.bodyRow:hover td:not(.spacerCell),
+td.colHover {
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+.bodyRow:hover td.colHover {
+    background-image:
+        linear-gradient(var(--glow-color), var(--glow-color)),
+        linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+.dateCell {
+    color: var(--font-muted);
+    white-space: nowrap;
+}
+
+.descCell {
+    white-space: nowrap;
+}
+
+.descText {
+    display: inline-block;
+    max-width: 10.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    white-space: nowrap;
+    /* the global `a` rule pads links for click targets -- too airy in here */
+    padding: 0;
+    text-align: left;
+}
+
+.descTextIndent {
+    max-width: 9.75rem;
+    margin-left: 1rem;
+    color: var(--font-muted);
+}
+
+.amountCell {
+    text-align: right;
+    white-space: nowrap;
+    min-width: 3.75rem;
+}
+
+/* Stand-in for a group row's amounts while it is expanded (the real values
+ * are on the transaction rows below) */
+.omittedMark {
+    color: var(--font-faint);
+}
+
+.negative {
+    color: var(--u-danger-text);
+}
+
+.zero {
+    color: var(--font-faint);
+}
+
+/* Sub-rows of an expanded group */
+.transactionRow td {
+    border-bottom-style: dotted;
+}
+
+/* ---- Special rows ---- */
+
+.balanceRow td {
+    color: var(--font-secondary-color);
+}
+
+.balanceRow .descCell {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+}
+
+/* Month totals: sticky right beneath the header */
+.totalsRow td {
+    position: sticky;
+    top: var(--thead-height);
+    z-index: 2;
+    background-color: var(--bg-elevated-color);
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 600;
+}
+
+.totalsRow td.stickyCol1,
+.totalsRow td.stickyCol2,
+.totalsRow td.stickyCol3 {
+    z-index: 3;
+}
+
+/* Balance forward: divided from the transactions below it */
+.forwardRow td {
+    border-bottom: 2px solid var(--input-border-color);
+}
+
+/* Finalized end-of-month balances: divided from the transactions above */
+.finalizedRow td {
+    border-top: 2px solid var(--input-border-color);
+}
+
+.cleanupRow td {
+    color: var(--font-muted);
+}
+
+/* ---- Shared subtle icon-only button ---- */
+
+.ghostButton {
+    border: none;
+    background: none;
+    padding: 0 0.25rem;
+    cursor: pointer;
+    color: var(--font-faint);
+    opacity: 0.55;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.ghostButton:hover {
+    opacity: 1;
+    color: var(--font-primary-color);
+}

@@ -12,6 +12,7 @@ import AppLayout from './AppLayout.jsx'
 import NotFound from './pages/404/404.jsx'
 import Funds from './pages/funds/Funds.jsx'
 import Fund from './pages/fund/Fund.jsx'
+import Transactions from './pages/transactions/Transactions.jsx'
 
 function Home() {
   return (
@@ -50,6 +51,7 @@ const router = createBrowserRouter(
                 { index: true, Component: Home },
                 { path: "funds", Component: Funds },
                 { path: "fund/:id", Component: Fund },
+                { path: "transactions", Component: Transactions },
                 { path: "*", Component: NotFound  }
             ]
         }

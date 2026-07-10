@@ -100,6 +100,7 @@ function App() {
                 <div className={ styles.navBarLinks }>
                     <NavLink to="/">Home</NavLink>
                     <NavLink to="/funds">Funds</NavLink>
+                    <NavLink to="/transactions">Transactions</NavLink>
                 </div>
                 <EscalationModeToggler />
                 <div style={{ "text-align": "center" }}>
