@@ -193,6 +193,40 @@ module.exports = class StatementsCollection extends Collection {
             ]
         },
 
+        class GetStatementSources extends Controller {
+            static path = "/statements/sources";
+
+            static method = "GET";
+
+            static openapi_Summary = "List Bank Statement Sources";
+
+            static openapi_Description = "Get every distinct source label across all imported bank statement items, sorted -- the suggestion list for import UIs. Sources are free-form labels, but using one consistent name per bank account is what makes (source, key) dedupe work.";
+
+            static query_key = ["statement-sources"];
+
+            async parse_request() {
+                return {};
+            }
+
+            async respond(_, { res }) {
+                const sources = BankStatementItem.sources(this.db);
+                res.setHeader("X-Total-Count", sources.length);
+                return sources;
+            }
+
+            static openapi_ResponseHeaders = {
+                "X-Total-Count": {
+                    description: "The total number of distinct sources",
+                    schema: { type: "integer" }
+                }
+            }
+
+            static openapi_ResponseSchema = {
+                type: 'array',
+                items: { type: 'string' }
+            }
+        },
+
         class PostStatementsImport extends Controller {
             static path = "/statements/import";
 
@@ -260,6 +294,8 @@ module.exports = class StatementsCollection extends Collection {
 
                 const invalidation_actions = [
                     invalidate(QK.statements),
+                    // Created items may introduce a new source label
+                    invalidate(QK.statement_sources),
                 ];
 
                 this.broadcast_invalidations(invalidation_actions);
@@ -478,6 +514,8 @@ module.exports = class StatementsCollection extends Collection {
                 const invalidation_actions = [
                     invalidate(QK.statements),
                     remove(QK.statement(item.id)),
+                    // Deleting a source's last item retires that label
+                    invalidate(QK.statement_sources),
                 ];
                 if ( with_group && item.group_id != null ) {
                     invalidation_actions.push(

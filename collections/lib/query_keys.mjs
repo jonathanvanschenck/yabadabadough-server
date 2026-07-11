@@ -40,6 +40,9 @@ export const QK = {
 
     statements: ["statements"],
     statement: (id) => ["statement", id.toString()],
+    // Computed subresource (the distinct source labels): its own top-level
+    // key so item invalidations don't force refetching it and vice versa
+    statement_sources: ["statement-sources"],
 
     allocations: ["allocations"],
 

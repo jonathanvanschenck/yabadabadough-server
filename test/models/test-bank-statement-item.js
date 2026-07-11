@@ -290,6 +290,20 @@ describe("BankStatementItem Model", () => {
         });
     });
 
+    describe("sources()", () => {
+        it("returns the distinct sources, sorted", () => {
+            expect(BankStatementItem.sources(db)).to.deep.equal([]);
+
+            BankStatementItem.import_many(db, [
+                { source: "big-bank", key: "s-1", amount: -10.00, date: YDate.parse("2026-06-01") },
+                { source: "big-bank", key: "s-2", amount: -20.00, date: YDate.parse("2026-06-05") },
+                { source: "ally", key: "s-3", amount: 30.00, date: YDate.parse("2026-06-10") },
+            ]);
+
+            expect(BankStatementItem.sources(db)).to.deep.equal([ "ally", "big-bank" ]);
+        });
+    });
+
     describe("update()", () => {
         let item;
 

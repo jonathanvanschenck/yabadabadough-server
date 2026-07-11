@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useGetFundsQuery, useGetUsersQuery, useGetMonthFinalizationsQuery } from '../hooks/Queries.jsx';
+import { useGetFundsQuery, useGetUsersQuery, useGetMonthFinalizationsQuery, useGetStatementSourcesQuery } from '../hooks/Queries.jsx';
 import { LabeledSearchableSelector, LabeledSelector, LabeledTextInput } from './Inputs.jsx';
 import { FundTypeBadge, FinalizedBadge } from './Badges.jsx';
 import { FundColorDot } from './SpecialIcons.jsx';
@@ -131,6 +131,41 @@ export function LabeledFundColorPicker({
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * Bank statement source picker: suggests the sources already in use (a
+ * consistent name per bank account is what makes (source, key) dedupe work)
+ * while still allowing a brand-new label via the "Use new source" row, which
+ * adopts the typed search text. `value`/`onChange` speak the source STRING
+ * (or null).
+ */
+export function StatementSourceSelector({ value, label = "Source", onChange, ...rest }) {
+
+    const {
+        data: sources,
+        isPending: sourcesIsPending,
+        isError: sourcesIsError,
+        error: sourcesError
+    } = useGetStatementSourcesQuery();
+
+    return (
+        <LabeledSearchableSelector
+            label={label}
+            value={value ?? ''}
+            optionKeys={sources ?? []}
+            optionDisplayNames={sources ?? []}
+            onChange={(selectedValue) => onChange(selectedValue || null)}
+            onCreateNew={(searchTerm) => onChange(searchTerm.trim() || null)}
+            createNewLabel="Use new source"
+            isPending={sourcesIsPending}
+            isError={sourcesIsError}
+            error={sourcesError}
+            placeholder="Select a source ..."
+            searchPlaceholder="Search sources, or type a new one ..."
+            {...rest}
+        />
     );
 }
 

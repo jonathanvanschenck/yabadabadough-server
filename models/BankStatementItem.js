@@ -96,6 +96,13 @@ module.exports = class BankStatementItem extends Base {
             )
             ON CONFLICT (source, key) DO NOTHING
         `,
+        // Covered by idx_bank_statement_items_source: a pure index scan, so
+        // no sources table/denormalization is needed
+        sources: `
+            SELECT DISTINCT source
+            FROM bank_statement_items
+            ORDER BY source
+        `,
         update: `
             UPDATE bank_statement_items
             SET ignored = @ignored,
@@ -318,6 +325,16 @@ module.exports = class BankStatementItem extends Base {
         );
 
         return stmt.get(params).count;
+    }
+
+    /**
+     * Every distinct source across all imported items, sorted -- the
+     * suggestion list for import UIs (sources are free-form labels; a
+     * consistent name per bank account is what makes dedupe work).
+     */
+    static sources(db) {
+        const stmt = this.get_stmt(db, "sources");
+        return stmt.all().map(row => row.source);
     }
 
     // Bank facts must be well-formed before they hit the db

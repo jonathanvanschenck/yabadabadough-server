@@ -94,6 +94,20 @@ describe("Statements API", () => {
         });
     });
 
+    describe("GET /api/statements/statements/sources", () => {
+        it("requires authentication", async () => {
+            expect((await h.request("/api/statements/statements/sources")).status).to.equal(401);
+        });
+
+        it("lists the distinct sources, sorted, with X-Total-Count", async () => {
+            import_items();
+            const { status, body, headers } = await h.request("/api/statements/statements/sources", { token: h.tokens.reader });
+            expect(status).to.equal(200);
+            expect(headers.get("x-total-count")).to.equal("2");
+            expect(body).to.deep.equal([ "big-bank", "other-bank" ]);
+        });
+    });
+
     describe("GET /api/statements/statement/:statement_id", () => {
         it("returns an item, 404s on missing", async () => {
             const [ item ] = import_items();

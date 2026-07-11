@@ -387,6 +387,23 @@ export function useGetStatementsQuery(
     });
 }
 
+/**
+ * Every distinct source label across all imported statement items (sorted)
+ * -- the suggestion list for the import modal. Imports/deletes invalidate
+ * the key server-side.
+ */
+export function useGetStatementSourcesQuery(options={}) {
+    const fetch = useAuthedFetchJSON();
+
+    return useQuery({
+        queryKey: QK.statement_sources,
+        queryFn: async () => {
+            return await fetch("/api/statements/statements/sources", { method: 'GET' });
+        },
+        ...options
+    });
+}
+
 export function useGetStatementQuery(
     id,
     {

@@ -6,6 +6,7 @@ import { CardModal, ConfirmationModal } from './Modal.jsx';
 import { CardSection, CardAutoGrid, CardActionFooter, CardErrorSection } from './Card.jsx';
 import {
     FundSearchableSelector,
+    StatementSourceSelector,
     LabeledMonthInput
 } from './SpecialInputs.jsx';
 import {
@@ -1651,14 +1652,12 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                     so their ignored/reconciled state survives re-syncs. Use one
                     consistent source name per bank account.
                 </p>
-                <LabeledTextInput
-                    label="Source"
+                <StatementSourceSelector
                     value={source}
                     isRequired={true}
                     isFrozen={false}
-                    nullPlaceholder="e.g. checking"
+                    allowNull={true}
                     onChange={(value) => { setSource(value); setSubmitError(null); }}
-                    validityMessage={!source?.trim() ? 'Source is required.' : null}
                 />
             </CardSection>
 
