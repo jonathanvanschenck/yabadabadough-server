@@ -780,6 +780,8 @@ export function SearchableSelector({
     optionKeys = [],
     optionDisplayNames = [],
     onChange,
+    onCreateNew = null, // Optional (searchTerm) => void; enables a "create new" row
+    createNewLabel = "Create new",
     placeholder = "Select...",
     searchPlaceholder = "Search...",
     isFrozen = true,
@@ -791,6 +793,10 @@ export function SearchableSelector({
     error = null,
     maxHeightDropdown = '300px',
 }) {
+    // When a create action is offered it occupies index 0 of the dropdown's
+    // keyboard navigation, shifting the option indices down by one.
+    const hasCreate = typeof onCreateNew === 'function';
+    const optionOffset = hasCreate ? 1 : 0;
     const valueStr = value ? value.toString() : '';
     const [isOpen, setIsOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -958,12 +964,15 @@ export function SearchableSelector({
     useEffect(() => {
         if (isOpen) {
             if (filteredOptions.length === 1) {
+                setHighlightedIndex(optionOffset);
+            } else if (hasCreate && filteredOptions.length === 0 && searchTerm) {
+                // Nothing matched but the user typed something: pre-arm "create"
                 setHighlightedIndex(0);
             } else {
                 setHighlightedIndex(-1);
             }
         }
-    }, [filteredOptions.length, isOpen, searchTerm]);
+    }, [filteredOptions.length, isOpen, searchTerm, hasCreate, optionOffset]);
 
     // Get display text for current value
     const getDisplayText = () => {
@@ -1000,6 +1009,14 @@ export function SearchableSelector({
         setHighlightedIndex(-1);
     };
 
+    // Hand off to the create-new action, seeding it with the current search
+    const handleCreateNew = () => {
+        onCreateNew(searchTerm);
+        setIsOpen(false);
+        setSearchTerm('');
+        setHighlightedIndex(-1);
+    };
+
     // Handle search clear
     const handleClearSearch = () => {
         setSearchTerm('');
@@ -1023,8 +1040,8 @@ export function SearchableSelector({
         switch (e.key) {
             case 'ArrowDown':
                 e.preventDefault();
-                setHighlightedIndex(prev => 
-                    prev < filteredOptions.length - 1 ? prev + 1 : prev
+                setHighlightedIndex(prev =>
+                    prev < filteredOptions.length - 1 + optionOffset ? prev + 1 : prev
                 );
                 break;
             case 'ArrowUp':
@@ -1033,9 +1050,10 @@ export function SearchableSelector({
                 break;
             case 'Enter':
                 e.preventDefault();
-                if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
-                    const selectedKey = filteredOptions[highlightedIndex];
-                    handleOptionClick(selectedKey);
+                if (hasCreate && highlightedIndex === 0) {
+                    handleCreateNew();
+                } else if (highlightedIndex >= optionOffset && highlightedIndex < filteredOptions.length + optionOffset) {
+                    handleOptionClick(filteredOptions[highlightedIndex - optionOffset]);
                 }
                 break;
             case 'Tab':
@@ -1117,21 +1135,32 @@ export function SearchableSelector({
                     </div>
                     
                     <div className={styles.searchableSelectorOptions} ref={optionsContainerRef}>
+                        {hasCreate && (
+                            <div
+                                className={`${styles.searchableSelectorCreate} ${highlightedIndex === 0 ? styles.searchableSelectorOptionHighlighted : ''}`}
+                                onClick={handleCreateNew}
+                            >
+                                <FontAwesomeIcon icon="fa-solid fa-square-plus" />
+                                <span>{createNewLabel}{searchTerm ? `: “${searchTerm}”` : ''}</span>
+                            </div>
+                        )}
                         {isError ? (
                             <div className={styles.searchableSelectorError}>
                                 Error loading options: {error?.message || 'Unknown error'}
                             </div>
                         ) : filteredOptions.length === 0 ? (
-                            <div className={styles.searchableSelectorNoResults}>
-                                {searchTerm ? 'No matching options found' : 'No options available'}
-                            </div>
+                            !hasCreate && (
+                                <div className={styles.searchableSelectorNoResults}>
+                                    {searchTerm ? 'No matching options found' : 'No options available'}
+                                </div>
+                            )
                         ) : (
                             filteredOptions.map((key, filteredIndex) => {
                                 const originalIndex = optionKeys.indexOf(key);
                                 const displayName = optionDisplayNames[originalIndex] || key;
                                 const isSelected = key === valueStr;
-                                const isHighlighted = filteredIndex === highlightedIndex;
-                                
+                                const isHighlighted = filteredIndex + optionOffset === highlightedIndex;
+
                                 return (
                                     <div
                                         key={key}

@@ -12,12 +12,18 @@ import styles from './SpecialInputs.module.css';
  * what the server will actually accept (e.g. tracked={true} for allocation
  * targets, pool={true} for pool picks). `excludeIds` additionally drops
  * specific funds client-side (e.g. a fund itself when picking its parent).
+ *
+ * Passing `onCreateNew` (a `(searchTerm) => void` callback) surfaces a
+ * "Create new fund" row at the top of the dropdown; it's off unless the caller
+ * opts in (the caller owns the create-fund modal and the follow-up selection).
  */
 export function FundSearchableSelector({
     value,
     originalFund,
     label = "Fund",
     onChange,
+    onCreateNew,
+    createNewLabel = "Create new fund",
     tracked,
     monthly,
     pool,
@@ -62,6 +68,8 @@ export function FundSearchableSelector({
             optionKeys={fundKeys}
             optionDisplayNames={fundDisplayNames}
             onChange={_onChange}
+            onCreateNew={onCreateNew}
+            createNewLabel={createNewLabel}
             isPending={fundsIsPending}
             isError={fundsIsError}
             error={fundsError}

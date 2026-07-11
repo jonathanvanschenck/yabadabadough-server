@@ -85,16 +85,26 @@ function changedFields(initial, current, fields) {
 // Funds
 // ---------------------------------------------------------------------------
 
-export function CreateFundModal({ isOpen, setIsOpen, initialParentId = null, initialParent = null, parentFrozen = false }) {
+export function CreateFundModal({
+    isOpen,
+    setIsOpen,
+    initialParentId = null,
+    initialParent = null,
+    parentFrozen = false,
+    initialName = null,
+    initialTracked = true,
+    onCreated = null,
+    level,
+}) {
 
     const defaultData = () => ({
-        name: null,
+        name: initialName,
         parent_id: initialParentId,
-        tracked: true,
+        tracked: initialTracked,
         monthly: false,
         pool: false,
-        start_date: todayYDate(),
-        start_balance: 0,
+        start_date: initialTracked ? todayYDate() : null,
+        start_balance: initialTracked ? 0 : null,
         color: null
     });
 
@@ -104,7 +114,7 @@ export function CreateFundModal({ isOpen, setIsOpen, initialParentId = null, ini
     const reset = useCallback(() => {
         setData(defaultData());
         setSubmitError(null);
-    }, [initialParentId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [initialParentId, initialName, initialTracked]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (isOpen) reset();
@@ -150,20 +160,24 @@ export function CreateFundModal({ isOpen, setIsOpen, initialParentId = null, ini
         postMutate(
             { formData: { ...data } },
             {
-                onSuccess: () => setIsOpen(false),
+                onSuccess: (result) => {
+                    onCreated?.(result?.data);
+                    setIsOpen(false);
+                },
                 onError: (err) => setSubmitError({
                     message: err.message,
                     details: err.details?.message
                 })
             }
         );
-    }, [data, postMutate, setIsOpen]);
+    }, [data, postMutate, setIsOpen, onCreated]);
 
     return (
         <CardModal
             title="Create a new Fund"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            level={level}
         >
             <CardSection title="Details">
                 <CardAutoGrid>
@@ -498,7 +512,7 @@ function transactionLineToSpec(line) {
     };
 }
 
-function TransactionLineFields({ line, onChange, onRemove, removable = true }) {
+function TransactionLineFields({ line, onChange, onRemove, removable = true, onRequestCreateFund = null }) {
 
     const validity = transactionLineValidity(line);
 
@@ -522,6 +536,9 @@ function TransactionLineFields({ line, onChange, onRemove, removable = true }) {
                     label="Source Fund"
                     value={line.source_fund_id}
                     onChange={(value) => onChange('source_fund_id', value)}
+                    onCreateNew={onRequestCreateFund
+                        ? (name) => onRequestCreateFund('source_fund_id', name)
+                        : undefined}
                     isFrozen={false}
                     isRequired={true}
                     allowNull={false}
@@ -531,6 +548,9 @@ function TransactionLineFields({ line, onChange, onRemove, removable = true }) {
                     label="Target Fund"
                     value={line.target_fund_id}
                     onChange={(value) => onChange('target_fund_id', value)}
+                    onCreateNew={onRequestCreateFund
+                        ? (name) => onRequestCreateFund('target_fund_id', name)
+                        : undefined}
                     isFrozen={false}
                     isRequired={true}
                     allowNull={false}
@@ -572,7 +592,7 @@ function TransactionLineFields({ line, onChange, onRemove, removable = true }) {
     );
 }
 
-function TransactionLinesEditor({ lines, setLines, minLines = 1 }) {
+function TransactionLinesEditor({ lines, setLines, minLines = 1, onRequestCreateFund = null }) {
 
     const updateLine = (key, field, value) => {
         setLines(prev => prev.map(l => l._key === key ? { ...l, [field]: value } : l));
@@ -593,6 +613,9 @@ function TransactionLinesEditor({ lines, setLines, minLines = 1 }) {
                     onChange={(field, value) => updateLine(line._key, field, value)}
                     onRemove={() => removeLine(line._key)}
                     removable={lines.length > minLines}
+                    onRequestCreateFund={onRequestCreateFund
+                        ? (field, name) => onRequestCreateFund(line._key, field, name)
+                        : null}
                 />
             ))}
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -618,12 +641,29 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
     const [ data, setData ] = useState(defaultData);
     const [ lines, setLines ] = useState(() => [ newTransactionLine() ]);
     const [ submitError, setSubmitError ] = useState(null);
+    // A pending "create a new fund" request from one of the line selectors:
+    // { lineKey, field, name }. Non-null while the nested CreateFundModal is up.
+    const [ createFundReq, setCreateFundReq ] = useState(null);
 
     const reset = useCallback(() => {
         setData(defaultData());
         setLines([ newTransactionLine() ]);
         setSubmitError(null);
+        setCreateFundReq(null);
     }, [initialDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // A fund was just created from a line selector: drop its id into the line &
+    // field that asked for it (the nested modal closes itself on success).
+    const handleFundCreated = useCallback((fund) => {
+        if (fund && createFundReq) {
+            setLines(prev => prev.map(l =>
+                l._key === createFundReq.lineKey
+                    ? { ...l, [createFundReq.field]: fund.id }
+                    : l
+            ));
+        }
+        setCreateFundReq(null);
+    }, [createFundReq]);
 
     useEffect(() => {
         if (isOpen) reset();
@@ -704,7 +744,11 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
             </CardSection>
 
             <CardSection title="Transactions">
-                <TransactionLinesEditor lines={lines} setLines={setLines} />
+                <TransactionLinesEditor
+                    lines={lines}
+                    setLines={setLines}
+                    onRequestCreateFund={(lineKey, field, name) => setCreateFundReq({ lineKey, field, name })}
+                />
             </CardSection>
 
             <CardActionFooter>
@@ -724,6 +768,18 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
             { submitError &&
                 <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
             }
+
+            {/* Nested create-fund flow, stacked over this modal. New funds in
+              * this workflow are almost always plain untracked, non-pool funds,
+              * so default tracked=false; the typed search seeds the name. */}
+            <CreateFundModal
+                isOpen={createFundReq != null}
+                setIsOpen={(open) => { if (!open) setCreateFundReq(null); }}
+                initialName={createFundReq?.name || null}
+                initialTracked={false}
+                onCreated={handleFundCreated}
+                level={2}
+            />
         </CardModal>
     );
 }
