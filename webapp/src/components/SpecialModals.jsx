@@ -10,6 +10,7 @@ import {
 import {
     LabeledNumberInput,
     LabeledTextInput,
+    LabeledDateInput,
     LabeledBooleanInput,
     LabeledSingleFileInput,
     LabeledSelector,
@@ -205,9 +206,8 @@ export function CreateFundModal({ isOpen, setIsOpen, initialParentId = null, ini
                         inputTitle="Monthly funds reset into their pool at end of month"
                         validityMessage={dataValidity.monthly}
                     />
-                    <LabeledTextInput
+                    <LabeledDateInput
                         label="Start Date"
-                        type="date"
                         value={data.start_date}
                         isRequired={data.tracked}
                         isFrozen={!data.tracked}
@@ -363,9 +363,8 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                         isChanged={'monthly' in patch}
                         onChange={(value) => handleChange('monthly', value)}
                     />
-                    <LabeledTextInput
+                    <LabeledDateInput
                         label="Start Date"
-                        type="date"
                         value={data.start_date}
                         isFrozen={!data.tracked}
                         isChanged={'start_date' in patch}
@@ -675,9 +674,8 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
         >
             <CardSection title="Group Details">
                 <CardAutoGrid>
-                    <LabeledTextInput
+                    <LabeledDateInput
                         label="Date"
-                        type="date"
                         value={data.date}
                         isRequired={true}
                         isFrozen={false}
@@ -796,9 +794,8 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
                     </p>
                 }
                 <CardAutoGrid>
-                    <LabeledTextInput
+                    <LabeledDateInput
                         label="Date"
-                        type="date"
                         value={data.date}
                         isRequired={true}
                         isFrozen={isManaged}
@@ -1884,9 +1881,8 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
 
             <CardSection title="Group Details">
                 <CardAutoGrid>
-                    <LabeledTextInput
+                    <LabeledDateInput
                         label="Date"
-                        type="date"
                         value={data.date}
                         isFrozen={false}
                         nullPlaceholder="(default: latest item date)"

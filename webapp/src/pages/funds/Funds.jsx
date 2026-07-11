@@ -6,7 +6,7 @@ import { usePostFundMutation, useGetFundsQuery } from '../../hooks/Queries.jsx';
 import SearchableTable from '../../components/SearchableTable.jsx';
 import { CardModal } from '../../components/Modal.jsx';
 import { CardSection, CardAutoGrid, CardActionFooter, CardErrorSection } from '../../components/Card.jsx';
-import { LabeledTextInput, LabeledNumberInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
+import { LabeledTextInput, LabeledDateInput, LabeledNumberInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, LabeledFundColorPicker } from '../../components/SpecialInputs.jsx';
 import { SpinnerButton, IconButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
@@ -301,9 +301,8 @@ function CreateNew() {
                 { data.tracked &&
                     <CardSection title="Tracking">
                         <CardAutoGrid>
-                            <LabeledTextInput
+                            <LabeledDateInput
                                 label="Start date"
-                                type="date"
                                 isFrozen={false}
                                 isRequired={true}
                                 value={data.start_date}

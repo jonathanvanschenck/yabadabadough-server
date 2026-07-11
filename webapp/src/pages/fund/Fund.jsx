@@ -12,7 +12,7 @@ import {
     useDeleteFundMutation
 } from '../../hooks/Queries.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { LabeledNumberInput, LabeledTextInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
+import { LabeledNumberInput, LabeledTextInput, LabeledDateInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, LabeledFundColorPicker } from '../../components/SpecialInputs.jsx';
 import { Card, CardActionHeader, CardSection, CardAutoGrid, CollapsibleCardSection, CardErrorSection } from '../../components/Card.jsx';
 import { ConfirmationModal } from '../../components/Modal.jsx';
@@ -256,9 +256,8 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
             { (formData.tracked || fundDetail?.status?.tracked) &&
                 <CardSection title="Tracking">
                     <CardAutoGrid>
-                        <LabeledTextInput
+                        <LabeledDateInput
                             label="Start date"
-                            type="date"
                             value={formData.start_date}
                             onChange={(value) => handleInputChange('start_date', value || null)}
                             isFrozen={!isEditing}

@@ -1,8 +1,9 @@
 
 import styles from './Inputs.module.css';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import dayjs from 'dayjs';
 import Spinner from './Spinner.jsx';
 
 import { useStackedEscapeKey } from '../hooks/StackedEscapeKey.jsx';
@@ -208,6 +209,306 @@ export function LabeledTextInput({
         <div className={ styles.labelContainer }>
             <InputLabel label={label} isRequired={isRequired} />
             <TextInput isRequired={isRequired} {...rest} />
+        </div>
+    );
+}
+
+const DP_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+// The 42 (6 weeks x 7 days) dayjs dates filling the month grid, starting on the
+// Sunday of the week containing the 1st -- so leading/trailing days spill into
+// the neighbouring months (rendered dimmed).
+function dpCalendarDays(viewMonth) {
+    const firstOfMonth = viewMonth.startOf('month');
+    const gridStart = firstOfMonth.subtract(firstOfMonth.day(), 'day');
+    return Array.from({ length: 42 }, (_, i) => gridStart.add(i, 'day'));
+}
+
+/**
+ *  A themed date picker replacing the browser-default `<input type="date">`.
+ *
+ *  Same value contract as the other inputs: `value` is a 'YYYY-MM-DD' string
+ *  (or null) and `onChange` is called with the same. The calendar pops open in
+ *  a body-level portal, flipping above the trigger when there isn't room below,
+ *  supports full keyboard navigation (arrows/Home/End/PageUp/PageDown, Enter or
+ *  Space to pick), returns focus to the trigger on close, and dismisses via the
+ *  shared Escape stack or an outside click. `min`/`max` (both 'YYYY-MM-DD',
+ *  optional) disable out-of-range days.
+ */
+export function DateInput({
+    value,
+    onChange,
+    nullPlaceholder = "(none)",
+    isFrozen = true,
+    isRequired = false,
+    isChanged = false,
+    allowNull = false,
+    inputTitle = "",
+    validityMessage,
+    min,
+    max,
+    displayFormat = "MMM D, YYYY",
+}) {
+    const selected = value ? dayjs(value) : null;
+    const hasValue = !!(selected && selected.isValid());
+
+    const [isOpen, setIsOpen] = useState(false);
+    const [viewMonth, setViewMonth] = useState(() => (hasValue ? selected : dayjs()).startOf('month'));
+    const [focusedDate, setFocusedDate] = useState(() => (hasValue ? selected : dayjs()));
+    const [position, setPosition] = useState({ top: 0, left: 0, flipped: false });
+
+    const triggerRef = useRef(null);
+    const popupRef = useRef(null);
+    const focusedDayRef = useRef(null);
+
+    const minDate = min ? dayjs(min) : null;
+    const maxDate = max ? dayjs(max) : null;
+    const isDisabledDate = (d) =>
+        (minDate && d.isBefore(minDate, 'day')) || (maxDate && d.isAfter(maxDate, 'day'));
+
+    // Position the portal-ed popup: below the trigger, or flipped above it when
+    // there isn't enough room below (and there's more room above).
+    const updatePosition = useCallback(() => {
+        if (!triggerRef.current) return;
+        const rect = triggerRef.current.getBoundingClientRect();
+        const popupHeight = popupRef.current?.offsetHeight || 340;
+        const popupWidth = popupRef.current?.offsetWidth || rect.width;
+        const spaceBelow = window.innerHeight - rect.bottom - 8;
+        const spaceAbove = rect.top - 8;
+        const flipped = spaceBelow < popupHeight && spaceAbove > spaceBelow;
+        setPosition({
+            top: flipped
+                ? rect.top + window.scrollY - popupHeight - 4
+                : rect.bottom + window.scrollY + 4,
+            left: Math.max(8, Math.min(
+                rect.left + window.scrollX,
+                window.innerWidth - popupWidth - 8,
+            )),
+            flipped,
+        });
+    }, []);
+
+    // Measure + reposition (layout effect so it lands before paint), and keep it
+    // pinned to the trigger while scrolling/resizing.
+    useLayoutEffect(() => {
+        if (!isOpen) return;
+        updatePosition();
+        const handler = () => updatePosition();
+        window.addEventListener('scroll', handler, true);
+        window.addEventListener('resize', handler);
+        return () => {
+            window.removeEventListener('scroll', handler, true);
+            window.removeEventListener('resize', handler);
+        };
+    }, [isOpen, updatePosition]);
+
+    // Roving focus: whenever the focused day changes (or on open), move DOM focus
+    // to its cell so arrow-key navigation stays on the calendar.
+    useEffect(() => {
+        if (isOpen) focusedDayRef.current?.focus();
+    }, [isOpen, focusedDate]);
+
+    const open = () => {
+        if (isFrozen) return;
+        const base = hasValue ? selected : dayjs();
+        setViewMonth(base.startOf('month'));
+        setFocusedDate(base);
+        setIsOpen(true);
+    };
+
+    const close = useCallback((returnFocus = true) => {
+        setIsOpen(false);
+        if (returnFocus) triggerRef.current?.focus();
+    }, []);
+
+    useStackedEscapeKey(useCallback(() => close(), [close]), isOpen);
+
+    // Dismiss on outside click (without stealing focus back to the trigger).
+    useEffect(() => {
+        if (!isOpen) return;
+        const handler = (e) => {
+            if (triggerRef.current?.contains(e.target)) return;
+            if (popupRef.current?.contains(e.target)) return;
+            setIsOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [isOpen]);
+
+    const selectDate = (d) => {
+        if (isDisabledDate(d)) return;
+        onChange(d.format('YYYY-MM-DD'));
+        close();
+    };
+
+    const handleGridKeyDown = (e) => {
+        let next = null;
+        switch (e.key) {
+            case 'ArrowLeft': next = focusedDate.subtract(1, 'day'); break;
+            case 'ArrowRight': next = focusedDate.add(1, 'day'); break;
+            case 'ArrowUp': next = focusedDate.subtract(1, 'week'); break;
+            case 'ArrowDown': next = focusedDate.add(1, 'week'); break;
+            case 'Home': next = focusedDate.startOf('week'); break;
+            case 'End': next = focusedDate.endOf('week'); break;
+            case 'PageUp': next = focusedDate.subtract(e.shiftKey ? 12 : 1, 'month'); break;
+            case 'PageDown': next = focusedDate.add(e.shiftKey ? 12 : 1, 'month'); break;
+            case 'Enter':
+            case ' ':
+                e.preventDefault();
+                selectDate(focusedDate);
+                return;
+            default:
+                return;
+        }
+        e.preventDefault();
+        setFocusedDate(next);
+        if (!next.isSame(viewMonth, 'month')) setViewMonth(next.startOf('month'));
+    };
+
+    if (isFrozen) {
+        return (
+            <div className={styles.textInputFrozen}>
+                { hasValue
+                    ? selected.format(displayFormat)
+                    : <span className={styles.placeholder}>{nullPlaceholder}</span> }
+            </div>
+        );
+    }
+
+    const triggerClass = [
+        styles.dpTrigger,
+        isChanged && styles.changed,
+        isRequired && styles.required,
+        validityMessage && styles.invalid,
+    ].filter(Boolean).join(' ');
+
+    const renderPopup = () => (
+        <div
+            ref={popupRef}
+            className={`${styles.dpPopup} ${position.flipped ? styles.dpFlipped : ''}`}
+            style={{ top: position.top, left: position.left }}
+            role="dialog"
+            aria-label="Choose date"
+        >
+            <div className={styles.dpHeader}>
+                <button
+                    type="button"
+                    className={styles.dpNav}
+                    onClick={() => setViewMonth(m => m.subtract(1, 'month'))}
+                    aria-label="Previous month"
+                    title="Previous month"
+                >
+                    <FontAwesomeIcon icon="fa-solid fa-chevron-left" />
+                </button>
+                <span className={styles.dpTitle}>{viewMonth.format('MMMM YYYY')}</span>
+                <button
+                    type="button"
+                    className={styles.dpNav}
+                    onClick={() => setViewMonth(m => m.add(1, 'month'))}
+                    aria-label="Next month"
+                    title="Next month"
+                >
+                    <FontAwesomeIcon icon="fa-solid fa-chevron-right" />
+                </button>
+            </div>
+            <div className={styles.dpWeekdays}>
+                { DP_WEEKDAYS.map(w => <span key={w} className={styles.dpWeekday}>{w}</span>) }
+            </div>
+            <div className={styles.dpGrid} role="grid" onKeyDown={handleGridKeyDown}>
+                { dpCalendarDays(viewMonth).map(d => {
+                    const outside = !d.isSame(viewMonth, 'month');
+                    const isSel = hasValue && d.isSame(selected, 'day');
+                    const isToday = d.isSame(dayjs(), 'day');
+                    const isFocus = d.isSame(focusedDate, 'day');
+                    const dayClass = [
+                        styles.dpDay,
+                        outside && styles.dpDayOutside,
+                        isToday && styles.dpDayToday,
+                        isSel && styles.dpDaySelected,
+                    ].filter(Boolean).join(' ');
+                    return (
+                        <button
+                            key={d.format('YYYY-MM-DD')}
+                            ref={isFocus ? focusedDayRef : null}
+                            type="button"
+                            className={dayClass}
+                            tabIndex={isFocus ? 0 : -1}
+                            disabled={isDisabledDate(d)}
+                            aria-selected={isSel}
+                            aria-current={isToday ? 'date' : undefined}
+                            onClick={() => selectDate(d)}
+                        >
+                            {d.date()}
+                        </button>
+                    );
+                }) }
+            </div>
+            <div className={styles.dpFooter}>
+                <button
+                    type="button"
+                    className={styles.dpFooterBtn}
+                    onClick={() => selectDate(dayjs())}
+                >
+                    Today
+                </button>
+                { allowNull && value !== null && (
+                    <button
+                        type="button"
+                        className={styles.dpFooterBtn}
+                        onClick={() => { onChange(null); close(); }}
+                    >
+                        Clear
+                    </button>
+                ) }
+            </div>
+        </div>
+    );
+
+    return (
+        <div className={styles.dpContainer}>
+            <div className={styles.dpTriggerWrapper}>
+                <div
+                    ref={triggerRef}
+                    className={triggerClass}
+                    onClick={() => (isOpen ? close(false) : open())}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            isOpen ? close() : open();
+                        } else if (e.key === 'ArrowDown' && !isOpen) {
+                            e.preventDefault();
+                            open();
+                        }
+                    }}
+                    tabIndex={0}
+                    role="combobox"
+                    aria-haspopup="dialog"
+                    aria-expanded={isOpen}
+                    title={validityMessage || inputTitle}
+                >
+                    <span className={`${styles.dpValue} ${hasValue ? '' : styles.placeholder}`}>
+                        { hasValue ? selected.format(displayFormat) : nullPlaceholder }
+                    </span>
+                    <FontAwesomeIcon icon="fa-solid fa-calendar-days" className={styles.dpIcon} />
+                </div>
+                { allowNull && (
+                    <ClearButton value={value} onClear={() => value !== null && onChange(null)} />
+                ) }
+            </div>
+            { isOpen && createPortal(renderPopup(), document.body) }
+        </div>
+    );
+}
+
+export function LabeledDateInput({
+    label,
+    isRequired = false,
+    ...rest
+}) {
+    return (
+        <div className={styles.labelContainer}>
+            <InputLabel label={label} isRequired={isRequired} />
+            <DateInput isRequired={isRequired} {...rest} />
         </div>
     );
 }

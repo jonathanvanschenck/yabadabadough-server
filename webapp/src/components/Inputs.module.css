@@ -483,3 +483,206 @@
     gap: 0.5rem;
     color: var(--font-muted);
 }
+
+
+/* DateInput styles */
+.dpContainer {
+    position: relative;
+    width: 100%;
+}
+
+.dpTriggerWrapper {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    width: 100%;
+}
+
+/* Mirrors the SearchableSelector trigger so date fields sit alongside the
+ * other inputs unchanged. */
+.dpTrigger {
+    background: transparent;
+    color: var(--font-primary-color);
+    box-shadow: 0 0 3px 1px var(--font-primary-color);
+    border: 1px solid var(--font-muted);
+    border-radius: 10px;
+    padding: 0.5rem;
+    font-size: 1rem;
+    min-height: 2rem;
+    flex: 1;
+    box-sizing: border-box;
+    transition: box-shadow 0.2s, background-color 0.2s;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.dpTrigger:hover,
+.dpTrigger:focus {
+    outline: none;
+    box-shadow: 0 0 3px 2px var(--font-primary-color);
+}
+
+.dpTrigger.invalid {
+    box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
+    border-color: var(--bg-danger-color) !important;
+}
+
+.dpValue {
+    flex: 1;
+    text-align: left;
+}
+
+.dpIcon {
+    flex-shrink: 0;
+    color: var(--font-muted);
+}
+
+.dpPopup {
+    position: absolute;
+    z-index: 9999;
+    width: 16rem;
+    box-sizing: border-box;
+    background: var(--bg-secondary-color);
+    border: 1px solid var(--font-muted);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px var(--shadow-color);
+    padding: 0.5rem;
+}
+
+.dpHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.dpTitle {
+    font-weight: 600;
+    color: var(--font-primary-color);
+}
+
+.dpNav {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--font-secondary-color);
+    transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.dpNav:hover {
+    background: var(--bg-hover-color);
+    color: var(--font-primary-color);
+}
+
+.dpNav:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.dpWeekdays,
+.dpGrid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+}
+
+.dpWeekdays {
+    margin-bottom: 0.25rem;
+}
+
+.dpWeekday {
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--font-muted);
+    padding: 0.25rem 0;
+    text-transform: uppercase;
+}
+
+.dpGrid {
+    gap: 2px;
+}
+
+.dpDay {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--font-primary-color);
+    cursor: pointer;
+    transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.dpDay:hover:not(:disabled) {
+    background: var(--bg-hover-color);
+}
+
+.dpDay:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.dpDayOutside {
+    color: var(--font-muted);
+}
+
+.dpDayToday {
+    border-color: var(--accent-color);
+}
+
+.dpDaySelected,
+.dpDaySelected:hover {
+    background: var(--accent-color);
+    color: var(--accent-ink-color);
+    font-weight: 600;
+}
+
+.dpDay:disabled {
+    color: var(--font-faint);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.dpFooter {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--font-muted);
+}
+
+.dpFooterBtn {
+    background: transparent;
+    border: 1px solid var(--font-muted);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--font-secondary-color);
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.dpFooterBtn:hover {
+    background: var(--bg-hover-color);
+    color: var(--font-primary-color);
+}
+
+.dpFooterBtn:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
