@@ -101,3 +101,108 @@
     word-break: break-all;
     user-select: all;
 }
+
+/* CSV import preview */
+.importPreviewScroll {
+    max-height: 16rem;
+    overflow: auto;
+    border: 1px solid;
+    border-radius: 0.5rem;
+}
+
+.importPreviewTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.importPreviewTable th,
+.importPreviewTable td {
+    text-align: left;
+    padding: 0.35rem 0.75rem;
+    white-space: nowrap;
+}
+
+.importPreviewTable thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary-color);
+    color: var(--font-secondary-color);
+    font-weight: normal;
+}
+
+.importPreviewBadRow {
+    color: var(--u-danger-text);
+    background: var(--u-danger-bg);
+}
+
+.importPreviewNote {
+    max-width: 25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Link-to-existing-group candidate list */
+.linkCandidatesList {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    max-height: 20rem;
+    overflow-y: auto;
+}
+
+.linkCandidatesEmpty {
+    display: flex;
+    justify-content: center;
+    padding: 2rem 1rem;
+    color: var(--font-secondary-color);
+    text-align: center;
+}
+
+.linkCandidate {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid;
+    border-radius: 0.5rem;
+    cursor: pointer;
+}
+
+.linkCandidate:hover {
+    background: var(--bg-hover-color);
+}
+
+.linkCandidateSelected,
+.linkCandidateSelected:hover {
+    border-color: var(--accent-color);
+    background: var(--bg-hover-color);
+}
+
+.linkCandidateDescription {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.linkCandidateAmountMatch {
+    color: var(--u-success-text);
+    font-weight: bold;
+}
+
+.linkCandidateMeta {
+    color: var(--font-secondary-color);
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+/* Group-view modal transaction rows */
+.groupTransactionFunds {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}

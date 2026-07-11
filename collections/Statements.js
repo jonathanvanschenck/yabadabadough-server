@@ -17,6 +17,7 @@ const {
     only_string,
     only_non_empty_string,
     only_boolean,
+    only_id,
     only_number,
     only_ydate,
     nullable
@@ -359,6 +360,82 @@ module.exports = class StatementsCollection extends Collection {
                 { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
                 { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
                 { code: 409, description: "Conflict (ignoring a reconciled item)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
+            ]
+        },
+
+        class PostStatementLink extends Controller {
+            static path = "/statement/:statement_id/link";
+
+            static method = "POST";
+
+            static editor = true;
+
+            static openapi_Summary = "Link Bank Statement Item to an existing Transaction Group (Reconcile)";
+
+            static openapi_Description = "Reconcile a PENDING item against an EXISTING transaction group -- for when the transactions already exist (a pre-entered expense, or the second side of a transfer whose first side already created the group). No transactions are created and amounts are never checked against the group's. Allocation and eom_cleanup groups are refused (409), as are ignored or already-reconciled items (409). Unlike creating a group from statements, the group MAY live in a finalized month (linking moves no money, and statement imports routinely lag finalization) -- but note a mislink there can only be undone by deleting the ITEM without the group and re-importing. Unlinking is otherwise only possible by deleting the group.";
+
+            static openapi_Parameters = [
+                this.StatementIDParam
+            ]
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    group_id: { type: 'integer', minimum: 1, description: "The existing transaction group to reconcile the item to" }
+                },
+                required: [ 'group_id' ]
+            }
+
+            async parse_request(req) {
+                const { group_id } = parse_body_fields(req.body, [
+                    [ "group_id", only_id, "positive integer", { required: true } ],
+                ]);
+
+                const group = TransactionGroup.for_id(this.db, group_id);
+                if ( !group ) throw new HTTPCodeError(400, "Bad parameter: group_id (no such transaction group)");
+
+                return { item: this.get_statement(req), group };
+            }
+
+            async respond({ item, group }) {
+                // API-layer 409 guards, with the model refusals as backstop
+                if ( group.allocation ) {
+                    throw new HTTPCodeError(409, "Allocation groups cannot reconcile bank statement items");
+                }
+                if ( group.eom_cleanup ) {
+                    throw new HTTPCodeError(409, "EOM cleanup groups cannot reconcile bank statement items");
+                }
+
+                let new_group;
+                try {
+                    new_group = TransactionGroup.link_statements(this.db, group, [ item.id ]);
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                // No money moved: fund balances are untouched, but the group
+                // hydrations (statements arrays) and the item's state changed
+                const invalidation_actions = [
+                    invalidate(QK.statements),
+                    invalidate(QK.statement(item.id)),
+                    invalidate(QK.transaction_groups),
+                    invalidate(QK.transaction_group(group.id)),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { statement_id: item.id, group_id: group.id });
+
+                return {
+                    data: new_group.to_api(),
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/TransactionGroupSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter (including an unknown group_id)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict (item ignored or already reconciled; allocation/eom_cleanup group)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
             ]
         },
 

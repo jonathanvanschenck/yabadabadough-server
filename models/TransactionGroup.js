@@ -506,6 +506,46 @@ module.exports = class TransactionGroup extends Base {
         return transaction(db, { statement_ids, date, description, note, transactions });
     }
 
+    static _link_statements(db, group, statement_ids) {
+        // The internal Allocation/MonthFinalization groups are pure
+        // bookkeeping -- no bank event ever corresponds to them
+        if ( group.allocation ) {
+            throw new ConflictError("Allocation groups cannot reconcile bank statement items");
+        }
+        if ( group.eom_cleanup ) {
+            throw new ConflictError("EOM cleanup groups cannot reconcile bank statement items");
+        }
+
+        BankStatementItem._assert_linkable(db, statement_ids);
+        BankStatementItem._link(db, statement_ids, group.id);
+
+        // Refresh so the hydrated `statements` array is populated
+        return this.for_id(db, group.id);
+    }
+
+    /**
+     * Reconcile one or more PENDING bank statement items against an EXISTING
+     * transaction group -- the "the transaction already exists" arm of
+     * reconciliation (a pre-entered expense, or the second side of a transfer
+     * whose first side already created the group via
+     * `create_from_statements`). No transactions are created or modified, and
+     * (as everywhere) item amounts are never checked against the group's.
+     *
+     * Unlike `create_from_statements`, the group may live in a FINALIZED
+     * month: linking moves no money, and statement imports routinely lag
+     * finalization. The asymmetry to know about: a mislink into a finalized
+     * month cannot be undone by deleting the group (finalized-month guard) --
+     * only by deleting the ITEM without the group and re-importing it.
+     */
+    static link_statements(db, group, statement_ids = []) {
+        if ( statement_ids.length < 1 ) throw new Error("Must provide at least one statement id");
+        if ( new Set(statement_ids).size !== statement_ids.length ) throw new Error("Duplicate statement ids");
+
+        const transaction = this.build_transaction(
+            db, "link_statements", this._link_statements.bind(this));
+        return transaction(db, group, statement_ids);
+    }
+
     static create_single(db, {
         date,
         description,

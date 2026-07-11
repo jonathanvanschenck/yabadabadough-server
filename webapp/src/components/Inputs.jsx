@@ -514,6 +514,70 @@ export function LabeledDateInput({
 }
 
 /**
+ *  An inclusive [since, until] date-range picker: two themed DateInputs that
+ *  cross-constrain each other (since's calendar caps at until and vice
+ *  versa), so an inverted range is unrepresentable. Either side may be null
+ *  (open-ended) -- both sides are always `allowNull`.
+ *
+ *  Value contract: `value` is `{ since, until }` ('YYYY-MM-DD' strings or
+ *  null) and `onChange` receives the whole `{ since, until }` object.
+ */
+export function DateRangeInput({
+    value = { since: null, until: null },
+    onChange,
+    isFrozen = true,
+    isChanged = false,
+    sincePlaceholder = "(any start)",
+    untilPlaceholder = "(any end)",
+    displayFormat = "MMM D, YYYY",
+}) {
+    const { since = null, until = null } = value ?? {};
+
+    return (
+        <div className={styles.dateRangeContainer}>
+            <DateInput
+                value={since}
+                onChange={(v) => onChange({ since: v, until })}
+                isFrozen={isFrozen}
+                isChanged={isChanged}
+                allowNull={true}
+                nullPlaceholder={sincePlaceholder}
+                max={until ?? undefined}
+                displayFormat={displayFormat}
+                inputTitle="Items dated on or after this date"
+            />
+            <span className={styles.dateRangeSeparator} aria-hidden="true">
+                <FontAwesomeIcon icon="fa-solid fa-arrow-right" size="xs" />
+            </span>
+            <DateInput
+                value={until}
+                onChange={(v) => onChange({ since, until: v })}
+                isFrozen={isFrozen}
+                isChanged={isChanged}
+                allowNull={true}
+                nullPlaceholder={untilPlaceholder}
+                min={since ?? undefined}
+                displayFormat={displayFormat}
+                inputTitle="Items dated on or before this date"
+            />
+        </div>
+    );
+}
+
+export function LabeledDateRangeInput({
+    label,
+    isRequired = false,
+    ...rest
+}) {
+    return (
+        <div className={styles.labelContainer}>
+            <InputLabel label={label} isRequired={isRequired} />
+            <DateRangeInput {...rest} />
+        </div>
+    );
+}
+
+/**
  *  A selector
  * 
  *  NOTE: when you provide `value`, it can be any javascript type, however, internally,

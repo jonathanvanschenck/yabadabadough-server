@@ -28,11 +28,13 @@ export function formatDollars(value) {
 }
 
 /**
- * Derive a bank statement item's state (see the API docs: every item is in
+ * A bank statement item's state: prefer the API's canonical `state` field,
+ * deriving it from the raw flags only as a fallback (every item is in
  * exactly one of these).
  */
 export function statementStateOf(statement) {
     if ( !statement ) return "unknown";
+    if ( statement.state ) return statement.state;
     if ( statement.group_id != null ) return "reconciled";
     if ( statement.ignored ) return "ignored";
     return "pending";

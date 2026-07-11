@@ -5,6 +5,7 @@ const YDate = require("../../lib/YDate.js");
 const Fund = require("../../models/Fund.js");
 const TransactionGroup = require("../../models/TransactionGroup.js");
 const BankStatementItem = require("../../models/BankStatementItem.js");
+const Allocation = require("../../models/Allocation.js");
 
 describe("Statements API", () => {
     let h;
@@ -81,12 +82,15 @@ describe("Statements API", () => {
 
             let res = await h.request("/api/statements/statements?state=pending", { token: h.tokens.reader });
             expect(res.body.map((s) => s.key)).to.deep.equal([ "k-3" ]);
+            expect(res.body[0].state).to.equal("pending");
 
             res = await h.request("/api/statements/statements?state=ignored", { token: h.tokens.reader });
             expect(res.body.map((s) => s.key)).to.deep.equal([ "k-2" ]);
+            expect(res.body[0].state).to.equal("ignored");
 
             res = await h.request("/api/statements/statements?state=reconciled", { token: h.tokens.reader });
             expect(res.body.map((s) => s.key)).to.deep.equal([ "k-1" ]);
+            expect(res.body[0].state).to.equal("reconciled");
         });
     });
 
@@ -174,6 +178,78 @@ describe("Statements API", () => {
             const { status, body } = await h.request(`/api/statements/statement/${item.id}`, { method: "PATCH", token: h.tokens.editor, body: { note: "kept", amount: 999 } });
             expect(status).to.equal(200);
             expect(body.data.amount).to.equal(-10);
+        });
+    });
+
+    describe("POST /api/statements/statement/:statement_id/link", () => {
+        function make_plain_group() {
+            return TransactionGroup.create_single(h.db, {
+                date: YDate.parse("2026-06-02"),
+                description: "Pre-entered",
+                source_fund_id: checking.id,
+                target_fund_id: groceries.id,
+                amount: 10.00,
+            });
+        }
+
+        it("requires the editor role", async () => {
+            const [ item ] = import_items();
+            const group = make_plain_group();
+            expect((await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.reader, body: { group_id: group.id } })).status).to.equal(403);
+        });
+
+        it("links a pending item to an existing group without touching its transactions", async () => {
+            const [ item ] = import_items();
+            const group = make_plain_group();
+
+            const { status, body } = await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: group.id } });
+            expect(status).to.equal(200);
+            expect(body.data.id).to.equal(group.id);
+            expect(body.data.transactions).to.have.lengthOf(1);
+            expect(body.data.statements.map((s) => s.id)).to.deep.equal([ item.id ]);
+            expect(body.data.statements[0].state).to.equal("reconciled");
+            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["statement", item.id.toString()] });
+            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["transaction-group", group.id.toString()] });
+
+            expect(BankStatementItem.for_id(h.db, item.id).group_id).to.equal(group.id);
+        });
+
+        it("404s on a missing item, 400s on an unknown group_id", async () => {
+            const group = make_plain_group();
+            expect((await h.request(`/api/statements/statement/9999/link`, { method: "POST", token: h.tokens.editor, body: { group_id: group.id } })).status).to.equal(404);
+
+            const [ item ] = import_items();
+            let res = await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: 9999 } });
+            expect(res.status).to.equal(400);
+            expect(res.body.message).to.include("group_id");
+
+            res = await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.editor, body: {} });
+            expect(res.status).to.equal(400);
+        });
+
+        it("409s on ignored and already-reconciled items", async () => {
+            const [ first, second ] = import_items();
+            const group = make_plain_group();
+
+            BankStatementItem.for_id(h.db, first.id).update(h.db, { ignored: true });
+            expect((await h.request(`/api/statements/statement/${first.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: group.id } })).status).to.equal(409);
+
+            reconcile(second);
+            expect((await h.request(`/api/statements/statement/${second.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: group.id } })).status).to.equal(409);
+        });
+
+        it("409s on allocation groups", async () => {
+            const [ item ] = import_items();
+            Allocation.set(h.db, {
+                month: YDate.parse("2026-06-01"),
+                fund_id: groceries.id,
+                amount: 200.00,
+            });
+            const alloc_group = TransactionGroup.from_db(h.db, { allocation: true })[0];
+
+            const { status, body } = await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: alloc_group.id } });
+            expect(status).to.equal(409);
+            expect(body.message).to.include("Allocation");
         });
     });
 

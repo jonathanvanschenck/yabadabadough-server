@@ -1292,6 +1292,119 @@ describe("TransactionGroup Model", () => {
             });
         });
 
+        describe("link_statements()", () => {
+            let plain_group;
+
+            beforeEach(() => {
+                plain_group = TransactionGroup.create_single(db, {
+                    date: YDate.parse("2026-06-02"),
+                    description: "Pre-entered Walmart run",
+                    source_fund_id: groceries_fund.id,
+                    target_fund_id: savings_fund.id,
+                    amount: 52.30,
+                });
+            });
+
+            it("should link a pending item to an existing group", () => {
+                const group = TransactionGroup.link_statements(db, plain_group, [walmart_item.id]);
+
+                expect(group.id).to.equal(plain_group.id);
+                // The group itself is untouched: no transactions created
+                expect(group.transactions).to.have.lengthOf(1);
+                expect(group.description).to.equal("Pre-entered Walmart run");
+
+                // Hydrated statements + item linked
+                expect(group.statements).to.have.lengthOf(1);
+                expect(group.statements[0].id).to.equal(walmart_item.id);
+
+                const fresh = BankStatementItem.for_id(db, walmart_item.id);
+                expect(fresh.group_id).to.equal(group.id);
+                expect(fresh.state).to.equal("reconciled");
+            });
+
+            it("should link the second side of a transfer to an already-reconciling group", () => {
+                const first_side_group = TransactionGroup.create_from_statements(db, {
+                    statement_ids: [walmart_item.id],
+                    transactions: [{
+                        source_fund_id: checking_fund.id,
+                        target_fund_id: savings_fund.id,
+                        amount: 52.30,
+                        description: "Transfer",
+                    }]
+                });
+                const peer = BankStatementItem.create(db, {
+                    source: "ally", key: "dep-042", amount: 52.30, date: YDate.parse("2026-06-04"),
+                });
+
+                const group = TransactionGroup.link_statements(db, first_side_group, [peer.id]);
+                expect(group.statements.map(s => s.id)).to.deep.equal([walmart_item.id, peer.id]);
+            });
+
+            it("should reject missing, ignored, and already-reconciled items", () => {
+                expect(() => TransactionGroup.link_statements(db, plain_group, [99999]))
+                    .to.throw(ForeignKeyError);
+
+                const ignored = BankStatementItem.create(db, {
+                    source: "boa", key: "txn-ign", amount: -1.00, date: YDate.parse("2026-06-02"),
+                }).update(db, { ignored: true });
+                expect(() => TransactionGroup.link_statements(db, plain_group, [ignored.id]))
+                    .to.throw(ConflictError);
+
+                TransactionGroup.link_statements(db, plain_group, [walmart_item.id]);
+                expect(() => TransactionGroup.link_statements(db, plain_group, [walmart_item.id]))
+                    .to.throw(ConflictError);
+            });
+
+            it("should roll back the whole batch when one item fails", () => {
+                const good = BankStatementItem.create(db, {
+                    source: "boa", key: "txn-good", amount: -5.00, date: YDate.parse("2026-06-02"),
+                });
+                const ignored = BankStatementItem.create(db, {
+                    source: "boa", key: "txn-bad", amount: -1.00, date: YDate.parse("2026-06-02"),
+                }).update(db, { ignored: true });
+
+                expect(() => TransactionGroup.link_statements(db, plain_group, [good.id, ignored.id]))
+                    .to.throw(ConflictError);
+                expect(BankStatementItem.for_id(db, good.id).group_id).to.be.null;
+            });
+
+            it("should refuse allocation and eom_cleanup groups", () => {
+                Allocation.set(db, {
+                    month: YDate.parse("2026-06-01"),
+                    fund_id: groceries_fund.id,
+                    amount: 200.00,
+                });
+                const alloc_group = TransactionGroup.from_db(db, { allocation: true })[0];
+                expect(() => TransactionGroup.link_statements(db, alloc_group, [walmart_item.id]))
+                    .to.throw(ConflictError, /Allocation groups/);
+
+                MonthFinalization.create(db, {
+                    month: YDate.parse("2026-06-15"),
+                    recursive: true,
+                });
+                const cleanup_group = TransactionGroup.from_db(db, { eom_cleanup: true })[0];
+                expect(() => TransactionGroup.link_statements(db, cleanup_group, [walmart_item.id]))
+                    .to.throw(ConflictError, /EOM cleanup groups/);
+            });
+
+            it("should allow linking to a group in a finalized month (by design)", () => {
+                MonthFinalization.create(db, {
+                    month: YDate.parse("2026-06-15"),
+                    recursive: true,
+                });
+
+                const group = TransactionGroup.link_statements(db, plain_group, [walmart_item.id]);
+                expect(group.statements.map(s => s.id)).to.deep.equal([walmart_item.id]);
+            });
+
+            it("should reject empty and duplicate statement ids", () => {
+                expect(() => TransactionGroup.link_statements(db, plain_group, []))
+                    .to.throw(/statement id/);
+                expect(() => TransactionGroup.link_statements(db, plain_group, [walmart_item.id, walmart_item.id]))
+                    .to.throw(/Duplicate/);
+            });
+        });
+
         describe("create()", () => {
             it("should no longer accept statement linkage (reserved for create_from_statements)", () => {
                 const group = TransactionGroup.create(db, {

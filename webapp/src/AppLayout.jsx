@@ -101,6 +101,7 @@ function App() {
                     <NavLink to="/">Home</NavLink>
                     <NavLink to="/funds">Funds</NavLink>
                     <NavLink to="/transactions">Transactions</NavLink>
+                    <NavLink to="/statements">Statements</NavLink>
                 </div>
                 <EscalationModeToggler />
                 <div style={{ "text-align": "center" }}>

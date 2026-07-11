@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import dayjs from 'dayjs';
 
 import { CardModal, ConfirmationModal } from './Modal.jsx';
 import { CardSection, CardAutoGrid, CardActionFooter, CardErrorSection } from './Card.jsx';
@@ -17,7 +18,13 @@ import {
     LabeledTextArea
 } from './Inputs.jsx';
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
+import { FundLabel } from './Badges.jsx';
+import Spinner from './Spinner.jsx';
+import { formatDollars } from './domain.js';
 import {
+    useGetFundsQuery,
+    useGetTransactionGroupsQuery,
+    useGetTransactionGroupQuery,
     usePostFundMutation,
     usePatchFundMutation,
     useDeleteFundMutation,
@@ -29,6 +36,7 @@ import {
     usePatchTransactionMutation,
     usePostImportStatementsMutation,
     usePatchStatementMutation,
+    usePostStatementLinkMutation,
     useDeleteStatementMutation,
     usePutAllocationMutation,
     useDeleteAllocationMutation,
@@ -1555,8 +1563,11 @@ function statementImportRowProblem(row) {
     if ( !row.key ) return 'missing key';
     if ( !/^\d{4}-\d{2}-\d{2}$/.test(row.date ?? '') ) return 'unparseable date';
     if ( row.amount == null ) return 'unparseable amount';
+    if ( row.amount === 0 ) return 'zero amount';
     return null;
 }
+
+const IMPORT_PREVIEW_ROWS = 8;
 
 export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = null }) {
 
@@ -1623,11 +1634,22 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
             setIsOpen={setIsOpen}
             cardClassName={styles.wideModalCard}
         >
-            <CardSection title="Source">
+            <CardSection title="What to upload">
+                <p className={styles.modalHint}>
+                    A lightly preprocessed CSV export from your bank, one row per
+                    statement line, with columns for: a <strong>unique key</strong> (any
+                    stable per-line id from the bank — a reference/FITID number),
+                    the <strong>date</strong> (YYYY-MM-DD or M/D/YYYY), the
+                    <strong> signed amount</strong> (negative = money leaving the
+                    account; never zero), and optionally a <strong>note</strong> (the
+                    bank's description). Header names don't need to match — you map
+                    each column below after picking the file.
+                </p>
                 <p className={styles.modalHint}>
                     Imports are idempotent per (source, key): re-importing an
-                    overlapping export never duplicates or updates existing items.
-                    Use one consistent source name per bank account.
+                    overlapping export never duplicates or updates existing items,
+                    so their ignored/reconciled state survives re-syncs. Use one
+                    consistent source name per bank account.
                 </p>
                 <LabeledTextInput
                     label="Source"
@@ -1652,14 +1674,46 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
 
             { processedData &&
                 <CardSection title="Preview">
-                    <p>
-                        {processedData.length} row{processedData.length === 1 ? '' : 's'} ready to import.
+                    <p className={styles.modalHint}>
+                        {processedData.length} row{processedData.length === 1 ? '' : 's'} ready to import
+                        as <strong>{source?.trim() || '(source missing)'}</strong>.
+                        Check that the columns landed where you expect before importing.
                     </p>
                     { badRows.length > 0 &&
                         <p className={styles.modalWarning}>
                             {badRows.length} row{badRows.length === 1 ? '' : 's'} cannot be imported
                             (first problem: line {badRows[0].index + 2}, {badRows[0].problem}).
                             Check the column mappings.
+                        </p>
+                    }
+                    <div className={styles.importPreviewScroll}>
+                        <table className={styles.importPreviewTable}>
+                            <thead>
+                                <tr>
+                                    <th>Key</th>
+                                    <th>Date</th>
+                                    <th>Amount</th>
+                                    <th>Note</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                { processedData.slice(0, IMPORT_PREVIEW_ROWS).map((row, i) => {
+                                    const problem = statementImportRowProblem(row);
+                                    return (
+                                        <tr key={i} className={problem ? styles.importPreviewBadRow : ''} title={problem ?? undefined}>
+                                            <td>{row.key || '—'}</td>
+                                            <td className="tabular-nums">{row.date || '—'}</td>
+                                            <td className="tabular-nums">{row.amount != null ? formatMoney(row.amount) : '—'}</td>
+                                            <td className={styles.importPreviewNote}>{row.note ?? ''}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    { processedData.length > IMPORT_PREVIEW_ROWS &&
+                        <p className={styles.modalHint}>
+                            … and {processedData.length - IMPORT_PREVIEW_ROWS} more row{processedData.length - IMPORT_PREVIEW_ROWS === 1 ? '' : 's'}.
                         </p>
                     }
                 </CardSection>
@@ -1670,7 +1724,7 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                     <p className={styles.importSuccess}>
                         <FontAwesomeIcon icon="fa-solid fa-circle-check" style={{ marginRight: '0.5rem' }} />
                         Imported {importResult.created?.length ?? 0} new item{(importResult.created?.length ?? 0) === 1 ? '' : 's'};
-                        skipped {importResult.skipped ?? 0} already-known item{(importResult.skipped ?? 0) === 1 ? '' : 's'}.
+                        skipped {importResult.skipped?.length ?? 0} already-known item{(importResult.skipped?.length ?? 0) === 1 ? '' : 's'} (left untouched).
                     </p>
                 </CardSection>
             }
@@ -1830,12 +1884,13 @@ export function DeleteStatementModal({ isOpen, setIsOpen, statement, closePopout
             title="Delete Bank Statement Item"
             content={<>
                 <div style={{ width: '30rem', textAlign: 'center' }}>
-                    Are you sure you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)})?
+                    Are you <strong>absolutely sure</strong> you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)})?
                 </div>
                 <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
-                    Deletion is for undoing bad imports, NOT for hiding items (use
-                    ignored for that): the item reappears as pending on the next
-                    re-sync, and reconciling it again double-counts.
+                    Deletion is for undoing bad imports, NOT for hiding items: the
+                    item reappears as pending on the next re-sync, and reconciling
+                    it again double-counts. If you just want it out of the pending
+                    list, close this and mark it <strong>ignored</strong> instead.
                 </div>
                 { isReconciled &&
                     <div style={{ width: '30rem', marginTop: '1rem' }}>
@@ -1864,15 +1919,26 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
         note: null
     });
 
+    // The default is ONE transaction of the item's amount (split it up by
+    // editing the amount and adding lines); the description seeds from the
+    // items' notes, mirroring the server's group-description default
+    const defaultLines = () => [ newTransactionLine({
+        amount: statements.length ? Math.abs(statements[0].amount) : null,
+        description: statements.map(s => s.note ?? s.key).filter(Boolean).join(" / ") || null,
+    }) ];
+
     const [ data, setData ] = useState(defaultData);
-    const [ lines, setLines ] = useState(() => [ newTransactionLine() ]);
+    const [ lines, setLines ] = useState(defaultLines);
     const [ submitError, setSubmitError ] = useState(null);
 
+    // Key the reset on the item ids, not the array identity: callers may
+    // rebuild the statements array every render
+    const statementsKey = statements.map(s => s.id).join(",");
     const reset = useCallback(() => {
         setData(defaultData());
-        setLines([ newTransactionLine() ]);
+        setLines(defaultLines());
         setSubmitError(null);
-    }, []);
+    }, [statementsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (isOpen) reset();
@@ -1985,6 +2051,301 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
 
             { submitError &&
                 <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
+            }
+        </CardModal>
+    );
+}
+
+
+/** Amount comparisons over float dollars: within half a cent counts as equal. */
+function amountsMatch(a, b) {
+    return a != null && b != null && Math.abs(a - b) < 0.005;
+}
+
+const LINK_WINDOW_OPTIONS = [ 7, 14, 30, 90 ];
+const LINK_MAX_CANDIDATES = 30;
+
+/**
+ * Reconcile a PENDING statement item against an EXISTING transaction group
+ * (the transaction was pre-entered, or this is the second side of a transfer
+ * whose first side already created the group). Suggests nearby groups,
+ * ranked amount-matches first, then by date proximity.
+ */
+export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
+
+    const [ windowDays, setWindowDays ] = useState(14);
+    const [ searchTerm, setSearchTerm ] = useState(null);
+    const [ selectedGroupId, setSelectedGroupId ] = useState(null);
+    const [ submitError, setSubmitError ] = useState(null);
+
+    const reset = useCallback(() => {
+        setWindowDays(14);
+        setSearchTerm(null);
+        setSelectedGroupId(null);
+        setSubmitError(null);
+    }, []);
+
+    useEffect(() => {
+        if (isOpen) reset();
+    }, [isOpen, reset]);
+
+    const itemDate = statement?.date ?? null;
+    const groupsQ = useGetTransactionGroupsQuery(
+        {
+            since: itemDate ? dayjs(itemDate).subtract(windowDays, 'day').format('YYYY-MM-DD') : undefined,
+            until: itemDate ? dayjs(itemDate).add(windowDays, 'day').format('YYYY-MM-DD') : undefined,
+            // Allocation/eom_cleanup groups are pure bookkeeping: the server
+            // refuses linking them, so don't offer them
+            allocation: false,
+            eomCleanup: false,
+        },
+        { enabled: isOpen && itemDate != null }
+    );
+
+    const absAmount = Math.abs(statement?.amount ?? 0);
+    const candidates = useMemo(() => {
+        const term = (searchTerm ?? '').trim().toLowerCase();
+        return (groupsQ.data ?? [])
+            .filter(g => !term || g.description?.toLowerCase().includes(term))
+            .map(g => {
+                const total = g.transactions.reduce((sum, t) => sum + t.amount, 0);
+                const amountMatch = amountsMatch(total, absAmount)
+                    || g.transactions.some(t => amountsMatch(t.amount, absAmount));
+                return {
+                    group: g,
+                    total,
+                    amountMatch,
+                    dateDistance: Math.abs(dayjs(g.date).diff(dayjs(itemDate), 'day')),
+                };
+            })
+            .toSorted((a, b) =>
+                a.amountMatch !== b.amountMatch ? (a.amountMatch ? -1 : 1)
+                : a.dateDistance !== b.dateDistance ? a.dateDistance - b.dateDistance
+                : b.group.id - a.group.id
+            );
+    }, [groupsQ.data, searchTerm, absAmount, itemDate]);
+    const shownCandidates = candidates.slice(0, LINK_MAX_CANDIDATES);
+
+    const {
+        mutate: linkMutate,
+        isPending: linkIsPending
+    } = usePostStatementLinkMutation();
+
+    const handleSubmit = useCallback(() => {
+        linkMutate(
+            { formData: { id: statement.id, group_id: selectedGroupId } },
+            {
+                onSuccess: () => setIsOpen(false),
+                onError: (err) => setSubmitError({
+                    message: err.message,
+                    details: err.details?.message
+                })
+            }
+        );
+    }, [statement, selectedGroupId, linkMutate, setIsOpen]);
+
+    return (
+        <CardModal
+            title="Link to an existing Transaction Group"
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            cardClassName={styles.wideModalCard}
+        >
+            <CardSection title="Item to reconcile">
+                { statement &&
+                    <div className={styles.statementItem}>
+                        <strong>{statement.source}</strong>
+                        <span className="tabular-nums">{statement.date}</span>
+                        <span className="tabular-nums">{formatMoney(statement.amount)}</span>
+                        <span className={styles.statementItemNote}>{statement.note ?? statement.key}</span>
+                    </div>
+                }
+                <p className={styles.modalHint} style={{ marginTop: '0.75rem' }}>
+                    Use this when the transactions already exist — a pre-entered
+                    expense, or the other side of a transfer between two imported
+                    accounts. No transactions are created, and amounts are never
+                    checked against the group's.
+                </p>
+            </CardSection>
+
+            <CardSection title="Pick a group">
+                <CardAutoGrid>
+                    <LabeledSelector
+                        label="Search window"
+                        value={windowDays}
+                        optionKeys={LINK_WINDOW_OPTIONS.map(d => d.toString())}
+                        optionDisplayNames={LINK_WINDOW_OPTIONS.map(d => `± ${d} days around ${itemDate ?? 'the item'}`)}
+                        onChange={(value) => setWindowDays(parseInt(value, 10))}
+                        isFrozen={false}
+                        allowNull={false}
+                    />
+                    <LabeledTextInput
+                        label="Filter by description"
+                        value={searchTerm}
+                        isFrozen={false}
+                        nullPlaceholder="Search descriptions ..."
+                        onChange={(value) => setSearchTerm(value)}
+                        allowNull={true}
+                    />
+                </CardAutoGrid>
+
+                { groupsQ.isPending
+                    ? <div className={styles.linkCandidatesEmpty}><Spinner size="1.5rem" /></div>
+                    : groupsQ.isError
+                    ? <CardErrorSection errorMessage={groupsQ.error.message} errorMessageDetails={groupsQ.error.details?.message} />
+                    : shownCandidates.length === 0
+                    ? <div className={styles.linkCandidatesEmpty}>
+                        No matching transaction groups within ± {windowDays} days —
+                        widen the window, or create a new group instead.
+                    </div>
+                    : <div className={styles.linkCandidatesList} role="listbox" aria-label="Candidate transaction groups">
+                        { shownCandidates.map(({ group, total, amountMatch }) => (
+                            <div
+                                key={group.id}
+                                role="option"
+                                aria-selected={group.id === selectedGroupId}
+                                tabIndex={0}
+                                className={`${styles.linkCandidate} ${group.id === selectedGroupId ? styles.linkCandidateSelected : ''}`}
+                                onClick={() => { setSelectedGroupId(group.id); setSubmitError(null); }}
+                                onKeyDown={(e) => {
+                                    if ( e.key === 'Enter' || e.key === ' ' ) {
+                                        e.preventDefault();
+                                        setSelectedGroupId(group.id);
+                                        setSubmitError(null);
+                                    }
+                                }}
+                            >
+                                <span className="tabular-nums">{group.date}</span>
+                                <span className={styles.linkCandidateDescription} title={group.description}>{group.description}</span>
+                                <span className={`tabular-nums ${amountMatch ? styles.linkCandidateAmountMatch : ''}`}
+                                    title={amountMatch ? "Matches the item's amount" : undefined}
+                                >
+                                    {formatMoney(total)}
+                                </span>
+                                <span className={styles.linkCandidateMeta}>
+                                    {group.transactions.length} txn{group.transactions.length === 1 ? '' : 's'}
+                                    { group.statements.length > 0 && ` · reconciles ${group.statements.length}` }
+                                </span>
+                            </div>
+                        ))}
+                        { candidates.length > shownCandidates.length &&
+                            <p className={styles.modalHint} style={{ margin: '0.25rem 0 0 0' }}>
+                                … and {candidates.length - shownCandidates.length} more — narrow the search to see them.
+                            </p>
+                        }
+                    </div>
+                }
+            </CardSection>
+
+            <CardActionFooter>
+                <SpinnerButton
+                    isPending={linkIsPending}
+                    disabled={selectedGroupId == null || submitError != null}
+                    text="Link"
+                    ariaLabel="Link statement item to the selected group"
+                    onClick={handleSubmit}
+                />
+            </CardActionFooter>
+
+            { submitError &&
+                <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
+            }
+        </CardModal>
+    );
+}
+
+/**
+ * View a transaction group (typically the one reconciling a statement item):
+ * details, transaction lines, and any reconciled items. Offers the
+ * unlink-by-deleting-the-group escape hatch (the ONLY way to unlink — the
+ * released items go back to pending; re-pointing a reconciled item at a
+ * different group is deliberately unsupported by the API).
+ */
+export function ViewTransactionGroupModal({ isOpen, setIsOpen, groupId }) {
+
+    const roles = useAuthRoles();
+    const [ isDeleteOpen, setIsDeleteOpen ] = useState(false);
+
+    const groupQ = useGetTransactionGroupQuery(groupId, { enabled: isOpen && groupId != null });
+    const fundsQ = useGetFundsQuery({}, { enabled: isOpen });
+    const fundById = useMemo(
+        () => new Map((fundsQ.data ?? []).map(f => [ f.id, f ])),
+        [fundsQ.data]
+    );
+
+    const group = groupQ.data;
+
+    return (
+        <CardModal
+            title={`Transaction Group: ${group?.description ?? ''}`}
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            cardClassName={styles.wideModalCard}
+        >
+            { groupQ.isPending
+                ? <CardSection><div className={styles.linkCandidatesEmpty}><Spinner size="1.5rem" /></div></CardSection>
+                : groupQ.isError
+                ? <CardErrorSection errorMessage={groupQ.error.message} errorMessageDetails={groupQ.error.details?.message} />
+                : group && <>
+                    <CardSection title="Details">
+                        <CardAutoGrid>
+                            <LabeledTextInput label="Date" value={group.date} isFrozen={true} />
+                            <LabeledTextInput label="Description" value={group.description} isFrozen={true} />
+                            <LabeledTextArea label="Note" value={group.note} isFrozen={true} nullPlaceholder="(none)" />
+                        </CardAutoGrid>
+                    </CardSection>
+
+                    <CardSection title="Transactions">
+                        <div className={styles.statementItemsList}>
+                            { group.transactions.map(t => (
+                                <div key={t.id} className={styles.statementItem}>
+                                    <span className={styles.groupTransactionFunds}>
+                                        <FundLabel fund={fundById.get(t.source_fund_id)} />
+                                        <FontAwesomeIcon icon="fa-solid fa-arrow-right" size="xs" />
+                                        <FundLabel fund={fundById.get(t.target_fund_id)} />
+                                    </span>
+                                    <span className="tabular-nums">{formatDollars(t.amount)}</span>
+                                    <span className={styles.statementItemNote} title={t.description}>{t.description}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </CardSection>
+
+                    <CardSection title="Reconciled bank statement items">
+                        { group.statements.length === 0
+                            ? <p className={styles.modalHint}>None — this group is not reconciled to any imported items.</p>
+                            : <div className={styles.statementItemsList}>
+                                { group.statements.map(s => (
+                                    <div key={s.id} className={styles.statementItem}>
+                                        <strong>{s.source}</strong>
+                                        <span className="tabular-nums">{s.date}</span>
+                                        <span className="tabular-nums">{formatMoney(s.amount)}</span>
+                                        <span className={styles.statementItemNote}>{s.note ?? s.key}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        }
+                    </CardSection>
+
+                    <CardActionFooter>
+                        <IconButton
+                            text="Unlink (delete group)"
+                            icon="fa-trash"
+                            ariaLabel="Delete this transaction group, releasing its statement items back to pending"
+                            title="Deleting the group is the only way to unlink: its transactions are destroyed and every reconciled item returns to pending"
+                            disabled={!roles.editor}
+                            buttonClassName={styles.dangerConfirmButton}
+                            onClick={() => setIsDeleteOpen(true)}
+                        />
+                    </CardActionFooter>
+
+                    <DeleteTransactionGroupModal
+                        isOpen={isDeleteOpen}
+                        setIsOpen={setIsDeleteOpen}
+                        group={group}
+                        closePopoutCallback={() => setIsOpen(false)}
+                    />
+                </>
             }
         </CardModal>
     );

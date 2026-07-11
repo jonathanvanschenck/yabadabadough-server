@@ -144,13 +144,24 @@ module.exports = class BankStatementItem extends Base {
         this.created_at = created_at;
     }
 
+    /**
+     * The canonical derived state (never stored -- always derivable from
+     * ignored/group_id, which a db CHECK keeps mutually exclusive).
+     */
+    get state() {
+        if ( this.group_id != null ) return "reconciled";
+        if ( this.ignored ) return "ignored";
+        return "pending";
+    }
+
     static openapi_BankStatementItemSchema = {
-        description: "One imported bank statement line. Always in exactly one of three derivable states: pending (ignored=false, group_id=null), ignored (ignored=true), or reconciled (group_id set). Bank facts (source, key, amount, date) are immutable.",
+        description: "One imported bank statement line. Always in exactly one of three derivable states: pending (ignored=false, group_id=null), ignored (ignored=true), or reconciled (group_id set) -- canonicalized as `state`. Bank facts (source, key, amount, date) are immutable.",
         type: 'object',
         properties: {
             id: { type: 'integer', minimum: 1 },
             source: { type: 'string', description: "Which bank this line was imported from" },
             key: { type: 'string', description: "Bank-scoped dedupe key; (source, key) is unique" },
+            state: { type: 'string', enum: [ 'pending', 'ignored', 'reconciled' ], description: "The canonical derived state (from ignored/group_id, which are mutually exclusive)" },
             ignored: { type: 'boolean' },
             group_id: { type: 'integer', minimum: 1, nullable: true, description: "The transaction group this item is reconciled to; null while pending/ignored" },
             amount: { type: 'number', description: "Signed currency as a float dollar amount: negative = money leaving the bank account" },
@@ -158,7 +169,7 @@ module.exports = class BankStatementItem extends Base {
             note: { type: 'string', nullable: true },
             created_at: { type: 'string', format: 'date-time' }
         },
-        required: [ 'id', 'source', 'key', 'ignored', 'group_id', 'amount', 'date', 'note', 'created_at' ]
+        required: [ 'id', 'source', 'key', 'state', 'ignored', 'group_id', 'amount', 'date', 'note', 'created_at' ]
     };
 
     to_api() {
@@ -166,6 +177,7 @@ module.exports = class BankStatementItem extends Base {
             id: this.id,
             source: this.source,
             key: this.key,
+            state: this.state,
             ignored: this.ignored,
             group_id: this.group_id,
             amount: this.amount,

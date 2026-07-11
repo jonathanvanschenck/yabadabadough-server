@@ -376,12 +376,32 @@ describe("BankStatementItem Model", () => {
             expect(api_data.id).to.equal(item.id);
             expect(api_data.source).to.equal("boa");
             expect(api_data.key).to.equal("txn-001");
+            expect(api_data.state).to.equal("pending");
             expect(api_data.ignored).to.be.false;
             expect(api_data.group_id).to.be.null;
             expect(api_data.amount).to.equal(-52.30);
             expect(api_data.date).to.equal("2026-06-02");
             expect(api_data.note).to.equal("WALMART #1234");
             expect(api_data.created_at).to.be.a("string");
+        });
+
+        it("should canonicalize the derived state", () => {
+            const item = BankStatementItem.create(db, {
+                source: "boa",
+                key: "txn-state",
+                amount: -1.00,
+                date: YDate.parse("2026-06-02"),
+            });
+            expect(item.state).to.equal("pending");
+
+            const ignored = item.update(db, { ignored: true });
+            expect(ignored.state).to.equal("ignored");
+            expect(ignored.to_api().state).to.equal("ignored");
+
+            // Reconciled wins when group_id is set (ignored+linked is
+            // impossible anyway -- db CHECK)
+            const fabricated = new BankStatementItem({ ignored: false, group_id: 7 });
+            expect(fabricated.state).to.equal("reconciled");
         });
     });
 

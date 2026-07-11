@@ -1116,6 +1116,34 @@ export function usePatchStatementMutation() {
 }
 
 /**
+ * Link (reconcile) a PENDING Bank Statement Item to an EXISTING Transaction
+ * Group -- for when the transactions already exist (a pre-entered expense,
+ * or the second side of a transfer whose first side already created the
+ * group). No transactions are created; amounts are never checked. The group
+ * may live in a finalized month (linking moves no money). Unlinking is only
+ * possible by deleting the group (or deleting the item without the group).
+ *
+ * @typedef {object} PostStatementLinkMutationData
+ * @property {object} formData - The payload (snake_case, matching the API)
+ * @property {number} formData.id - The bank statement item ID
+ * @property {number} formData.group_id - The existing transaction group to link to
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult}
+ */
+export function usePostStatementLinkMutation() {
+    const fetch = useAuthedFetchJSON();
+    const roles = useAuthRoles();
+    return useInvalidatingMutation(async ({ formData }) => {
+        if ( !roles.editor ) throwLocal403EditorError();
+        const { id, ...body } = formData;
+        return await fetch("/api/statements/statement/" + encodeURIComponent(id) + "/link", {
+            method: 'POST',
+            body
+        });
+    });
+}
+
+/**
  * Delete a Bank Statement Item -- and, with with_group (the DEFAULT), the
  * transaction group reconciling it. WARNING (by design, see the API docs):
  * deletion is for undoing bad imports, not hiding items; the item reappears

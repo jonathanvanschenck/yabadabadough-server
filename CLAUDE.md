@@ -163,7 +163,8 @@ all follow the same shape:
 - **API-layer rules on top of the models**: USER transaction/allocation amounts are strictly
   positive (zero is reserved for internal eom_cleanup rows); allocation and eom_cleanup groups
   cannot be deleted OR edited through the transaction-groups API (API-layer 409 guards, with
-  the model refusals as backstop); bank-statement deletion defaults to
+  the model refusals as backstop, same split for the statement-link route's
+  allocation/eom_cleanup refusals); bank-statement deletion defaults to
   `with_group=true` and its OpenAPI description carries the re-import double-count hazard;
   password changes revoke sessions by default (`revoke_sessions: true` — API-layer policy per
   the model docs — but API keys deliberately survive password changes; `POST /user/:id/password`
@@ -294,8 +295,11 @@ TransactionGroup, `finalized_months_since` in Fund).
 - Container for one or more related transactions
 - May be linked FROM `bank_statement_items` (via that table's `group_id`); groups hydrate a
   `statements` array on read (correlated subquery, like `transactions`), and `from_db` filters
-  on `has_statements`. Linking happens only in `TransactionGroup.create_from_statements`;
-  public `create` has no statement surface
+  on `has_statements`. Linking happens only in `TransactionGroup.create_from_statements`
+  (new group + link) and `TransactionGroup.link_statements` (link pending items to an
+  EXISTING group — no transactions created; allowed even into finalized months, since linking
+  moves no money and statement imports lag finalization); public `create` has no statement
+  surface
 - Has `date` field (YYYY-MM-DD)
 - Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying; the
   `allocation`/`eom_cleanup` flags are reserved for the internal Allocation / MonthFinalization
@@ -346,12 +350,20 @@ TransactionGroup, `finalized_months_since` in Fund).
   ambiguous)
 - Always in exactly one of three derivable states: *pending* (`ignored = 0`, `group_id` NULL),
   *ignored* (`ignored = 1`), or *reconciled* (`group_id` set). Ignored+linked is impossible: a
-  single-row db CHECK backstops the model-layer checks
+  single-row db CHECK backstops the model-layer checks. The state is canonicalized (never
+  stored) as the `state` getter and a `state` field on `to_api()`; the list endpoint's `state`
+  query param is the matching filter shorthand
 - `group_id` lives on THIS table (not on `transaction_groups`) so transfer-type events — two
   items from two different bank imports (e.g. checking → savings) — can share one group. Linked
   via `TransactionGroup.create_from_statements(db, { statement_ids, ... })`: one id normally,
   both sides' ids for a transfer; group `date` defaults to the LATEST item date, `description`
-  to the items' notes (fallback: keys)
+  to the items' notes (fallback: keys). A pending item can also be linked to an EXISTING group
+  via `TransactionGroup.link_statements(db, group, statement_ids)` /
+  `POST /api/statements/statement/:id/link` (pre-entered transactions; the second side of a
+  transfer): no transactions are created, allocation/eom_cleanup groups are refused, and —
+  unlike group creation — a finalized-month group IS allowed (nothing moves; note a mislink
+  there can only be undone by deleting the ITEM without the group and re-importing).
+  Re-pointing a reconciled item at a different group is deliberately unsupported
 - Unlinking only via group deletion (FK `ON DELETE SET NULL` releases items to pending) or
   `TransactionGroup.delete_statement_item(db, item, { with_group = true })`. Deletion lives on
   TransactionGroup (the with_group arm deletes a group in the same sqlite transaction, and the
