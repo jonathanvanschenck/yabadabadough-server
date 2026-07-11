@@ -290,6 +290,77 @@ describe("BankStatementItem Model", () => {
         });
     });
 
+    describe("from_db() search + ordering", () => {
+        let alpha, bravo, charlie;
+
+        beforeEach(() => {
+            alpha = BankStatementItem.create(db, {
+                source: "boa", key: "COFFEE-1", amount: -5.00,
+                date: YDate.parse("2026-06-02"), note: "Morning coffee",
+            });
+            bravo = BankStatementItem.create(db, {
+                source: "chase", key: "GROCERY-1", amount: -120.00,
+                date: YDate.parse("2026-06-03"), note: "Weekly groceries",
+            });
+            charlie = BankStatementItem.create(db, {
+                source: "boa", key: "PAYCHECK-1", amount: 2500.00,
+                date: YDate.parse("2026-06-05"), note: null,
+            });
+        });
+
+        it("search matches a source substring (case-insensitive)", () => {
+            const rows = BankStatementItem.from_db(db, { search: "CHA" });
+            expect(rows.map(r => r.id)).to.deep.equal([bravo.id]);
+        });
+
+        it("search matches a key or note substring", () => {
+            expect(BankStatementItem.from_db(db, { search: "coffee" }).map(r => r.id))
+                .to.deep.equal([alpha.id]); // matches note AND key
+            expect(BankStatementItem.from_db(db, { search: "paycheck" }).map(r => r.id))
+                .to.deep.equal([charlie.id]); // matches key, null note is fine
+        });
+
+        it("search treats the user's wildcards literally", () => {
+            // A literal % must not act as a LIKE wildcard (else it matches all)
+            expect(BankStatementItem.from_db(db, { search: "%" })).to.have.lengthOf(0);
+        });
+
+        it("count() honours the search filter", () => {
+            expect(BankStatementItem.count(db, { search: "boa" })).to.equal(2); // alpha + charlie
+            expect(BankStatementItem.count(db, { search: "grocer" })).to.equal(1); // bravo's note
+        });
+
+        it("orders by amount", () => {
+            const rows = BankStatementItem.from_db(db, {
+                order_by: "amount", order_direction: "ASC",
+            });
+            expect(rows.map(r => r.id)).to.deep.equal([bravo.id, alpha.id, charlie.id]);
+        });
+
+        it("orders by derived state (ignored < pending < reconciled)", () => {
+            bravo.update(db, { ignored: true });
+            reconcile(charlie);
+            // alpha stays pending
+            const rows = BankStatementItem.from_db(db, {
+                order_by: "state", order_direction: "ASC",
+            });
+            expect(rows.map(r => r.id)).to.deep.equal([bravo.id, alpha.id, charlie.id]);
+        });
+
+        it("breaks ties on id so pagination is stable across equal keys", () => {
+            // All three share a source; ordering by source alone is ambiguous,
+            // so the id tiebreak must give a deterministic, page-safe order.
+            const same = [
+                BankStatementItem.create(db, { source: "wells", key: "a", amount: -1, date: YDate.parse("2026-06-01") }),
+                BankStatementItem.create(db, { source: "wells", key: "b", amount: -1, date: YDate.parse("2026-06-01") }),
+                BankStatementItem.create(db, { source: "wells", key: "c", amount: -1, date: YDate.parse("2026-06-01") }),
+            ];
+            const page1 = BankStatementItem.from_db(db, { source: "wells", order_by: "source", order_direction: "ASC", limit: 2, offset: 0 });
+            const page2 = BankStatementItem.from_db(db, { source: "wells", order_by: "source", order_direction: "ASC", limit: 2, offset: 2 });
+            expect([ ...page1, ...page2 ].map(r => r.id)).to.deep.equal(same.map(r => r.id));
+        });
+    });
+
     describe("sources()", () => {
         it("returns the distinct sources, sorted", () => {
             expect(BankStatementItem.sources(db)).to.deep.equal([]);

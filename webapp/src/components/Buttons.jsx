@@ -39,6 +39,7 @@ export function IconButton({
     buttonClassName,
     textClassName,
     variant,
+    tone,
     icon,
     onClick,
     disabled = false,
@@ -51,7 +52,7 @@ export function IconButton({
 }) {
     return (
         <button
-            className={`${styles.iconButton} ${variant === 'primary' ? styles.primaryButton : ''} ${buttonClassName || ''}`}
+            className={`${styles.iconButton} ${variant === 'primary' ? styles.primaryButton : ''} ${tone ? styles[`tone_${tone}`] : ''} ${buttonClassName || ''}`}
             onClick={onClick}
             disabled={disabled || isPending || isError}
             title={isError ? errorMessage : title}
@@ -65,24 +66,27 @@ export function IconButton({
     );
 }
 
-export function TightIconButton({ icon, size="md", styles:_styles, ...props }) {
-    const styles = { ..._styles };
+export function TightIconButton({ icon, size="md", style:_style, ...props }) {
+    // NB: keep the inline-style object under its own name -- calling it `styles`
+    // shadows the CSS-module import, which silently dropped `.tightIconButton`
+    // (padding reset) and left these as non-square rectangles.
+    const style = { ..._style };
     switch (size) {
         case "xs":
-            styles.borderRadius = "0.125rem";
-            styles.padding = "0.1rem";
-            styles.width = "1.25rem";
-            styles.height = "1.25rem";
+            style.borderRadius = "0.125rem";
+            style.padding = "0.1rem";
+            style.width = "1.25rem";
+            style.height = "1.25rem";
             break;
         case "md":
-            styles.width = "2rem";
-            styles.height = "2rem";
+            style.width = "2rem";
+            style.height = "2rem";
             break;
     }
     return (
         <IconButton
             icon={icon}
-            style={styles}
+            style={style}
             size={size}
             buttonClassName={`${styles.tightIconButton} ${props.buttonClassName || ''}`}
             {...props}

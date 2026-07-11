@@ -112,6 +112,14 @@ export function useAuthedFetchJSON() {
     return context.authedFetchJSON;
 };
 
+export function useAuthedFetchPageJSON() {
+    const context = useContext(AuthedFetchContext);
+    if (!context?.authedFetchPageJSON) {
+        throw new Error('useAuthedFetchPageJSON must be used within AuthedFetchContextProvider');
+    }
+    return context.authedFetchPageJSON;
+};
+
 export function useAuthedFetchAllJSON() {
     const context = useContext(AuthedFetchContext);
     if (!context?.authedFetchAllJSON) {
@@ -449,6 +457,37 @@ export function AuthContextProvider({ children }) {
         authedFetch,
     ])
 
+    // Single page of a paginated list endpoint: one request, returning both the
+    // rows and the total match count from X-Total-Count (so the caller can size
+    // its pager). Unlike authedFetchAllJSON, it does NOT loop -- the caller owns
+    // limit/offset and asks for exactly one window.
+    const authedFetchPageJSON = useCallback(async (_url, options={})=>{
+        const response = await authedFetch(parseURL(_url).toString(), options);
+        if (!response.ok) {
+            const error = new APIError(response.status);
+            try {
+                error.add_details(await response.json());
+            } catch (_) {
+                // Ignore JSON parsing errors
+            }
+            throw error;
+        }
+
+        const data = await response.json();
+        if (!Array.isArray(data)) {
+            const error = new APIError(0);
+            error.add_details({ message: "Expected an array of results" });
+            throw error;
+        }
+
+        // Fall back to the page length if the header is missing/garbage, so a
+        // proxy that strips it degrades to "at least this many" rather than 0.
+        const total = parseInt(response.headers.get("X-Total-Count"), 10);
+        return { data, total: Number.isNaN(total) ? data.length : total };
+    }, [
+        authedFetch,
+    ])
+
     const authedFetchAllJSON = useCallback(async (_url, options={})=>{
 
         // Assume if you are giving me a body, you want to page via body
@@ -672,7 +711,7 @@ export function AuthContextProvider({ children }) {
         <AuthContext value={ auth }>
             <AuthEscalationContext value={ { escalateCallback, deescalateCallback } }>
                 <AuthLogoutContext value={ logoutCallback }>
-                    <AuthedFetchContext value={ { authedFetch, authedFetchJSON, authedFetchAllJSON } }>
+                    <AuthedFetchContext value={ { authedFetch, authedFetchJSON, authedFetchPageJSON, authedFetchAllJSON } }>
                         { auth.neverQueried
                             ? <LoadingPlaceholder description="Verifying user" animateDelay={MIN_DISPLAY_TIME}/>
                             : !auth.isAuthed

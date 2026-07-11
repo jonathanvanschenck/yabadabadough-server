@@ -62,9 +62,18 @@ const STATEMENT_STATE_LABELS = {
     unknown: "Unknown",
 };
 
+// Tint each state with a semantic `-text` ramp so the column reads at a glance:
+// reconciled is done (green), pending wants attention (amber), ignored recedes.
+const STATEMENT_STATE_COLORS = {
+    pending: "var(--u-warn-text)",
+    ignored: "var(--font-muted)",
+    reconciled: "var(--u-success-text)",
+};
+
 export function StatementStateBadge({ statement, label, ...rest }) {
-    const displayLabel = label ?? STATEMENT_STATE_LABELS[statementStateOf(statement)];
-    return <span title={displayLabel}><StatementStateIcon statement={statement} marginRight="0.5rem" {...rest} />{displayLabel}</span>;
+    const state = statementStateOf(statement);
+    const displayLabel = label ?? STATEMENT_STATE_LABELS[state];
+    return <span title={displayLabel} style={{ color: STATEMENT_STATE_COLORS[state] }}><StatementStateIcon statement={statement} marginRight="0.5rem" {...rest} />{displayLabel}</span>;
 }
 
 export function FinalizedBadge({ value, label, ...rest }) {

@@ -92,6 +92,38 @@ describe("Statements API", () => {
             expect(res.body.map((s) => s.key)).to.deep.equal([ "k-1" ]);
             expect(res.body[0].state).to.equal("reconciled");
         });
+
+        it("searches across source, key, and note", async () => {
+            import_items();
+            // note match (case-insensitive), and X-Total-Count reflects the search
+            let res = await h.request("/api/statements/statements?search=walmart", { token: h.tokens.reader });
+            expect(res.headers.get("x-total-count")).to.equal("1");
+            expect(res.body.map((s) => s.key)).to.deep.equal([ "k-2" ]);
+
+            // source match spans multiple rows
+            res = await h.request("/api/statements/statements?search=other", { token: h.tokens.reader });
+            expect(res.body.map((s) => s.key)).to.deep.equal([ "k-3" ]);
+        });
+
+        it("orders by the new sortable columns and paginates with X-Total-Count", async () => {
+            import_items();
+            // amount ascending: -20, -10, 30
+            let res = await h.request("/api/statements/statements?order_by=amount&order_direction=asc", { token: h.tokens.reader });
+            expect(res.body.map((s) => s.key)).to.deep.equal([ "k-2", "k-1", "k-3" ]);
+
+            // one page at a time; total still reports the full match count
+            res = await h.request("/api/statements/statements?order_by=amount&order_direction=asc&limit=2&offset=2", { token: h.tokens.reader });
+            expect(res.headers.get("x-total-count")).to.equal("3");
+            expect(res.body.map((s) => s.key)).to.deep.equal([ "k-3" ]);
+        });
+
+        it("rejects an unsupported order_by via the shared list params (falls back, not 500)", async () => {
+            import_items();
+            // A bad order_by is coerced away (string_to_enum -> undefined), so the
+            // endpoint falls back to its default ordering rather than erroring.
+            const res = await h.request("/api/statements/statements?order_by=amount%27); DROP", { token: h.tokens.reader });
+            expect(res.status).to.equal(200);
+        });
     });
 
     describe("GET /api/statements/statements/sources", () => {

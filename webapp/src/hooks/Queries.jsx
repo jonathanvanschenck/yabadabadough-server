@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery, keepPreviousData } from '@tanstack/react-query';
 
-import { useAuthedFetchJSON, useAuthedFetchAllJSON, parseURL, APIError, useAuthRoles } from '../contexts/AuthContext.jsx';
+import { useAuthedFetchJSON, useAuthedFetchAllJSON, useAuthedFetchPageJSON, parseURL, APIError, useAuthRoles } from '../contexts/AuthContext.jsx';
 import { QK } from './queryKeys.js';
 
 /**
@@ -383,6 +383,66 @@ export function useGetStatementsQuery(
             });
             return await fetchAll(url, { method: 'GET', batchSize: batchSize });
         },
+        ...options
+    });
+}
+
+/**
+ * One server-paginated page of statement items. Unlike useGetStatementsQuery
+ * (which fetches every match), this asks for a single limit/offset window and
+ * returns `{ data, total }` -- `total` is the full match count (X-Total-Count)
+ * for sizing a pager. Sorting and text search happen server-side too, so the
+ * caller must only sort/search on server-supported fields (order_by: id, date,
+ * source, amount, note, state; `search` spans source/key/note).
+ *
+ * `keepPreviousData` holds the last page on screen while the next one loads, so
+ * paging/sorting doesn't flash empty; `query.isPlaceholderData` flags a stale
+ * page mid-fetch.
+ */
+export function useGetStatementsPageQuery(
+    {
+        limit = 25,
+        offset = 0,
+        source,
+        since,
+        until,
+        state,
+        ignored,
+        hasGroup,
+        groupId,
+        orderBy,
+        orderDirection,
+        search,
+    }={},
+    options={}
+) {
+    const fetchPage = useAuthedFetchPageJSON();
+
+    const searchObj = purgeUndefinedValues({
+        source: source,
+        since: since,
+        until: until,
+        state: state,
+        ignored: ignored,
+        has_group: hasGroup,
+        group_id: groupId,
+        order_by: orderBy,
+        order_direction: orderDirection,
+        search: search,
+        limit: limit,
+        offset: offset,
+    });
+
+    return useQuery({
+        queryKey: [ ...QK.statements, searchObj ],
+        queryFn: async () => {
+            const url = parseURL({
+                path: "/api/statements/statements",
+                search: searchObj
+            });
+            return await fetchPage(url, { method: 'GET' });
+        },
+        placeholderData: keepPreviousData,
         ...options
     });
 }

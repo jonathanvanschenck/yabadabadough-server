@@ -31,4 +31,17 @@
     padding: 0;
     width: 2rem;
     height: 2rem;
+    /* width/height are the true outer box so the button stays square and the
+     * hover glow (box-shadow) sits centered on the icon. */
+    box-sizing: border-box;
 }
+
+
+/* Semantic tints. The base `button` rule derives border, icon color and the
+ * hover glow all from `color`, so setting just `color` here tints the whole
+ * button coherently. The soft `-text` ramps keep a row of them readable rather
+ * than garish; disabled buttons fall back to the neutral opacity treatment. */
+.tone_success:not(:disabled) { color: var(--u-success-text); }
+.tone_info:not(:disabled)    { color: var(--u-info-text); }
+.tone_warn:not(:disabled)    { color: var(--u-warn-text); }
+.tone_danger:not(:disabled)  { color: var(--u-danger-text); }

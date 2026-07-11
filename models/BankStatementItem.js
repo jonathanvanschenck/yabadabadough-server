@@ -124,7 +124,14 @@ module.exports = class BankStatementItem extends Base {
 
     static ORDER_BY_MAP = {
         "id": "id",
-        "date": "date"
+        "date": "date",
+        "source": "source",
+        "amount": "amount",
+        "note": "note",
+        // Derived state is not a column: order by a CASE that matches how the
+        // state reads alphabetically (ignored < pending < reconciled) so it
+        // groups the way the UI badge does.
+        "state": "CASE WHEN group_id IS NOT NULL THEN 2 WHEN ignored = 1 THEN 0 ELSE 1 END",
     }
 
 
@@ -227,6 +234,7 @@ module.exports = class BankStatementItem extends Base {
         ignored,
         has_group,
         group_id,
+        search,  // free-text substring across source/key/note
     }={}) {
         const wheres = [];
         const params = {};
@@ -236,6 +244,15 @@ module.exports = class BankStatementItem extends Base {
             wheres.push("source = @source");
             params.source = source;
             keys.push("source");
+        }
+        if ( search !== undefined ) {
+            // Case-insensitive substring across the human-readable fields --
+            // the server-side equal of the old client search box. LIKE is
+            // ASCII-case-insensitive in sqlite; escape the user's own
+            // wildcards so `%`/`_` are matched literally.
+            wheres.push("(source LIKE @search ESCAPE '\\' OR key LIKE @search ESCAPE '\\' OR note LIKE @search ESCAPE '\\')");
+            params.search = "%" + search.replace(/[\\%_]/g, "\\$&") + "%";
+            keys.push("search");
         }
         if ( since !== undefined ) {
             wheres.push("date >= @since");
@@ -283,7 +300,11 @@ module.exports = class BankStatementItem extends Base {
             const _order_by = this.get_order_by_column_name(order_by);
             const _order_direction = this.get_order_direction(order_direction);
 
-            sql = sql + `ORDER BY ${_order_by} ${_order_direction}\n`;
+            // Break ties on id (a stable, unique key) so a paginated sort on a
+            // non-unique column doesn't shuffle rows between adjacent pages.
+            sql = sql + (order_by === "id"
+                ? `ORDER BY id ${_order_direction}\n`
+                : `ORDER BY ${_order_by} ${_order_direction}, id ${_order_direction}\n`);
 
             keys.push("order_by_"+order_by);
             keys.push(_order_direction);

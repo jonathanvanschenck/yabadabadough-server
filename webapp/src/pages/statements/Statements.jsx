@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { useGetStatementsQuery, usePatchStatementMutation } from '../../hooks/Queries.jsx';
+import { useGetStatementsPageQuery, usePatchStatementMutation } from '../../hooks/Queries.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue.js';
 import SearchableTable from '../../components/SearchableTable.jsx';
+import Pagination from '../../components/Pagination.jsx';
 import { IconButton, TightIconButton } from '../../components/Buttons.jsx';
 import { LabeledSelector, LabeledDateRangeInput } from '../../components/Inputs.jsx';
 import { StatementStateBadge } from '../../components/Badges.jsx';
@@ -36,6 +38,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
             { state === 'pending' && <>
                 <TightIconButton
                     icon="fa-square-plus"
+                    tone="success"
                     ariaLabel="Categorize: create a transaction group from this item"
                     title="Categorize: create a transaction group from this item"
                     disabled={!isEditor}
@@ -43,6 +46,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
                 />
                 <TightIconButton
                     icon="fa-link"
+                    tone="info"
                     ariaLabel="Link to an existing transaction group"
                     title="Link to an existing transaction group (transfers, pre-entered transactions)"
                     disabled={!isEditor}
@@ -50,6 +54,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
                 />
                 <TightIconButton
                     icon="fa-eye-slash"
+                    tone="warn"
                     ariaLabel="Ignore this item"
                     title="Ignore: hide from the pending list without deleting"
                     disabled={!isEditor}
@@ -60,6 +65,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
             { state === 'ignored' &&
                 <TightIconButton
                     icon="fa-eye"
+                    tone="success"
                     ariaLabel="Un-ignore this item"
                     title="Un-ignore: return this item to pending"
                     disabled={!isEditor}
@@ -70,6 +76,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
             { state === 'reconciled' &&
                 <TightIconButton
                     icon="fa-arrow-up-right-from-square"
+                    tone="info"
                     ariaLabel="View the linked transaction group"
                     title="View the linked transaction group (unlink from there)"
                     onClick={stop(() => onAction('viewGroup', statement))}
@@ -84,6 +91,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
             />
             <TightIconButton
                 icon="fa-trash"
+                tone="danger"
                 ariaLabel="Delete this item"
                 title="Delete (for undoing bad imports — prefer ignore)"
                 disabled={!isEditor}
@@ -98,12 +106,19 @@ export default function Page() {
     const isEditor = !!roles.editor;
 
     // The page exists to burn down the pending queue, so pending is the
-    // default view; the state/date filters are server-side, search is client-side
+    // default view. Filtering, text search, sorting and pagination ALL run
+    // server-side (see useGetStatementsPageQuery); the client just holds the
+    // control state and reflects the query.
     const [ stateFilter, setStateFilter ] = useState('pending');
     const [ dateRange, setDateRange ] = useState({ since: null, until: null });
     const [ searchTerm, setSearchTerm ] = useState('');
+    // Debounced so typing doesn't fire a request per keystroke
+    const debouncedSearch = useDebouncedValue(searchTerm.trim(), 300);
     const [ sortKey, setSortKey ] = useState('date');
     const [ direction, setDirection ] = useState('desc');
+
+    const [ page, setPage ] = useState(1);
+    const [ pageSize, setPageSize ] = useState(25);
 
     const [ isImportOpen, setIsImportOpen ] = useState(false);
     // One open modal at a time: { kind: 'reconcile'|'link'|'viewGroup'|'edit'|'delete', statement }
@@ -111,11 +126,20 @@ export default function Page() {
     const [ togglingId, setTogglingId ] = useState(null);
     const [ toggleError, setToggleError ] = useState(null);
 
-    const statementsQ = useGetStatementsQuery({
+    const statementsQ = useGetStatementsPageQuery({
         state: stateFilter === 'all' ? undefined : stateFilter,
         since: dateRange.since ?? undefined,
         until: dateRange.until ?? undefined,
+        search: debouncedSearch || undefined,
+        orderBy: sortKey,
+        orderDirection: direction,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
     });
+
+    const items = statementsQ.data?.data ?? [];
+    const totalItems = statementsQ.data?.total ?? 0;
+    const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
 
     const handleSort = useCallback((key) => {
         if ( sortKey === key ) {
@@ -166,33 +190,16 @@ export default function Page() {
         }
     }, [isEditor, handleAction]);
 
-    const processedData = useMemo(() => {
-        let items = statementsQ.data ?? [];
+    // Any change to what's shown (or how it's ordered) sends you back to page 1
+    // so you're never stranded past the end of a shorter result set.
+    useEffect(() => {
+        setPage(1);
+    }, [stateFilter, dateRange, debouncedSearch, sortKey, direction, pageSize]);
 
-        if ( searchTerm.trim() ) {
-            const term = searchTerm.toLowerCase();
-            items = items.filter(s =>
-                s.source?.toLowerCase().includes(term)
-                || s.key?.toLowerCase().includes(term)
-                || s.note?.toLowerCase().includes(term)
-            );
-        }
-
-        return items.toSorted((a, b) => {
-            let aVal = a[sortKey] ?? '';
-            let bVal = b[sortKey] ?? '';
-            if ( typeof aVal === 'string' ) aVal = aVal.toLowerCase();
-            if ( typeof bVal === 'string' ) bVal = bVal.toLowerCase();
-
-            let comparison = 0;
-            if ( aVal < bVal ) comparison = -1;
-            if ( aVal > bVal ) comparison = 1;
-            // Stable tiebreak so same-day items don't jump around
-            if ( comparison === 0 ) comparison = a.id - b.id;
-
-            return direction === 'asc' ? comparison : -comparison;
-        });
-    }, [statementsQ.data, searchTerm, sortKey, direction]);
+    // Keep the page in range if the row count shrinks out from under it.
+    useEffect(() => {
+        if ( page > pageCount ) setPage(pageCount);
+    }, [page, pageCount]);
 
     const columns = [
         {
@@ -286,7 +293,7 @@ export default function Page() {
                 />
                 <div className={styles.filterBarCount}>
                     { statementsQ.data != null &&
-                        `${processedData.length} item${processedData.length === 1 ? '' : 's'}`
+                        `${totalItems} item${totalItems === 1 ? '' : 's'}`
                     }
                 </div>
             </div>
@@ -309,7 +316,7 @@ export default function Page() {
                 </div>
                 : <div className={styles.tableWrapper}>
                     <SearchableTable
-                        data={processedData}
+                        data={items}
                         columns={columns}
                         searchValue={searchTerm}
                         onSearchChange={setSearchTerm}
@@ -318,16 +325,27 @@ export default function Page() {
                         sortDirection={direction}
                         onSort={handleSort}
                         isLoading={statementsQ.isPending}
+                        isStale={statementsQ.isPlaceholderData}
                         onRowClick={handleRowClick}
                         rowKey="id"
                     />
-                    { !statementsQ.isPending && processedData.length === 0 &&
+                    { !statementsQ.isPending && totalItems === 0 &&
                         <div className={styles.emptyState}>
                             { stateFilter === 'pending'
                                 ? 'No pending items — the queue is clear. Upload a statement to import more.'
                                 : 'No bank statement items match the current filters.'
                             }
                         </div>
+                    }
+                    { !statementsQ.isPending && totalItems > 0 &&
+                        <Pagination
+                            page={page}
+                            pageSize={pageSize}
+                            totalItems={totalItems}
+                            onPageChange={setPage}
+                            onPageSizeChange={setPageSize}
+                            itemLabel="item"
+                        />
                     }
                 </div>
             }

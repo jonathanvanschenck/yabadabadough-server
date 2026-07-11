@@ -112,11 +112,18 @@ module.exports = class StatementsCollection extends Collection {
                     required: false,
                     schema: { type: 'integer' }
                 },
-                ...openapi_list_parameters([ 'id', 'date' ])
+                {
+                    name: 'search',
+                    in: 'query',
+                    description: 'Case-insensitive substring match across source, key, and note',
+                    required: false,
+                    schema: { type: 'string' }
+                },
+                ...openapi_list_parameters([ 'id', 'date', 'source', 'amount', 'note', 'state' ])
             ]
 
             async parse_request(req) {
-                const filter = parse_list_params(req.query, [ "id", "date" ]);
+                const filter = parse_list_params(req.query, [ "id", "date", "source", "amount", "note", "state" ]);
 
                 switch ( string_to_enum(req.query?.state, [ "pending", "ignored", "reconciled" ]) ) {
                     case "pending":
@@ -132,6 +139,7 @@ module.exports = class StatementsCollection extends Collection {
                 }
 
                 filter.source = only_non_empty_string(req.query?.source);
+                filter.search = only_non_empty_string(req.query?.search);
                 filter.since = to_ydate(req.query?.since);
                 filter.until = to_ydate(req.query?.until);
                 filter.ignored = string_to_boolean(req.query?.ignored, filter.ignored);
