@@ -539,10 +539,10 @@ export function DeleteFundModal({ isOpen, setIsOpen, fund, closePopoutCallback }
             setIsOpen={setIsOpen}
             title="Delete Fund"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to delete the fund <strong>{fund?.name ?? 'unknown'}</strong>?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     This action cannot be undone. The server refuses deletion while the
                     fund still has transactions, children, or finalization history.
                 </div>
@@ -1146,18 +1146,18 @@ export function DeleteTransactionGroupModal({ isOpen, setIsOpen, group, closePop
             setIsOpen={setIsOpen}
             title="Delete Transaction Group"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to delete <strong>{group?.description ?? 'unknown'}</strong> ({group?.date ?? 'unknown'})
                     and its {transactionCount} transaction{transactionCount === 1 ? '' : 's'}?
                 </div>
                 { statementCount > 0 &&
-                    <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
+                    <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
                         This group reconciles {statementCount} bank statement item{statementCount === 1 ? '' : 's'},
                         which will be released back to pending. Reconciling them again
                         without removing these transactions elsewhere double-counts.
                     </div>
                 }
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     This action cannot be undone.
                 </div>
             </>}
@@ -1973,17 +1973,17 @@ export function DeleteStatementModal({ isOpen, setIsOpen, statement, closePopout
             setIsOpen={setIsOpen}
             title="Delete Bank Statement Item"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you <strong>absolutely sure</strong> you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)})?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
                     Deletion is for undoing bad imports, NOT for hiding items: the
                     item reappears as pending on the next re-sync, and reconciling
                     it again double-counts. If you just want it out of the pending
                     list, close this and mark it <strong>ignored</strong> instead.
                 </div>
                 { isReconciled &&
-                    <div style={{ width: '30rem', marginTop: '1rem' }}>
+                    <div style={{ marginTop: '1rem' }}>
                         <LabeledBooleanInput
                             label="Also delete the reconciling transaction group?"
                             value={withGroup}
@@ -2576,7 +2576,7 @@ export function DeleteAllocationModal({ isOpen, setIsOpen, month, fund }) {
             setIsOpen={setIsOpen}
             title="Remove Allocation"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to remove the <strong>{monthLabel(month)}</strong> allocation
                     for <strong>{fund?.name ?? 'unknown'}</strong>?
                 </div>
@@ -3174,10 +3174,10 @@ export function DeleteUserModal({ isOpen, setIsOpen, user, closePopoutCallback }
             setIsOpen={setIsOpen}
             title="Delete User"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to delete the user <strong>{user?.email ?? 'unknown'}</strong>?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     Their sessions and API keys are deleted with them. This action
                     cannot be undone (and the server refuses self-deletion).
                 </div>
@@ -3347,11 +3347,11 @@ export function DeleteSessionModal({ isOpen, setIsOpen, session }) {
             setIsOpen={setIsOpen}
             title="Revoke Session"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to revoke session <strong>#{session?.id ?? '?'}</strong> (last
                     used {session?.last_used_at ? new Date(session.last_used_at).toLocaleString() : 'never'})?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     That device can no longer refresh, but its current access token
                     stays valid for up to ~20 minutes.
                 </div>
@@ -3538,10 +3538,10 @@ export function DeleteApiKeyModal({ isOpen, setIsOpen, apiKey }) {
             setIsOpen={setIsOpen}
             title="Revoke API Key"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to revoke the API key <strong>{apiKey?.name ?? 'unknown'}</strong>?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     Its secret can no longer be exchanged for access tokens (already
                     minted tokens stay valid for up to ~20 minutes). This cannot be
                     undone.
