@@ -462,14 +462,32 @@ module.exports = class MonthFinalization extends Base {
         return transaction(db, { month, recursive });
     }
 
-    static _delete(db, month) {
+    static _delete(db, month, { recursive = false }={}) {
         // Unfinalization is strictly LIFO: only the most recent finalized
         // month may be removed, otherwise the contiguous chain of cache
-        // points would have gaps
+        // points would have gaps. With `recursive`, the later months are
+        // unfinalized first (newest-first), so `month` becomes the latest
+        // before we reverse it -- and the whole cascade lands atomically in
+        // the one sqlite transaction wrapping this call.
         if ( this.get_stmt(db, "later_exists").get({ som_date: ydate2stmt(month.som_date) }) ) {
-            throw new ConflictError("Only the most recent finalized month may be unfinalized");
+            if ( !recursive ) {
+                throw new ConflictError("Only the most recent finalized month may be unfinalized");
+            }
+            let latest = this.latest(db);
+            while ( latest && ydate2stmt(latest.som_date) > ydate2stmt(month.som_date) ) {
+                this._unfinalize_one(db, latest);
+                latest = this.latest(db);
+            }
         }
 
+        this._unfinalize_one(db, month);
+    }
+
+    /**
+     * Raw single-month reversal. The caller MUST ensure `month` is the latest
+     * finalized month (no LIFO check here) -- `_delete` enforces that.
+     */
+    static _unfinalize_one(db, month) {
         const fund_ids = this.get_stmt(db, "finalized_fund_ids")
             .all({ month_id: month.id })
             .map(row => row.fund_id);
@@ -496,17 +514,20 @@ module.exports = class MonthFinalization extends Base {
     }
 
     /**
-     * Unfinalize this month (LIFO only), removing the fund finalizations and
-     * the month's eom_cleanup transactions, and repointing funds at their
-     * previous finalizations.
+     * Unfinalize this month, removing the fund finalizations and the month's
+     * eom_cleanup transactions, and repointing funds at their previous
+     * finalizations. Strictly LIFO by default (only the latest finalized
+     * month); pass `recursive: true` to cascade -- unfinalize every later
+     * month first (newest-first) so this month can be reversed too. The whole
+     * cascade is one atomic sqlite transaction.
      */
-    delete(db) {
+    delete(db, { recursive = false }={}) {
         const transaction = this.constructor.build_transaction(
             db, "delete", this.constructor._delete.bind(this.constructor));
-        return transaction(db, this);
+        return transaction(db, this, { recursive });
     }
 
-    unfinalize(db) {
-        return this.delete(db);
+    unfinalize(db, opts={}) {
+        return this.delete(db, opts);
     }
 }

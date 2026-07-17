@@ -63,6 +63,15 @@
     margin: 0;
 }
 
+.historyLockedNote {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--u-warn-border);
+    background: var(--u-warn-bg);
+    color: var(--u-warn-text);
+    margin: 0 0 1rem 0;
+}
+
 .subFundsTable {
     max-height: 50vh; /* Set limit so that the table will start overflowing */
     min-height: 20rem; /* Ensure it doesn't shrink too much -- important when the query returns no results */

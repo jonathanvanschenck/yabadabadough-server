@@ -427,6 +427,45 @@ describe("models/MonthFinalization.js", () => {
             expect(transfer("2026-01-20", checking, groceries, 10)).to.not.be.null;
         });
 
+        it("recursively unfinalizes a non-latest month (cascading LIFO)", () => {
+            transfer("2026-01-05", checking, groceries, 200);
+            transfer("2026-02-05", checking, groceries, 200);
+
+            const jan = MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+            MonthFinalization.create(db, { month: YDate.parse("2026-02-15") });
+            MonthFinalization.create(db, { month: YDate.parse("2026-03-15") });
+
+            // Non-recursive still refuses an earlier month
+            expect(() => jan.unfinalize(db))
+                .to.throw(ConflictError, "Only the most recent finalized month may be unfinalized");
+
+            // Recursive cascades away Mar and Feb first, then Jan
+            jan.unfinalize(db, { recursive: true });
+
+            expect(MonthFinalization.latest(db)).to.equal(null);
+            expect(MonthFinalization.from_db(db)).to.have.length(0);
+            expect(TransactionGroup.from_db(db, { eom_cleanup: true })).to.have.length(0);
+
+            // Funds fall all the way back to their start-values fallback
+            const reloaded = Fund.for_id(db, checking.id);
+            expect(reloaded.finalization_id).to.equal(null);
+            expect(reloaded.cached_date.toString()).to.equal("2026-01-01");
+            expect(reloaded.cached_balance).to.equal(1000);
+
+            // And the once-finalized months are open again
+            expect(transfer("2026-01-20", checking, groceries, 10)).to.not.be.null;
+        });
+
+        it("recursive unfinalize of the latest month is just a plain unfinalize", () => {
+            transfer("2026-01-05", checking, groceries, 200);
+            const jan = MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
+            const feb = MonthFinalization.create(db, { month: YDate.parse("2026-02-15") });
+
+            feb.unfinalize(db, { recursive: true });
+
+            expect(MonthFinalization.latest(db).id).to.equal(jan.id);
+        });
+
         it("unfinalize then re-finalize round-trips", () => {
             transfer("2026-01-05", checking, groceries, 200);
             transfer("2026-01-10", groceries, external, 150);

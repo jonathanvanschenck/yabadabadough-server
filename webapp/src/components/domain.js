@@ -79,6 +79,27 @@ export function buildFundTree(funds, startedBy) {
 }
 
 /**
+ * The set of fund ids that ARE monthly or CONTAIN a monthly descendant
+ * (walking parent links up from every monthly fund). The server treats the
+ * parent of any such fund as history: reparenting it is refused once
+ * finalizations exist. Mirrors Fund's `has_monthly_descendant` guard so the
+ * UI can pre-emptively lock the field instead of letting the API 400.
+ */
+export function fundIdsContainingMonthly(funds) {
+    const byId = new Map(funds.map(f => [ f.id, f ]));
+    const result = new Set();
+    for ( const f of funds ) {
+        if ( !f.status?.monthly ) continue;
+        let cur = f;
+        while ( cur != null && !result.has(cur.id) ) {
+            result.add(cur.id);
+            cur = cur.parent_id != null ? byId.get(cur.parent_id) : null;
+        }
+    }
+    return result;
+}
+
+/**
  * A bank statement item's state: prefer the API's canonical `state` field,
  * deriving it from the raw flags only as a fallback (every item is in
  * exactly one of these).

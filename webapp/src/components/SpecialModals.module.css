@@ -17,7 +17,38 @@
     border: 1px solid var(--u-warn-border);
     background: var(--u-warn-bg);
     color: var(--u-warn-text);
-    margin: 0 0 0.75rem 0;
+    /* Symmetric vertical margins: the block above (e.g. CardAutoGrid) has no
+       bottom margin, so a top margin is needed to separate from it. Adjacent
+       helper-block margins collapse in this block-flow section, keeping the
+       gap at 0.75rem when several stack. */
+    margin: 0.75rem 0;
+}
+
+.affectedMonths {
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+    color: var(--font-secondary-color);
+}
+
+.affectedMonthsLabel {
+    margin-bottom: 0.4rem;
+}
+
+.monthChips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.monthChip {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 0.35rem;
+    border: 1px solid var(--u-info-border);
+    background: var(--u-info-bg);
+    color: var(--u-info-text);
+    white-space: nowrap;
 }
 
 .importSuccess {

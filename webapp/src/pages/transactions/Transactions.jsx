@@ -282,6 +282,9 @@ export default function Page() {
     );
     const canFinalize = monthsQ.data != null && monthFinalization == null
         && (latestFinalization == null || som > latestFinalization.som_date);
+    // Any finalized month can now be unfinalized: the LATEST directly, an
+    // earlier one by cascading (recursive unfinalize of it + every later
+    // month). The modal spells out exactly which months that touches.
     const isLatestFinalization = monthFinalization != null && monthFinalization.id === latestFinalization?.id;
     const fundFinalizationsQ = useGetFundFinalizationsQuery(
         { monthId: monthFinalization?.id },
@@ -375,10 +378,9 @@ export default function Page() {
                             text="Unfinalize month"
                             icon="fa-lock-open"
                             ariaLabel={`Unfinalize ${monthTitle}`}
-                            disabled={!isLatestFinalization}
                             title={isLatestFinalization
                                 ? `Re-open ${monthTitle} for editing`
-                                : 'Only the latest finalized month can be unfinalized'}
+                                : `Re-open ${monthTitle} (and every later finalized month) for editing`}
                             onClick={() => setIsUnfinalizeOpen(true)}
                         />
                     }

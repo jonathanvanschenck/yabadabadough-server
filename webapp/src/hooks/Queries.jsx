@@ -1383,12 +1383,14 @@ export function usePostMonthFinalizationMutation() {
 }
 
 /**
- * Unfinalize a month (strictly LIFO: only the LATEST finalized month, 409
- * otherwise).
+ * Unfinalize a month. Strictly LIFO (only the LATEST finalized month, 409
+ * otherwise) unless `recursive` is set, which cascades: every later month is
+ * unfinalized first (newest-first) so an earlier month can be reversed too.
  *
  * @typedef {object} DeleteMonthFinalizationMutationData
  * @property {object} formData
  * @property {number} formData.id - The month finalization ID
+ * @property {boolean} [formData.recursive] - Cascade later months too (default false)
  *
  * @returns {import('@tanstack/react-query').UseMutationResult}
  */
@@ -1397,9 +1399,11 @@ export function useDeleteMonthFinalizationMutation() {
     const roles = useAuthRoles();
     return useInvalidatingMutation(async ({ formData }) => {
         if ( !roles.editor ) throwLocal403EditorError();
-        return await fetch("/api/finalizations/month-finalization/" + encodeURIComponent(formData.id), {
-            method: 'DELETE'
+        const url = parseURL({
+            path: "/api/finalizations/month-finalization/" + encodeURIComponent(formData.id),
+            search: purgeUndefinedValues({ recursive: formData.recursive ? true : undefined })
         });
+        return await fetch(url, { method: 'DELETE' });
     });
 }
 

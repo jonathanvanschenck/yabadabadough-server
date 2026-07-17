@@ -21,11 +21,14 @@ import {
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
 import { FundLabel } from './Badges.jsx';
 import Spinner from './Spinner.jsx';
-import { formatDollars } from './domain.js';
+import { formatDollars, fundIdsContainingMonthly } from './domain.js';
 import {
     useGetFundsQuery,
     useGetTransactionGroupsQuery,
     useGetTransactionGroupQuery,
+    useGetLatestMonthFinalizationQuery,
+    useGetMonthFinalizationsQuery,
+    useGetFundFinalizationsQuery,
     usePostFundMutation,
     usePatchFundMutation,
     useDeleteFundMutation,
@@ -68,9 +71,48 @@ function monthLabel(ydate) {
     return ydate ? ydate.slice(0, 7) : 'unknown';
 }
 
+/**
+ * The first-of-month YYYY-MM-DD strings from `fromSom` to `toSom` inclusive
+ * (both any YYYY-MM-DD, compared by month). Empty when `fromSom` is after
+ * `toSom` or either is missing. Used to spell out the concrete months a
+ * (recursive) finalize/unfinalize will touch.
+ */
+function monthsBetween(fromSom, toSom) {
+    if ( !fromSom || !toSom ) return [];
+    let cursor = dayjs(fromSom).startOf('month');
+    const end = dayjs(toSom).startOf('month');
+    const out = [];
+    while ( !cursor.isAfter(end, 'month') ) {
+        out.push(cursor.format('YYYY-MM-DD'));
+        cursor = cursor.add(1, 'month');
+        if ( out.length > 600 ) break; // safety valve against a bad range
+    }
+    return out;
+}
+
 function formatMoney(amount) {
     if ( amount == null ) return 'unknown';
     return (amount < 0 ? '-$' : '$') + Math.abs(amount).toFixed(2);
+}
+
+/**
+ * The finalization floor for a transaction date: no transaction group may be
+ * dated in (or before) a finalized month, so the earliest allowable date is
+ * the first day of the first unfinalized month (the latest finalization's
+ * sonm). Returns `{ minDate, validityFor(date) }` -- `minDate` is null when
+ * nothing is finalized, and `validityFor` yields the inline error string (or
+ * null) for a candidate date.
+ */
+function useFinalizationDateFloor() {
+    const latestQ = useGetLatestMonthFinalizationQuery();
+    const minDate = latestQ.data?.sonm_date ?? null;
+    const finalizedLabel = latestQ.data ? monthLabel(latestQ.data.som_date) : null;
+    const validityFor = useCallback((date) => (
+        date && minDate && date < minDate
+            ? `${finalizedLabel} is finalized — pick a date on or after ${minDate}.`
+            : null
+    ), [minDate, finalizedLabel]);
+    return { minDate, validityFor };
 }
 
 /**
@@ -311,6 +353,28 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
         'name', 'parent_id', 'tracked', 'monthly', 'pool', 'start_date', 'start_balance', 'color'
     ]);
 
+    // History-affecting fields are immutable once ANY finalization exists for
+    // the fund (the server's `assert_unfinalized`). Lock them up front so the
+    // user sees WHY instead of hitting a 400 on save. `parent_id` is only
+    // history for funds that are or contain a monthly fund (the server's
+    // narrower guard), so it locks separately.
+    const fundFinalizationsQ = useGetFundFinalizationsQuery(
+        { fundId: fund?.id },
+        { enabled: isOpen && fund != null && (fund?.status?.tracked ?? false) }
+    );
+    const historyLocked = (fundFinalizationsQ.data?.length ?? 0) > 0;
+
+    const allFundsQ = useGetFundsQuery();
+    const monthlyContainingIds = useMemo(
+        () => fundIdsContainingMonthly(allFundsQ.data ?? []),
+        [allFundsQ.data]
+    );
+    const parentLocked = historyLocked
+        && fund != null
+        && (fund.status?.monthly || monthlyContainingIds.has(fund.id));
+
+    const lockedTitle = "Locked: this fund has finalized months. Unfinalize back to the fund's start before changing its history.";
+
     const dataValidity = {
         name: !data.name?.trim() ? 'Name is required.' : null,
         start_date: data.tracked && !data.start_date ? 'Tracked funds need a start date.' : null,
@@ -348,6 +412,13 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                     point, tracked/monthly/pool, and the parent of monthly funds)
                     are refused by the server while any finalizations exist.
                 </p>
+                { historyLocked &&
+                    <p className={styles.modalWarning}>
+                        This fund has finalized months, so its history-affecting
+                        fields are locked. Unfinalize back to the fund's start to
+                        change them.
+                    </p>
+                }
                 <CardAutoGrid>
                     <LabeledTextInput
                         label="Name"
@@ -362,7 +433,7 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                         label="Parent Fund"
                         value={data.parent_id}
                         onChange={(value) => handleChange('parent_id', value)}
-                        isFrozen={false}
+                        isFrozen={parentLocked}
                         isChanged={'parent_id' in patch}
                         allowNull={true}
                         excludeIds={fund ? [fund.id] : []}
@@ -370,40 +441,45 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                     <LabeledBooleanInput
                         label="Tracked?"
                         value={data.tracked}
-                        isFrozen={false}
+                        isFrozen={historyLocked}
                         isChanged={'tracked' in patch}
+                        inputTitle={historyLocked ? lockedTitle : undefined}
                         onChange={(value) => handleChange('tracked', value)}
                     />
                     <LabeledBooleanInput
                         label="Pool?"
                         value={data.pool}
-                        isFrozen={false}
+                        isFrozen={historyLocked}
                         isChanged={'pool' in patch}
+                        inputTitle={historyLocked ? lockedTitle : undefined}
                         onChange={(value) => handleChange('pool', value)}
                     />
                     <LabeledBooleanInput
                         label="Monthly?"
                         value={data.monthly}
-                        isFrozen={false}
+                        isFrozen={historyLocked}
                         isChanged={'monthly' in patch}
+                        inputTitle={historyLocked ? lockedTitle : undefined}
                         onChange={(value) => handleChange('monthly', value)}
                     />
                     <LabeledDateInput
                         label="Start Date"
                         value={data.start_date}
-                        isFrozen={!data.tracked}
+                        isFrozen={!data.tracked || historyLocked}
                         isChanged={'start_date' in patch}
                         nullPlaceholder="(untracked)"
+                        inputTitle={historyLocked ? lockedTitle : undefined}
                         onChange={(value) => handleChange('start_date', value || null)}
                         validityMessage={dataValidity.start_date}
                     />
                     <LabeledNumberInput
                         label="Start Balance ($)"
                         value={data.start_balance}
-                        isFrozen={!data.tracked}
+                        isFrozen={!data.tracked || historyLocked}
                         isChanged={'start_balance' in patch}
                         step={0.01}
                         nullPlaceholder="(untracked)"
+                        inputTitle={historyLocked ? lockedTitle : undefined}
                         onChange={(value) => handleChange('start_balance', value)}
                         validityMessage={dataValidity.start_balance}
                     />
@@ -685,8 +761,10 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
         setSubmitError(null);
     };
 
+    const { minDate: dateFloor, validityFor: dateFloorValidity } = useFinalizationDateFloor();
+
     const dataValidity = {
-        date: !data.date ? 'Date is required.' : null,
+        date: !data.date ? 'Date is required.' : dateFloorValidity(data.date),
         description: !data.description?.trim() ? 'Description is required.' : null,
     };
     const linesHaveProblems = lines.length < 1 || lines.some(transactionLineHasProblem);
@@ -730,6 +808,7 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
                         value={data.date}
                         isRequired={true}
                         isFrozen={false}
+                        min={dateFloor ?? undefined}
                         onChange={(value) => handleChange('date', value || null)}
                         validityMessage={dataValidity.date}
                     />
@@ -823,8 +902,10 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
 
     const patch = changedFields(initialData(), data, [ 'date', 'description', 'note' ]);
 
+    const { minDate: dateFloor, validityFor: dateFloorValidity } = useFinalizationDateFloor();
+
     const dataValidity = {
-        date: !data.date ? 'Date is required.' : null,
+        date: !data.date ? 'Date is required.' : dateFloorValidity(data.date),
         description: !data.description?.trim() ? 'Description is required.' : null,
     };
 
@@ -869,6 +950,7 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
                         isRequired={true}
                         isFrozen={isManaged}
                         isChanged={'date' in patch}
+                        min={dateFloor ?? undefined}
                         onChange={(value) => handleChange('date', value || null)}
                         validityMessage={dataValidity.date}
                         inputTitle="Changing the date cascades to every transaction in the group"
@@ -2647,8 +2729,32 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
         setSubmitError(null);
     };
 
+    // The concrete months this finalize would touch: from the first
+    // unfinalized month (the latest finalization's next month, or the
+    // earliest tracked-fund start when nothing is finalized yet) up to the
+    // chosen month. Anything past the first is only reachable with recursive.
+    const latestFinalizationQ = useGetLatestMonthFinalizationQuery();
+    const fundsQ = useGetFundsQuery();
+    const firstUnfinalizedMonth = useMemo(() => {
+        if ( latestFinalizationQ.data ) return latestFinalizationQ.data.sonm_date;
+        const starts = (fundsQ.data ?? [])
+            .filter(f => f.status?.tracked && f.start?.date)
+            .map(f => f.start.date);
+        if ( !starts.length ) return null;
+        return starts.reduce((a, b) => (a < b ? a : b)).slice(0, 7) + '-01';
+    }, [latestFinalizationQ.data, fundsQ.data]);
+
+    const affectedMonths = useMemo(
+        () => monthsBetween(firstUnfinalizedMonth, data.month),
+        [firstUnfinalizedMonth, data.month]
+    );
+    const needsRecursive = affectedMonths.length > 1;
+
     const dataValidity = {
         month: !data.month ? 'Month is required.' : null,
+        recursive: needsRecursive && !data.recursive
+            ? `Finalizing ${monthLabel(data.month)} also finalizes ${affectedMonths.length - 1} earlier month(s) — enable recursive.`
+            : null,
     };
 
     const {
@@ -2697,9 +2803,27 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
                         label="Recursively finalize intervening months?"
                         value={data.recursive}
                         isFrozen={false}
+                        isChanged={needsRecursive && !data.recursive}
                         onChange={(value) => handleChange('recursive', value)}
                     />
                 </CardAutoGrid>
+                { dataValidity.recursive &&
+                    <p className={styles.modalWarning}>{dataValidity.recursive}</p>
+                }
+                { affectedMonths.length > 0 &&
+                    <div className={styles.affectedMonths}>
+                        <div className={styles.affectedMonthsLabel}>
+                            { affectedMonths.length === 1
+                                ? 'This will finalize:'
+                                : `This will finalize ${affectedMonths.length} months:` }
+                        </div>
+                        <div className={styles.monthChips}>
+                            { affectedMonths.map(m => (
+                                <span key={m} className={styles.monthChip}>{monthLabel(m)}</span>
+                            )) }
+                        </div>
+                    </div>
+                }
                 { data.month != null && data.month.slice(0, 7) >= todayYDate().slice(0, 7) &&
                     <p className={styles.modalWarning}>
                         {monthLabel(data.month)} has not ended yet — finalizing it
@@ -2731,9 +2855,21 @@ export function UnfinalizeMonthModal({ isOpen, setIsOpen, monthFinalization }) {
         mutateAsync: deleteMutate // NOTE, mutateAsync to return a promise, which throws on error -> handled by ConfirmationModal
     } = useDeleteMonthFinalizationMutation();
 
+    // Unfinalize is strictly LIFO, so reversing a non-latest month cascades:
+    // every LATER finalized month must be unfinalized first (recursive). List
+    // them all so the consequences are explicit, newest-first.
+    const monthsQ = useGetMonthFinalizationsQuery();
+    const affected = useMemo(() => {
+        if ( !monthFinalization ) return [];
+        return (monthsQ.data ?? [])
+            .filter(m => m.som_date >= monthFinalization.som_date)
+            .sort((a, b) => (a.som_date < b.som_date ? 1 : -1));
+    }, [monthsQ.data, monthFinalization]);
+    const recursive = affected.length > 1;
+
     const deleteOnConfirm = useCallback(async () => {
-        return deleteMutate({ formData: { id: monthFinalization.id } });
-    }, [ deleteMutate, monthFinalization ]);
+        return deleteMutate({ formData: { id: monthFinalization.id, recursive } });
+    }, [ deleteMutate, monthFinalization, recursive ]);
 
     return (
         <ConfirmationModal
@@ -2741,16 +2877,29 @@ export function UnfinalizeMonthModal({ isOpen, setIsOpen, monthFinalization }) {
             setIsOpen={setIsOpen}
             title="Unfinalize Month"
             content={<>
-                <div style={{ width: '30rem', textAlign: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
                     Are you sure you want to unfinalize <strong>{monthLabel(monthFinalization?.som_date)}</strong>?
                 </div>
-                <div style={{ width: '30rem', textAlign: 'center', marginTop: '1rem' }}>
-                    This removes the month's end-of-month cleanup transactions and
-                    re-opens it (and everything after it) for editing. Only the
-                    LATEST finalized month can be unfinalized.
+                { recursive &&
+                    <div className={styles.affectedMonths} style={{ marginTop: '1rem' }}>
+                        <div className={styles.affectedMonthsLabel} style={{ textAlign: 'center' }}>
+                            This is not the latest finalized month, so unfinalizing it
+                            also unfinalizes the { affected.length - 1 } later month(s):
+                        </div>
+                        <div className={styles.monthChips} style={{ justifyContent: 'center' }}>
+                            { affected.map(m => (
+                                <span key={m.id} className={styles.monthChip}>{monthLabel(m.som_date)}</span>
+                            )) }
+                        </div>
+                    </div>
+                }
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                    This removes {recursive ? 'those months’' : 'the month’s'} end-of-month
+                    cleanup transactions, un-resets their monthly-fund balances, and
+                    re-opens {recursive ? 'them' : 'it'} (and everything after) for editing.
                 </div>
             </>}
-            confirmText="Unfinalize Month"
+            confirmText={recursive ? `Unfinalize ${affected.length} Months` : 'Unfinalize Month'}
             confirmButtonClassName={styles.dangerConfirmButton}
             onConfirm={deleteOnConfirm}
         />

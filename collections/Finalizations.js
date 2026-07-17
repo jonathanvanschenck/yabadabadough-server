@@ -14,6 +14,7 @@ const {
     to_ydate,
     only_boolean,
     only_ydate,
+    string_to_boolean,
 } = require("./lib/parsers.js");
 const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.mjs");
 
@@ -232,19 +233,28 @@ module.exports = class FinalizationsCollection extends Collection {
 
             static openapi_Summary = "Unfinalize Month";
 
-            static openapi_Description = "Reverse a month's finalization: remove its fund finalizations and eom_cleanup transactions and repoint funds at their previous cache points. Strictly LIFO -- only the LATEST finalized month may be unfinalized (409 otherwise).";
+            static openapi_Description = "Reverse a month's finalization: remove its fund finalizations and eom_cleanup transactions and repoint funds at their previous cache points. Strictly LIFO -- only the LATEST finalized month may be unfinalized (409 otherwise) -- unless `recursive` is set, which first unfinalizes every later month (newest-first) so an earlier month can be reversed too. The whole cascade lands atomically.";
 
             static openapi_Parameters = [
-                this.MonthFinalizationIDParam
+                this.MonthFinalizationIDParam,
+                {
+                    name: 'recursive',
+                    in: 'query',
+                    description: 'Cascade: also unfinalize every later month (newest-first) so a non-latest month can be unfinalized (default false)',
+                    required: false,
+                    schema: { type: 'boolean' }
+                }
             ]
 
             async parse_request(req) {
-                return this.get_month_finalization(req);
+                const month = this.get_month_finalization(req);
+                const recursive = string_to_boolean(req.query?.recursive, false);
+                return { month, recursive };
             }
 
-            async respond(month) {
+            async respond({ month, recursive }) {
                 try {
-                    month.unfinalize(this.db);
+                    month.unfinalize(this.db, { recursive });
                 } catch (err) {
                     translate_model_error(err);
                 }
@@ -252,6 +262,10 @@ module.exports = class FinalizationsCollection extends Collection {
                 const invalidation_actions = [
                     ...finalization_changed(),
                     remove(QK.month_finalization(month.id)),
+                    // A recursive cascade also removed every later month; drop
+                    // any single-entity month-finalization caches pointing at
+                    // now-deleted rows (prefix match, ids omitted)
+                    ...(recursive ? [ invalidate([ "month-finalization" ]) ] : []),
                 ];
 
                 this.broadcast_invalidations(invalidation_actions, { month_finalization_id: month.id });

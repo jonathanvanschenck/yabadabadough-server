@@ -8,6 +8,7 @@ import {
     useGetFundQuery,
     useGetFundsQuery,
     useGetFundBalanceQuery,
+    useGetFundFinalizationsQuery,
     usePatchFundMutation,
     useDeleteFundMutation
 } from '../../hooks/Queries.jsx';
@@ -20,7 +21,7 @@ import { BackLink, AnchorLink } from '../../components/Links.jsx';
 import SearchableTable from '../../components/SearchableTable.jsx';
 import { IconButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
-import { fundTypeOf, formatDollars } from '../../components/domain.js';
+import { fundTypeOf, formatDollars, fundIdsContainingMonthly } from '../../components/domain.js';
 import styles from './Fund.module.css';
 
 
@@ -104,6 +105,29 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
         mutate,
         isPending: updateIsPending
     } = usePatchFundMutation();
+
+    // History-affecting fields are immutable once ANY finalization exists for
+    // the fund (the server's `assert_unfinalized`). Freeze them up front so the
+    // user sees WHY instead of hitting a 400 on save. `parent_id` is only
+    // history for funds that are or contain a monthly fund (the server's
+    // narrower guard), so it locks separately.
+    const isTracked = !!fundDetail?.status?.tracked;
+    const fundFinalizationsQ = useGetFundFinalizationsQuery(
+        { fundId: fundDetail?.id },
+        { enabled: fundDetail != null && isTracked }
+    );
+    const historyLocked = (fundFinalizationsQ.data?.length ?? 0) > 0;
+
+    const allFundsQ = useGetFundsQuery();
+    const monthlyContainingIds = useMemo(
+        () => fundIdsContainingMonthly(allFundsQ.data ?? []),
+        [allFundsQ.data]
+    );
+    const parentLocked = historyLocked
+        && fundDetail != null
+        && (fundDetail.status?.monthly || monthlyContainingIds.has(fundDetail.id));
+
+    const lockedTitle = "Locked: this fund has finalized months. Unfinalize back to the fund's start before changing its history.";
 
     // Initialize form data when fund details are loaded
     useEffect(() => {
@@ -198,6 +222,14 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                 <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
             )}
 
+            { isEditing && historyLocked && (
+                <p className={styles.historyLockedNote}>
+                    This fund has finalized months, so its history-affecting fields
+                    (start point, tracked/pool/monthly{parentLocked ? ', parent' : ''}) are
+                    locked. Unfinalize back to the fund's start to change them.
+                </p>
+            )}
+
             <CardSection title="Details">
                 <CardAutoGrid>
                     <LabeledNumberInput
@@ -218,7 +250,7 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                         label="Parent fund"
                         value={formData.parent_id}
                         onChange={(value) => handleInputChange('parent_id', value)}
-                        isFrozen={!isEditing}
+                        isFrozen={!isEditing || parentLocked}
                         isChanged={formData.parent_id !== originalData.parent_id}
                         excludeIds={[parseInt(fundIdStr)]}
                         allowNull={true}
@@ -228,27 +260,27 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                         label="Tracked"
                         value={formData.tracked}
                         onChange={(value) => handleInputChange('tracked', value)}
-                        isFrozen={!isEditing}
+                        isFrozen={!isEditing || historyLocked}
                         isChanged={formData.tracked !== originalData.tracked}
-                        inputTitle="Tracked funds hold real money and calculate balances"
+                        inputTitle={historyLocked ? lockedTitle : "Tracked funds hold real money and calculate balances"}
                     />
 
                     <LabeledBooleanInput
                         label="Pool"
                         value={formData.pool}
                         onChange={(value) => handleInputChange('pool', value)}
-                        isFrozen={!isEditing}
+                        isFrozen={!isEditing || historyLocked}
                         isChanged={formData.pool !== originalData.pool}
-                        inputTitle="Pools are the source/sink of money for their descendants"
+                        inputTitle={historyLocked ? lockedTitle : "Pools are the source/sink of money for their descendants"}
                     />
 
                     <LabeledBooleanInput
                         label="Monthly"
                         value={formData.monthly}
                         onChange={(value) => handleInputChange('monthly', value)}
-                        isFrozen={!isEditing}
+                        isFrozen={!isEditing || historyLocked}
                         isChanged={formData.monthly !== originalData.monthly}
-                        inputTitle="Monthly funds reset into their nearest pool ancestor at end of month"
+                        inputTitle={historyLocked ? lockedTitle : "Monthly funds reset into their nearest pool ancestor at end of month"}
                     />
                 </CardAutoGrid>
             </CardSection>
@@ -260,17 +292,17 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                             label="Start date"
                             value={formData.start_date}
                             onChange={(value) => handleInputChange('start_date', value || null)}
-                            isFrozen={!isEditing}
+                            isFrozen={!isEditing || historyLocked}
                             isChanged={formData.start_date !== originalData.start_date}
-                            inputTitle="Immutable once any month has been finalized"
+                            inputTitle={historyLocked ? lockedTitle : "Immutable once any month has been finalized"}
                         />
                         <LabeledNumberInput
                             label="Start balance ($)"
                             value={formData.start_balance}
                             onChange={(value) => handleInputChange('start_balance', value)}
-                            isFrozen={!isEditing}
+                            isFrozen={!isEditing || historyLocked}
                             isChanged={formData.start_balance !== originalData.start_balance}
-                            inputTitle="The balance entering the start date; immutable once any month has been finalized"
+                            inputTitle={historyLocked ? lockedTitle : "The balance entering the start date; immutable once any month has been finalized"}
                         />
                     </CardAutoGrid>
                 </CardSection>

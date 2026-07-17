@@ -141,6 +141,21 @@ describe("Finalizations API", () => {
             expect(res.body.invalidations).to.deep.include({ type: "remove", key: ["month-finalization", feb.id.toString()] });
             expect(MonthFinalization.latest(h.db).id).to.equal(jan.id);
         });
+
+        it("cascades with ?recursive=true, unfinalizing later months too", async () => {
+            const jan = MonthFinalization.create(h.db, { month: YDate.parse("2026-01-15") });
+            MonthFinalization.create(h.db, { month: YDate.parse("2026-02-15") });
+            MonthFinalization.create(h.db, { month: YDate.parse("2026-03-15") });
+
+            // Without recursive an earlier month is refused
+            let res = await h.request(`/api/finalizations/month-finalization/${jan.id}`, { method: "DELETE", token: h.tokens.editor });
+            expect(res.status).to.equal(409);
+
+            // With recursive the whole run back to Jan is removed
+            res = await h.request(`/api/finalizations/month-finalization/${jan.id}?recursive=true`, { method: "DELETE", token: h.tokens.editor });
+            expect(res.status).to.equal(200);
+            expect(MonthFinalization.latest(h.db)).to.equal(null);
+        });
     });
 
     describe("GET /api/finalizations/fund-finalizations", () => {

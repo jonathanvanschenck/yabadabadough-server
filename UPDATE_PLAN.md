@@ -65,27 +65,50 @@ are largely independent of each other and can be reordered.
 
 ## Stage 2 — Finalization guardrails & affected-month clarity
 
-- [ ] **Recursive unfinalize with confirmation.** Server unfinalize is strictly LIFO
+- [x] **Recursive unfinalize with confirmation.** Server unfinalize is strictly LIFO
   (`MonthFinalization.unfinalize`), so "recursively unfinalize month M" = unfinalize
   latest → M in order. Add a `recursive` option to the unfinalize flow: either an API
   addition (`DELETE /api/finalizations/...?recursive=true` looping LIFO server-side in one
   transaction — preferred, atomic) or a client-side loop. `UnfinalizeMonthModal`
   (`SpecialModals.jsx:2715`) becomes a confirmation modal explaining side effects
   (eom_cleanup groups removed, monthly-fund balances un-reset, months become editable).
-- [ ] **Affected-months list in both modals.** `FinalizeMonthModal` (recursive finalize
+  Done: chose the atomic API path. `MonthFinalization._delete(db, month, { recursive })`
+  extracts the raw reversal into `_unfinalize_one` and, when `recursive`, unfinalizes every
+  later month newest-first inside the one sqlite transaction before reversing the target;
+  `DELETE /api/finalizations/month-finalization/:id?recursive=true` (a `string_to_boolean`
+  query param) threads it through, and the delete broadcasts a prefix
+  `["month-finalization"]` invalidation on cascade. `UnfinalizeMonthModal` self-fetches the
+  finalizations list, cascades when the target isn't the latest, and its confirmation copy
+  now spells out the side effects. Transactions page unfinalize button no longer gates on
+  `isLatestFinalization`. Tests: model (cascade + latest-is-plain) + API (`?recursive=true`).
+- [x] **Affected-months list in both modals.** `FinalizeMonthModal` (recursive finalize
   already exists server-side) and `UnfinalizeMonthModal` list the concrete months the
   action will touch (e.g. "This will finalize: 2026-03, 2026-04, 2026-05"), computed from
   the finalizations query the pages already have.
-- [ ] **Date inputs respect the finalization boundary.** Per decision: on
+  Done: `monthsBetween(fromSom, toSom)` helper + month chips. FinalizeMonthModal derives the
+  first unfinalized month (latest finalization's sonm, else earliest tracked-fund start),
+  lists every month from there to the picked month, and requires recursive (inline warning +
+  disabled submit) when more than one. UnfinalizeMonthModal lists the target + every later
+  finalized month (newest-first).
+- [x] **Date inputs respect the finalization boundary.** Per decision: on
   CreateTransactionGroup / EditTransactionGroup date fields (and any other
   month-sensitive date input), set the input's `min` to the first day of the first
   unfinalized month (from the finalizations list query) and add an inline form error
   ("March 2026 is finalized — pick a date on or after 2026-04-01") when the entered date
   is out of range; disable submit while invalid.
-- [ ] **Fund editing: disable known-impossible edits.** In the Fund edit surface, when
+  Done: local `useFinalizationDateFloor()` hook (min = latest finalization's sonm; inline
+  validity string) wired into both CreateTransactionGroupModal and EditTransactionGroupModal
+  date fields — `min` disables earlier days in the picker and the validity message disables
+  submit. The themed `DateInput` already supported `min`/`validityMessage`.
+- [x] **Fund editing: disable known-impossible edits.** In the Fund edit surface, when
   finalizations exist for the fund, disable the history-locked fields
   (`start_date`, `start_balance`, `tracked`, `monthly`, `pool`, guarded `parent_id` — the
   `assert_unfinalized` set) with a tooltip explaining why, instead of letting the API 400.
+  Done: EditFundModal queries the fund's finalizations (`historyLocked`) and freezes
+  start_date/start_balance/tracked/monthly/pool with a lock tooltip + a visible warning
+  banner. `parent_id` locks only when the fund is or contains a monthly fund (new
+  `fundIdsContainingMonthly` domain helper mirroring the server's narrower `parent_id`
+  guard).
 
 ## Stage 3 — Transaction group page (the big feature)
 
