@@ -15,9 +15,11 @@ import { IconButton } from '../../components/Buttons.jsx';
 import {
     CreateTransactionGroupModal,
     TransactionNoteModal,
+    DeleteTransactionGroupModal,
     FinalizeMonthModal,
     UnfinalizeMonthModal
 } from '../../components/SpecialModals.jsx';
+import { useAuthRoles } from '../../contexts/AuthContext.jsx';
 import { FinalizedBadge } from '../../components/Badges.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { formatDollars } from '../../components/domain.js';
@@ -65,14 +67,15 @@ function usePersistedIdSet(storageKey) {
 }
 
 /** Tiny borderless icon button -- the page's "subtle, icon-only" affordance. */
-function GhostButton({ icon, title, onClick }) {
+function GhostButton({ icon, title, onClick, disabled = false, className = '' }) {
     return (
         <button
             type="button"
-            className={styles.ghostButton}
+            className={`${styles.ghostButton} ${className}`}
             onClick={onClick}
             title={title}
             aria-label={title}
+            disabled={disabled}
         >
             <FontAwesomeIcon icon={`fa-solid ${icon}`} size="xs" />
         </button>
@@ -137,8 +140,16 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
  * A transaction group row, plus -- when expanded -- one indented row per
  * transaction line.
  */
-function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onToggleExpand, onShowNote, rowClassName = '' }) {
+function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onToggleExpand, onShowNote, onDeleteGroup, isMonthFinalized = false, isEditor = false, rowClassName = '' }) {
     const netMap = netAmountsByFund(group.transactions);
+    const isSpecial = group.status.allocation || group.status.eom_cleanup;
+    const deleteDisabledReason = !isEditor
+        ? 'Editor role required to delete transaction groups'
+        : isSpecial
+        ? `Managed ${group.status.allocation ? 'allocation' : 'end-of-month cleanup'} groups cannot be deleted`
+        : isMonthFinalized
+        ? 'This month is finalized — unfinalize it to delete groups'
+        : null;
     return (<>
         <tr className={`${styles.bodyRow} ${rowClassName}`}>
             <td className={`${styles.dateCell} ${styles.stickyCol1}`}>
@@ -164,6 +175,13 @@ function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onTo
                         onClick={() => onShowNote({ group })}
                     />
                 }
+                <GhostButton
+                    icon="fa-trash"
+                    className={styles.ghostDelete}
+                    title={deleteDisabledReason ?? 'Delete this transaction group'}
+                    disabled={deleteDisabledReason != null}
+                    onClick={() => onDeleteGroup(group)}
+                />
             </td>
             <AmountCell
                 value={outsideTotalOf(group.transactions, trackedIds)}
@@ -188,7 +206,7 @@ function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onTo
                     <td className={`${styles.dateCell} ${styles.stickyCol1}`} />
                     <td className={`${styles.descCell} ${styles.stickyCol2}`}>
                         <NavLink
-                            to={`/transaction/${t.id}`}
+                            to={`/transaction-group/${group.id}#transaction-${t.id}`}
                             className={`${styles.descText} ${styles.descTextIndent}`}
                             title={t.description}
                         >
@@ -244,7 +262,11 @@ export default function Page() {
     const [ isFinalizeOpen, setIsFinalizeOpen ] = useState(false);
     const [ isUnfinalizeOpen, setIsUnfinalizeOpen ] = useState(false);
     const [ noteTarget, setNoteTarget ] = useState(null);
+    const [ deleteTarget, setDeleteTarget ] = useState(null);
     const [ hoveredFundId, setHoveredFundId ] = useState(null);
+
+    const roles = useAuthRoles();
+    const isEditor = !!roles.editor;
 
     // Column hover, delegated: fund cells carry data-fund-id, one handler on
     // the table tracks which column the pointer is in (null elsewhere)
@@ -547,6 +569,9 @@ export default function Page() {
                                     isExpanded={expandedGroupIds.has(group.id)}
                                     onToggleExpand={() => toggleExpanded(group.id)}
                                     onShowNote={setNoteTarget}
+                                    onDeleteGroup={setDeleteTarget}
+                                    isMonthFinalized={monthFinalization != null}
+                                    isEditor={isEditor}
                                 />
                             ))}
                             { monthFinalization != null && <>
@@ -568,6 +593,9 @@ export default function Page() {
                                         isExpanded={expandedGroupIds.has(group.id)}
                                         onToggleExpand={() => toggleExpanded(group.id)}
                                         onShowNote={setNoteTarget}
+                                        onDeleteGroup={setDeleteTarget}
+                                        isMonthFinalized={monthFinalization != null}
+                                        isEditor={isEditor}
                                         rowClassName={styles.cleanupRow}
                                     />
                                 ))}
@@ -598,6 +626,13 @@ export default function Page() {
                 setIsOpen={(open) => { if ( !open ) setNoteTarget(null); }}
                 group={noteTarget?.group ?? null}
                 transaction={noteTarget?.transaction ?? null}
+            />
+
+            <DeleteTransactionGroupModal
+                isOpen={deleteTarget != null}
+                setIsOpen={(open) => { if ( !open ) setDeleteTarget(null); }}
+                group={deleteTarget}
+                closePopoutCallback={() => setDeleteTarget(null)}
             />
         </div>
     );

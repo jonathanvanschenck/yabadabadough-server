@@ -432,3 +432,17 @@ td.colHover {
     opacity: 1;
     color: var(--font-primary-color);
 }
+
+.ghostButton:disabled {
+    cursor: not-allowed;
+    opacity: 0.25;
+}
+
+.ghostButton:disabled:hover {
+    opacity: 0.25;
+    color: var(--font-faint);
+}
+
+.ghostDelete:hover:not(:disabled) {
+    color: var(--font-danger-color);
+}

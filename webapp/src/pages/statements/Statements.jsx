@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 
 import { useGetStatementsPageQuery, usePatchStatementMutation } from '../../hooks/Queries.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
@@ -13,7 +14,6 @@ import {
     ImportStatementsCSVModal,
     ReconcileStatementsModal,
     LinkStatementModal,
-    ViewTransactionGroupModal,
     EditStatementModal,
     DeleteStatementModal
 } from '../../components/SpecialModals.jsx';
@@ -102,6 +102,7 @@ function RowActions({ statement, isEditor, togglingId, onToggleIgnored, onAction
 }
 
 export default function Page() {
+    const navigate = useNavigate();
     const roles = useAuthRoles();
     const isEditor = !!roles.editor;
 
@@ -169,9 +170,15 @@ export default function Page() {
         );
     }, [patchMutate]);
 
+    // 'viewGroup' links through to the transaction-group page (which owns the
+    // unlink escape hatch); every other action opens its modal in place.
     const handleAction = useCallback((kind, statement) => {
+        if ( kind === 'viewGroup' ) {
+            if ( statement.group_id != null ) navigate(`/transaction-group/${statement.group_id}`);
+            return;
+        }
         setActionTarget({ kind, statement });
-    }, []);
+    }, [navigate]);
 
     // Row click opens the state's "natural next step" (the buttons cover the
     // rest): categorize a pending item, view a reconciled one's group, edit
@@ -363,11 +370,6 @@ export default function Page() {
                 isOpen={targetKind === 'link'}
                 setIsOpen={closeAction}
                 statement={targetStatement}
-            />
-            <ViewTransactionGroupModal
-                isOpen={targetKind === 'viewGroup'}
-                setIsOpen={closeAction}
-                groupId={targetKind === 'viewGroup' ? targetStatement?.group_id : null}
             />
             <EditStatementModal
                 isOpen={targetKind === 'edit'}

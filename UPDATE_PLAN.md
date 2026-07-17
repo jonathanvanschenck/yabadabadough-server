@@ -112,29 +112,54 @@ are largely independent of each other and can be reordered.
 
 ## Stage 3 — Transaction group page (the big feature)
 
-- [ ] **New route + page: `/transaction-group/:id`.** Full detail view of a group: scalar
+- [x] **New route + page: `/transaction-group/:id`.** Full detail view of a group: scalar
   fields (description, note, date), the transaction lines table (amount, source → target,
   description, note), linked bank-statement items, finalized-month status. Reuse query
   hooks from `Queries.jsx`; extract shareable pieces from `ViewTransactionGroupModal`
   (`SpecialModals.jsx:2263`).
-- [ ] **Editing when month is unfinalized.** Wire the three PATCH surfaces into the page:
+  Done: new `pages/transaction_group/TransactionGroup.jsx` (+ route in `main.jsx`). Read
+  view of details / lines table / reconciled statements built from
+  `useGetTransactionGroupQuery` + `useGetFundsQuery`; `isManaged`
+  (allocation/eom_cleanup) and `isFinalized` (group date inside a month from
+  `useGetMonthFinalizationsQuery`) drive an `Allocation`/`EOM cleanup` header badge, the
+  `FinalizedBadge`, and a read-only banner. `ViewTransactionGroupModal` is now superseded
+  by the page (left exported but unused).
+- [x] **Editing when month is unfinalized.** Wire the three PATCH surfaces into the page:
   scalar edit (`PATCH /transaction-group/:id`), atomic line editor add/update/remove
   (`PATCH /transaction-group/:id/transactions` — this is the split / re-route workflow),
   and single-line edit (`PATCH /transaction/:id`). Allocation/eom_cleanup groups and
   finalized months render read-only with an explanatory banner (mirror the API-layer 409
   guards client-side).
-- [ ] **URL fragments per transaction.** Each line row gets `id="transaction-<id>"`; the
+  Done: the page reuses the existing `EditTransactionGroupModal` (Edit details) /
+  `EditTransactionGroupTransactionsModal` (Edit transactions) / `EditTransactionModal`
+  (per-line edit) — all guard logic already lives in them. A single `canEdit = isEditor &&
+  !isManaged && !isFinalized` gate hides every edit affordance and disables Delete (with a
+  tooltip reason) for managed groups, finalized months, and non-editors.
+- [x] **URL fragments per transaction.** Each line row gets `id="transaction-<id>"`; the
   page scrolls-to and highlights the fragment target on load (same pattern as the Fund
   page's fragment-synced cards).
-- [ ] **Repoint Transactions-page NavLinks.** `Transactions.jsx:153` group link →
+  Done: `useUrlFragment()` → parse `transaction-<id>`, post-paint rAF/timeout scroll into
+  view, and a 2.2s `lineHighlightFlash` background animation. A `handledFragmentRef` keeps
+  socket-driven refetches from re-scrolling.
+- [x] **Repoint Transactions-page NavLinks.** `Transactions.jsx:153` group link →
   `/transaction-group/:id`; `Transactions.jsx:190` transaction link →
   `/transaction-group/:groupId#transaction-:id`. (Both currently 404 — the routes never
   existed.) Also make the Statements page "view group" action link/open through to the page.
-- [ ] **Delete workflow.** Delete button (with `ConfirmationModal`) on the group page;
+  Done: group link already pointed at `/transaction-group/:id`; transaction line link now
+  `/transaction-group/${group.id}#transaction-${t.id}`. Statements `handleAction('viewGroup')`
+  now `navigate`s to the page instead of opening `ViewTransactionGroupModal` (import + render
+  removed).
+- [x] **Delete workflow.** Delete button (with `ConfirmationModal`) on the group page;
   hidden-or-disabled-with-tooltip for allocation/eom_cleanup groups and finalized months.
   If a group has linked statement items, the confirmation must surface the release-to-pending
   / re-import double-count hazard. Additionally add a small per-row delete icon (same
   confirmation) on the Transactions-page group rows, disabled with tooltip for special groups.
+  Done: page Delete reuses `DeleteTransactionGroupModal` (which already carries the
+  statement-item double-count warning), disabled with a reason tooltip when `!canEdit`, and
+  navigates back to `/transactions` on success. Transactions-page group rows get a subtle
+  `GhostButton` trash (new `disabled` support + `.ghostDelete` danger hover) wired to the
+  same modal, disabled with a tooltip for allocation/eom_cleanup groups, finalized months,
+  and non-editors.
 
 ## Stage 4 — Transactions page polish
 
