@@ -2687,6 +2687,12 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
                         onChange={(value) => handleChange('recursive', value)}
                     />
                 </CardAutoGrid>
+                { data.month != null && data.month.slice(0, 7) >= todayYDate().slice(0, 7) &&
+                    <p className={styles.modalWarning}>
+                        {monthLabel(data.month)} has not ended yet — finalizing it
+                        locks it against further transactions. Unfinalize to undo.
+                    </p>
+                }
             </CardSection>
 
             <CardActionFooter>

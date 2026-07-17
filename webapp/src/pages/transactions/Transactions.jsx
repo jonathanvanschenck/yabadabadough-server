@@ -12,7 +12,12 @@ import {
 } from '../../hooks/Queries.jsx';
 import { MonthPaginator } from '../../components/MonthPaginator.jsx';
 import { IconButton } from '../../components/Buttons.jsx';
-import { CreateTransactionGroupModal, TransactionNoteModal } from '../../components/SpecialModals.jsx';
+import {
+    CreateTransactionGroupModal,
+    TransactionNoteModal,
+    FinalizeMonthModal,
+    UnfinalizeMonthModal
+} from '../../components/SpecialModals.jsx';
 import { FinalizedBadge } from '../../components/Badges.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { formatDollars } from '../../components/domain.js';
@@ -236,6 +241,8 @@ export default function Page() {
     const [ collapsedIds, , toggleCollapsed ] = usePersistedIdSet('transactionsPage.collapsedFundIds');
     const [ expandedGroupIds, setExpandedGroupIds ] = useState(() => new Set());
     const [ isCreateOpen, setIsCreateOpen ] = useState(false);
+    const [ isFinalizeOpen, setIsFinalizeOpen ] = useState(false);
+    const [ isUnfinalizeOpen, setIsUnfinalizeOpen ] = useState(false);
     const [ noteTarget, setNoteTarget ] = useState(null);
     const [ hoveredFundId, setHoveredFundId ] = useState(null);
 
@@ -265,6 +272,17 @@ export default function Page() {
     const eomQ = useGetFundBalancesQuery({ on: eom });
     const monthsQ = useGetMonthFinalizationsQuery();
     const monthFinalization = (monthsQ.data ?? []).find(m => m.som_date === som) ?? null;
+    // Months finalize contiguously and unfinalize strictly LIFO, so only two
+    // actions ever apply to the viewed month: finalize when it lies past the
+    // latest finalized month (a month before the run started can never be
+    // finalized), and unfinalize when it IS the latest finalized month
+    const latestFinalization = (monthsQ.data ?? []).reduce(
+        (latest, m) => (latest == null || m.som_date > latest.som_date) ? m : latest,
+        null
+    );
+    const canFinalize = monthsQ.data != null && monthFinalization == null
+        && (latestFinalization == null || som > latestFinalization.som_date);
+    const isLatestFinalization = monthFinalization != null && monthFinalization.id === latestFinalization?.id;
     const fundFinalizationsQ = useGetFundFinalizationsQuery(
         { monthId: monthFinalization?.id },
         { enabled: monthFinalization != null }
@@ -343,6 +361,27 @@ export default function Page() {
                 </div>
                 <MonthPaginator value={som} onChange={setMonth} />
                 <div className={`${styles.topBarSide} ${styles.topBarRight}`}>
+                    { canFinalize &&
+                        <IconButton
+                            text="Finalize month"
+                            icon="fa-lock"
+                            ariaLabel={`Finalize ${monthTitle}`}
+                            title={`Record ${monthTitle}'s end-of-month balances and lock it`}
+                            onClick={() => setIsFinalizeOpen(true)}
+                        />
+                    }
+                    { monthFinalization != null &&
+                        <IconButton
+                            text="Unfinalize month"
+                            icon="fa-lock-open"
+                            ariaLabel={`Unfinalize ${monthTitle}`}
+                            disabled={!isLatestFinalization}
+                            title={isLatestFinalization
+                                ? `Re-open ${monthTitle} for editing`
+                                : 'Only the latest finalized month can be unfinalized'}
+                            onClick={() => setIsUnfinalizeOpen(true)}
+                        />
+                    }
                     <FinalizedBadge value={monthFinalization != null} />
                 </div>
             </div>
@@ -541,6 +580,17 @@ export default function Page() {
                 setIsOpen={setIsCreateOpen}
                 initialDate={isCurrentMonth ? null : som}
             />
+            <FinalizeMonthModal
+                isOpen={isFinalizeOpen}
+                setIsOpen={setIsFinalizeOpen}
+                initialMonth={som}
+            />
+            <UnfinalizeMonthModal
+                isOpen={isUnfinalizeOpen}
+                setIsOpen={setIsUnfinalizeOpen}
+                monthFinalization={monthFinalization}
+            />
+
             <TransactionNoteModal
                 isOpen={noteTarget != null}
                 setIsOpen={(open) => { if ( !open ) setNoteTarget(null); }}
