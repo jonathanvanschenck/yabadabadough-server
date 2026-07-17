@@ -1,0 +1,293 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+/* ---- Top bar: actions | month selector | window label ---- */
+
+.topBar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-top: 0.5rem;
+}
+
+.topBarSide {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.topBarRight {
+    justify-content: flex-end;
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.pageTitle {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+/* ---- Loading / error / empty states ---- */
+
+.centerState {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.errorTitle {
+    color: var(--font-danger-color);
+    margin: 0;
+}
+
+.emptyState {
+    text-align: center;
+    color: var(--font-faint);
+    padding: 1.5rem 0.5rem;
+    font-style: italic;
+}
+
+/* ---- The grid ----
+ *
+ * One scroll container in both axes. Sticky layers (z-index):
+ *   1    body sticky-left fund cells
+ *   2    totals-row cells (sticky top, beneath the header)
+ *   3    totals-row sticky-left corner
+ *   4    header month cells
+ *   90   header sticky-left corner
+ * Every sticky cell needs a SOLID background or lower layers bleed through
+ * (the fund cells carry their color inline). --thead-height positions the
+ * sticky totals row just beneath the header.
+ */
+
+.tableScroll {
+    --thead-height: 3.4rem;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.table {
+    border-collapse: separate; /* collapse breaks sticky borders */
+    border-spacing: 0;
+    font-size: 0.8rem;
+    width: max-content;
+}
+
+.table td,
+.table th {
+    padding: 0.2rem 0.5rem;
+    background-color: var(--bg-secondary-color);
+}
+
+.table td {
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* ---- Sticky fund column ---- */
+
+.stickyCol {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 13rem;
+    min-width: 13rem;
+    max-width: 13rem;
+}
+
+/* ---- Header ---- */
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    height: var(--thead-height);
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 500;
+    color: var(--font-secondary-color);
+    text-align: left;
+}
+
+.table thead th.stickyCol {
+    z-index: 90;
+}
+
+.fundTh {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+    vertical-align: bottom;
+}
+
+.monthTh {
+    width: 5.75rem;
+    min-width: 5.75rem;
+    max-width: 5.75rem;
+    text-align: center;
+}
+
+.monthLabel {
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.monthYear {
+    margin-left: 0.25rem;
+    font-size: 0.7rem;
+    color: var(--font-faint);
+}
+
+/* The row of per-month affordances under the label: + / copy on open
+ * months, the lock mark on finalized ones */
+.monthControls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.25rem;
+    min-height: 1.1rem;
+}
+
+.lockMark {
+    color: var(--font-faint);
+    font-size: 0.7rem;
+}
+
+.currentMonthTh {
+    border-bottom: 2px solid var(--u-info-text);
+}
+
+/* ---- Totals row: sticky right beneath the header ---- */
+
+.totalsRow td {
+    position: sticky;
+    top: var(--thead-height);
+    z-index: 2;
+    background-color: var(--bg-elevated-color);
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 600;
+}
+
+.totalsRow td.stickyCol {
+    z-index: 3;
+}
+
+.totalsLabel {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+}
+
+.totalsCell {
+    color: var(--font-secondary-color);
+}
+
+/* ---- Rows ----
+ *
+ * Hover highlights compose as background-image glow layers (not
+ * background-color: the cells carry inline fund-color backgrounds, which
+ * would win over any stylesheet color). */
+
+.bodyRow:hover td {
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+.fundCell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.allocCell {
+    position: relative;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.editableCell {
+    cursor: pointer;
+}
+
+.editableCell:hover {
+    background-image:
+        linear-gradient(var(--glow-color), var(--glow-color)),
+        linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+/* Finalized and ineligible cells recede behind a neutral scrim; finalized
+ * values stay readable, ineligible cells are simply dead space */
+.finalizedCell,
+.inertCell {
+    background-image: linear-gradient(var(--scrim-color), var(--scrim-color));
+}
+
+.bodyRow:hover td.finalizedCell,
+.bodyRow:hover td.inertCell {
+    background-image:
+        linear-gradient(var(--scrim-color), var(--scrim-color)),
+        linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+/* A faint "set me" mark on empty editable cells, visible on cell hover */
+.hoverPlus {
+    opacity: 0;
+    color: var(--font-faint);
+}
+
+.editableCell:hover .hoverPlus {
+    opacity: 0.8;
+}
+
+/* The remove affordance on a filled editable cell, visible on cell hover */
+.cellDelete {
+    position: absolute;
+    left: 0.3rem;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: none;
+    padding: 0 0.1rem;
+    cursor: pointer;
+    color: var(--font-faint);
+    opacity: 0;
+    line-height: 1;
+}
+
+.allocCell:hover .cellDelete {
+    opacity: 0.7;
+}
+
+.cellDelete:hover {
+    opacity: 1 !important;
+    color: var(--u-danger-text);
+}
+
+/* ---- Shared subtle icon-only button ---- */
+
+.ghostButton {
+    border: none;
+    background: none;
+    padding: 0 0.25rem;
+    cursor: pointer;
+    color: var(--font-faint);
+    opacity: 0.55;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.ghostButton:hover {
+    opacity: 1;
+    color: var(--font-primary-color);
+}

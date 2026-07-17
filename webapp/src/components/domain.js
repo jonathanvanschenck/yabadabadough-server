@@ -28,6 +28,57 @@ export function formatDollars(value) {
 }
 
 /**
+ * Build the tracked-fund hierarchy tree: one node per TRACKED fund that had
+ * started by `startedBy` (a fund that did not exist yet has nothing to
+ * show), children nested under their parents. A tracked fund whose parents
+ * are all untracked (or not started) roots its own subtree -- the effective
+ * parent is the nearest ancestor that is itself a node.
+ *
+ * Returns the list of root nodes; every node is
+ * `{ fund, depth, children, subtreeIds }` with `subtreeIds` the fund ids of
+ * the node and ALL its descendants (the roll-up set), and siblings sorted by
+ * name. Both the transactions spreadsheet's columns and the allocations
+ * grid's rows are flattenings of this tree.
+ */
+export function buildFundTree(funds, startedBy) {
+    const byId = new Map(funds.map(f => [ f.id, f ]));
+    const isNode = (f) => f.status.tracked && f.start && f.start.date <= startedBy;
+    const nodes = new Map(
+        funds.filter(isNode).map(f => [ f.id, { fund: f, children: [] } ])
+    );
+
+    const effectiveParentOf = (fund) => {
+        let pid = fund.parent_id;
+        while ( pid != null ) {
+            if ( nodes.has(pid) ) return pid;
+            pid = byId.get(pid)?.parent_id ?? null;
+        }
+        return null;
+    };
+
+    const roots = [];
+    for ( const node of nodes.values() ) {
+        const pid = effectiveParentOf(node.fund);
+        if ( pid == null ) roots.push(node);
+        else nodes.get(pid).children.push(node);
+    }
+
+    const finish = (node, depth) => {
+        node.depth = depth;
+        node.children.sort((a, b) => a.fund.name.localeCompare(b.fund.name));
+        node.subtreeIds = [ node.fund.id ];
+        for ( const child of node.children ) {
+            finish(child, depth + 1);
+            node.subtreeIds.push(...child.subtreeIds);
+        }
+    };
+    roots.sort((a, b) => a.fund.name.localeCompare(b.fund.name));
+    roots.forEach(root => finish(root, 0));
+
+    return roots;
+}
+
+/**
  * A bank statement item's state: prefer the API's canonical `state` field,
  * deriving it from the raw flags only as a fallback (every item is in
  * exactly one of these).

@@ -13,6 +13,7 @@ import NotFound from './pages/404/404.jsx'
 import Funds from './pages/funds/Funds.jsx'
 import Fund from './pages/fund/Fund.jsx'
 import Transactions from './pages/transactions/Transactions.jsx'
+import Allocations from './pages/allocations/Allocations.jsx'
 import Statements from './pages/statements/Statements.jsx'
 
 function Home() {
@@ -53,6 +54,7 @@ const router = createBrowserRouter(
                 { path: "funds", Component: Funds },
                 { path: "fund/:id", Component: Fund },
                 { path: "transactions", Component: Transactions },
+                { path: "allocations", Component: Allocations },
                 { path: "statements", Component: Statements },
                 { path: "*", Component: NotFound  }
             ]

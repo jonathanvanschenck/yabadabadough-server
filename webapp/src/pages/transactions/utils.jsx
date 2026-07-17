@@ -1,5 +1,7 @@
 import dayjs from 'dayjs';
 
+import { buildFundTree } from '../../components/domain.js';
+
 /**
  * Pure derivations for the transactions spreadsheet page: month arithmetic,
  * the tracked-fund column tree, and per-row amount math over the API's
@@ -22,53 +24,12 @@ export function hasNote(note) {
 }
 
 /**
- * Build the fund column tree for a month: one column per TRACKED fund that
- * had started by `eom` (a fund that did not exist yet that month has nothing
- * to show), children to the right of their parents. A tracked fund whose
- * parents are all untracked (or not started) roots its own subtree -- the
- * effective parent is the nearest ancestor that is itself a column.
- *
- * Returns the list of root nodes; every node is
- * `{ fund, depth, children, subtreeIds }` with `subtreeIds` the fund ids of
- * the node and ALL its descendants (the collapse roll-up set), and siblings
- * sorted by name.
+ * Build the fund column tree for a month: one column per tracked fund that
+ * had started by `eom`, children to the right of their parents (see the
+ * shared buildFundTree in components/domain.js).
  */
 export function buildFundColumnTree(funds, eom) {
-    const byId = new Map(funds.map(f => [ f.id, f ]));
-    const isColumn = (f) => f.status.tracked && f.start && f.start.date <= eom;
-    const nodes = new Map(
-        funds.filter(isColumn).map(f => [ f.id, { fund: f, children: [] } ])
-    );
-
-    const effectiveParentOf = (fund) => {
-        let pid = fund.parent_id;
-        while ( pid != null ) {
-            if ( nodes.has(pid) ) return pid;
-            pid = byId.get(pid)?.parent_id ?? null;
-        }
-        return null;
-    };
-
-    const roots = [];
-    for ( const node of nodes.values() ) {
-        const pid = effectiveParentOf(node.fund);
-        if ( pid == null ) roots.push(node);
-        else nodes.get(pid).children.push(node);
-    }
-
-    const finish = (node, depth) => {
-        node.depth = depth;
-        node.children.sort((a, b) => a.fund.name.localeCompare(b.fund.name));
-        node.subtreeIds = [ node.fund.id ];
-        for ( const child of node.children ) {
-            finish(child, depth + 1);
-            node.subtreeIds.push(...child.subtreeIds);
-        }
-    };
-    roots.sort((a, b) => a.fund.name.localeCompare(b.fund.name));
-    roots.forEach(root => finish(root, 0));
-
-    return roots;
+    return buildFundTree(funds, eom);
 }
 
 /**

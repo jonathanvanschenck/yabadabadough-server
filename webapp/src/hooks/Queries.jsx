@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useMutation, useQueryClient, useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery, useQueries, keepPreviousData } from '@tanstack/react-query';
 
 import { useAuthedFetchJSON, useAuthedFetchAllJSON, useAuthedFetchPageJSON, parseURL, APIError, useAuthRoles } from '../contexts/AuthContext.jsx';
 import { QK } from './queryKeys.js';
@@ -532,6 +532,37 @@ export function useGetAllocationsQuery(
         },
         enabled: enabled && (!!month !== !!fundIdStr),
         ...options
+    });
+}
+
+/**
+ * Allocations for SEVERAL months at once (the allocations grid): one query
+ * per month, each sharing its cache entry with useGetAllocationsQuery's
+ * month mode (identical query key), combined into a single result object.
+ * `data` is an array of allocation arrays aligned with `months`; the
+ * combined result is pending/error while ANY month is.
+ */
+export function useGetAllocationsForMonthsQuery(months = [], options = {}) {
+    const fetch = useAuthedFetchJSON();
+
+    return useQueries({
+        queries: months.map((month) => ({
+            queryKey: [ ...QK.allocations, { month } ],
+            queryFn: async () => {
+                const url = parseURL({
+                    path: "/api/allocations/allocations",
+                    search: { month }
+                });
+                return await fetch(url, { method: 'GET' });
+            },
+            ...options
+        })),
+        combine: (results) => ({
+            data: results.map(r => r.data),
+            isPending: results.some(r => r.isPending),
+            isError: results.some(r => r.isError),
+            error: results.find(r => r.error)?.error ?? null,
+        }),
     });
 }
 
