@@ -187,6 +187,7 @@ export function CreateFundModal({
             isOpen={isOpen}
             setIsOpen={setIsOpen}
             level={level}
+            size="md"
         >
             <CardSection title="Details">
                 <CardAutoGrid>
@@ -339,6 +340,7 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
             title={`Edit Fund: ${fund?.name ?? ''}`}
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Details">
                 <p className={styles.modalHint}>
@@ -719,7 +721,7 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
             title="Create a new Transaction Group"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             <CardSection title="Group Details">
                 <CardAutoGrid>
@@ -739,6 +741,7 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
                         nullPlaceholder="Enter description"
                         onChange={(value) => handleChange('description', value)}
                         validityMessage={dataValidity.description}
+                        data-autofocus={true}
                     />
                     <LabeledTextArea
                         label="Note"
@@ -850,6 +853,7 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
             title="Edit Transaction Group"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Group Details">
                 { isManaged &&
@@ -994,7 +998,7 @@ export function EditTransactionGroupTransactionsModal({ isOpen, setIsOpen, group
             title="Edit Transactions"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             <CardSection title={`Transactions of: ${group?.description ?? ''} (${group?.date ?? ''})`}>
                 { isManaged &&
@@ -1139,6 +1143,7 @@ export function EditTransactionModal({ isOpen, setIsOpen, transaction }) {
             title="Edit Transaction"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Details">
                 { isManaged &&
@@ -1284,6 +1289,7 @@ export function TransactionNoteModal({ isOpen, setIsOpen, group = null, transact
             title={`Note: ${entity?.description ?? ''}`}
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection>
                 <LabeledTextArea
@@ -1340,7 +1346,7 @@ export function TransactionNoteModal({ isOpen, setIsOpen, group = null, transact
  * autoMatcher? }. `requiredKeys` lists the keys that must be mapped before
  * processing is allowed.
  */
-function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], file: extFile, setFile: setExtFile }) {
+function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], file: extFile, setFile: setExtFile, autoFocusFile = false }) {
 
     const {
         optionKeys,
@@ -1468,6 +1474,7 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
                 accept=".csv,text/csv"
                 onChange={parseCSV}
                 isFrozen={false}
+                {...(autoFocusFile ? { 'data-autofocus': true } : {})}
             />
             { csvToJsonMap &&
                 csvToJsonMap.map(({ index, displayName, key }, i) => (
@@ -1633,7 +1640,7 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
             title="Import Bank Statement Items"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             <CardSection title="What to upload">
                 <p className={styles.modalHint}>
@@ -1668,6 +1675,7 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                     requiredKeys={[ 'key', 'date', 'amount' ]}
                     file={file}
                     setFile={setFile}
+                    autoFocusFile={true}
                 />
             </CardSection>
 
@@ -1801,6 +1809,7 @@ export function EditStatementModal({ isOpen, setIsOpen, statement }) {
             title="Edit Bank Statement Item"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Bank Facts (immutable)">
                 <CardAutoGrid>
@@ -1981,7 +1990,7 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
             title="Reconcile Bank Statement Items"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             <CardSection title={`Item${statements.length === 1 ? '' : 's'} to reconcile`}>
                 <p className={styles.modalHint}>
@@ -2148,7 +2157,7 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
             title="Link to an existing Transaction Group"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             <CardSection title="Item to reconcile">
                 { statement &&
@@ -2279,7 +2288,7 @@ export function ViewTransactionGroupModal({ isOpen, setIsOpen, groupId }) {
             title={`Transaction Group: ${group?.description ?? ''}`}
             isOpen={isOpen}
             setIsOpen={setIsOpen}
-            cardClassName={styles.wideModalCard}
+            size="lg"
         >
             { groupQ.isPending
                 ? <CardSection><div className={styles.linkCandidatesEmpty}><Spinner size="1.5rem" /></div></CardSection>
@@ -2409,6 +2418,7 @@ export function SetAllocationModal({ isOpen, setIsOpen, initialMonth = null, ini
             title="Set Allocation"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="sm"
         >
             <CardSection title="Details">
                 <p className={styles.modalHint}>
@@ -2446,6 +2456,7 @@ export function SetAllocationModal({ isOpen, setIsOpen, initialMonth = null, ini
                         onChange={(value) => handleChange('amount', value)}
                         allowNull={false}
                         validityMessage={dataValidity.amount}
+                        data-autofocus={true}
                     />
                 </CardAutoGrid>
             </CardSection>
@@ -2550,6 +2561,7 @@ export function CopyAllocationsModal({ isOpen, setIsOpen, initialFrom = null, in
             title="Copy Allocations"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="sm"
         >
             <CardSection title="Details">
                 <p className={styles.modalHint}>
@@ -2662,6 +2674,7 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
             title="Finalize a Month"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="sm"
         >
             <CardSection title="Details">
                 <p className={styles.modalHint}>
@@ -2804,6 +2817,7 @@ export function CreateUserModal({ isOpen, setIsOpen }) {
             title="Create a new User"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Details">
                 <CardAutoGrid>
@@ -2923,6 +2937,7 @@ export function EditUserModal({ isOpen, setIsOpen, user }) {
             title={`Edit User: ${user?.email ?? ''}`}
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Details">
                 <p className={styles.modalHint}>
@@ -3095,6 +3110,7 @@ export function ChangePasswordModal({ isOpen, setIsOpen, user }) {
             title={`Change Password: ${user?.email ?? ''}`}
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             <CardSection title="Details">
                 { (isSelf && data.revoke_sessions) &&
@@ -3263,6 +3279,7 @@ export function CreateApiKeyModal({ isOpen, setIsOpen, userId }) {
             title="Mint a new API Key"
             isOpen={isOpen}
             setIsOpen={setIsOpen}
+            size="md"
         >
             { !mintedKey && <>
                 <CardSection title="Details">

@@ -250,6 +250,7 @@ function CreateNew() {
                 title="Create a new Fund"
                 isOpen={isModalOpen}
                 setIsOpen={setIsModalOpen}
+                size="md"
                 cardClassName={styles.createModalCard}
             >
                 <CardSection title="Details">

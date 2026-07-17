@@ -5,11 +5,6 @@
     color: var(--u-danger-ink);
 }
 
-.wideModalCard {
-    max-width: 60rem;
-    width: 90vw;
-}
-
 .modalHint {
     color: var(--font-secondary-color);
     font-size: 0.9rem;

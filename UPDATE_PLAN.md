@@ -37,18 +37,31 @@ are largely independent of each other and can be reordered.
 
 ## Stage 1 — Modal infrastructure (unblocks most UX items)
 
-- [ ] **Modal width tiers.** Base `CardModal` card has `max-height` but no width control
+- [x] **Modal width tiers.** Base `CardModal` card has `max-height` but no width control
   (`webapp/src/components/Modal.module.css`); small modals (SetAllocation, FinalizeMonth)
   stretch awkwardly wide on large screens. Add size variants to `CardModal`
   (e.g. `size="sm" | "md" | "lg"` → `max-width` ~26rem / ~40rem / 60rem, all `width: min(..., 92vw)`),
   keep the existing `wideModalCard` behavior as `lg`, and sweep all 27 modals in
   `SpecialModals.jsx` to declare a sensible size.
-- [ ] **Initial focus on open.** No modal currently moves focus (only `.focus()` in the
+  Done: `.sizeSm/.sizeMd/.sizeLg` in `Modal.module.css`; `CardModal` takes `size` (default
+  `md`); 6 former `wideModalCard` modals → `lg`, SetAllocation/CopyAllocations/FinalizeMonth
+  → `sm`, the rest `md`; `ConfirmationModal` defaults `md` (its ~30rem content fits);
+  `wideModalCard` deleted.
+  Also (mobile prep, folded into the same CSS edit): `modalContainer` height and
+  `cardBaseStyles` max-height now use `dvh` (with `vh` fallback) so a modal's card and submit
+  button stay on-screen when the mobile keyboard/URL bar resizes the viewport.
+- [x] **Initial focus on open.** No modal currently moves focus (only `.focus()` in the
   codebase is inside `SearchableSelector`). Add an `initialFocusRef` /
   `data-autofocus` mechanism to `CardModal` (focus the first flagged element on mount;
   fall back to the first focusable form control). Flag the sensible first field in each
   data-entry modal (SetAllocation amount, CreateTransactionGroup description, import CSV
   file input, etc.). Keep `useStackedEscapeKey` semantics intact for nested modals.
+  Done: `CardModal` focuses `[data-autofocus]` (or the first focusable form control, scoped
+  to the form body so the close button is never picked) on open via a post-paint rAF; buttons
+  excluded from the fallback so read-only views (ViewTransactionGroup) focus nothing. Flagged
+  fields: CreateTransactionGroup description, SetAllocation amount, ImportStatementsCSV file
+  input (threaded through `CSVImporter`'s `autoFocusFile`). Nested modals focus via their own
+  effect, so a child open never fights the parent.
 
 ## Stage 2 — Finalization guardrails & affected-month clarity
 

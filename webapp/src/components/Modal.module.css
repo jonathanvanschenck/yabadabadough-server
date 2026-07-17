@@ -6,6 +6,7 @@
     top: 0;
     width: 100vw;
     height: 100vh;
+    height: 100dvh; /* dvh: track the mobile viewport as URL bar / keyboard resize it (vh above is the fallback) */
     z-index: 1000;
     background-color: var(--scrim-color);
     backdrop-filter: blur(5px);
@@ -27,8 +28,17 @@
   display: flex;
   flex-direction: column;
   max-height: 90vh;
+  max-height: 90dvh; /* dvh so the card (and its submit button) stay on-screen when the mobile keyboard opens; vh above is the fallback */
   padding: 1rem; /* bring in the padding slightly compared to a full card */
 }
+
+/* Width tiers (applied by CardModal's `size` prop). `max-width` sets the
+   desktop ceiling; `width` caps at 92vw so every tier collapses to the same
+   phone-safe near-full-width on narrow screens (the tier only matters once the
+   viewport is wide enough for the max-width to win). */
+.sizeSm { max-width: 26rem; width: min(26rem, 92vw); }
+.sizeMd { max-width: 40rem; width: min(40rem, 92vw); }
+.sizeLg { max-width: 60rem; width: min(60rem, 92vw); }
 .modalFormContainer {
     overflow-y: auto;
     flex-grow: 1;
