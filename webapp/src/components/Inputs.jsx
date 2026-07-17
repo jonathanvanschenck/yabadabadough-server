@@ -843,6 +843,7 @@ export function SearchableSelector({
     valueDisplayName, // Optional display name for the current value
     optionKeys = [],
     optionDisplayNames = [],
+    optionSearchTexts = [], // Optional plain-string text used ONLY for filtering
     onChange,
     onCreateNew = null, // Optional (searchTerm) => void; enables a "create new" row
     createNewLabel = "Create new",
@@ -872,12 +873,22 @@ export function SearchableSelector({
     const searchInputRef = useRef(null);
     const optionsContainerRef = useRef(null);
 
+    // Text used ONLY for filtering. optionDisplayNames may be JSX (e.g. fund
+    // badges), which has no meaningful .toLowerCase() — calling it crashes the
+    // dropdown. Callers pass plain strings via optionSearchTexts; fall back to
+    // a string display name, else the key itself.
+    const searchTextFor = (key, index) => {
+        const explicit = optionSearchTexts[index];
+        if (typeof explicit === 'string') return explicit;
+        const displayName = optionDisplayNames[index];
+        if (typeof displayName === 'string') return displayName;
+        return key;
+    };
+
     // Filter options based on search term
-    const filteredOptions = searchTerm 
-        ? optionKeys.filter((key, index) => {
-            const displayName = optionDisplayNames[index] || key;
-            return displayName.toLowerCase().includes(searchTerm.toLowerCase());
-        })
+    const filteredOptions = searchTerm
+        ? optionKeys.filter((key, index) =>
+            searchTextFor(key, index).toLowerCase().includes(searchTerm.toLowerCase()))
         : optionKeys;
 
     // Update dropdown position when open

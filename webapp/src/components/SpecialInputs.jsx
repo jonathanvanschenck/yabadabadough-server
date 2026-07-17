@@ -56,6 +56,8 @@ export function FundSearchableSelector({
 
     const fundKeys = funds ? funds.map(f => f.id.toString()) : [];
     const fundDisplayNames = funds ? funds.map(f => <FundTypeBadge status={f.status} label={f.name} color={f.color} />) : [];
+    // The display names are JSX badges; searching needs the plain fund names.
+    const fundSearchTexts = funds ? funds.map(f => f.name) : [];
     const _currentFund = funds && value
         ? (funds.find(f => f.id.toString() === value.toString()) || originalFund || null)
         : (originalFund || null);
@@ -67,6 +69,7 @@ export function FundSearchableSelector({
             valueDisplayName={_currentFund ? <FundTypeBadge status={_currentFund.status} label={_currentFund.name} color={_currentFund.color} /> : null}
             optionKeys={fundKeys}
             optionDisplayNames={fundDisplayNames}
+            optionSearchTexts={fundSearchTexts}
             onChange={_onChange}
             onCreateNew={onCreateNew}
             createNewLabel={createNewLabel}

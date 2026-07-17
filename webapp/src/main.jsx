@@ -10,6 +10,7 @@ import AppLayout from './AppLayout.jsx'
 
 
 import NotFound from './pages/404/404.jsx'
+import RouteError from './pages/error/RouteError.jsx'
 import Funds from './pages/funds/Funds.jsx'
 import Fund from './pages/fund/Fund.jsx'
 import Transactions from './pages/transactions/Transactions.jsx'
@@ -49,6 +50,7 @@ const router = createBrowserRouter(
         {
             path: "/",
             Component: AppLayout,
+            ErrorBoundary: RouteError,
             children: [
                 { index: true, Component: Home },
                 { path: "funds", Component: Funds },

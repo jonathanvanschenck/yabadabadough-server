@@ -1,0 +1,68 @@
+.container {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1.5rem;
+    background: var(--bg-primary-color);
+}
+
+.card {
+    width: min(32rem, 100%);
+    background: var(--bg-secondary-color);
+    border: 1px solid var(--u-danger-border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    box-shadow: 0 0 8px 2px var(--glow-color);
+}
+
+.title {
+    margin: 0 0 0.5rem 0;
+    color: var(--u-danger-text);
+    font-weight: 600;
+}
+
+.lede {
+    margin: 0 0 1rem 0;
+    color: var(--font-secondary-color);
+}
+
+.detail {
+    margin: 0 0 1.5rem 0;
+    padding: 0.75rem 1rem;
+    background: var(--bg-primary-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--font-danger-color);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: auto;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.button {
+    padding: 0.5rem 1rem;
+    background: var(--u-danger);
+    color: var(--u-danger-ink);
+    border: none;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.button:hover {
+    background: var(--u-danger-hover);
+}
+
+.link {
+    color: var(--font-primary-color);
+}

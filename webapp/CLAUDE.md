@@ -22,6 +22,21 @@ by string name like `icon="fa-trash"`). ESLint flat config: unused vars are erro
   app with a full-screen reload prompt on mismatch.
 - Static files in `public/` use dashes, not underscores, in filenames.
 
+## Browser debugging (Chrome DevTools MCP)
+
+Claude drives a real Chrome via the `chrome-devtools` MCP server (declared in the project
+`.mcp.json` at the server root) to inspect console errors, network traffic, and the live
+DOM — no puppeteer harness in-repo. Dev-server + attach workflow:
+
+1. From `webapp/`: `npm run build:dev:watch` (unminified + sourcemaps, rebuilds `dist/` on
+   save).
+2. From the server root: `node index.js` — the backend serves `dist/` and the API on the
+   same origin. Default URL is `http://localhost:1234` (`YDD_SERVER_PORT`, default `1234`).
+   For a login-free debugging session run with `YDD_DISABLE_AUTH=1`.
+3. Point the Chrome DevTools MCP tools at that URL to navigate, read console/network, and
+   snapshot the DOM. `build:dev:watch` keeps `dist/` fresh, so just reload the page after a
+   code change (the `<VersionGate>` also prompts a reload on a version bump).
+
 ## Naming & styling
 
 - camelCase in the webapp; the API is snake_case — convert at the boundary (hook param
