@@ -236,18 +236,44 @@ are largely independent of each other and can be reordered.
 
 ## Stage 6 — Allocations page overhaul
 
-- [ ] **Cell hover/action redesign** (per the detailed spec in notes): fixed-position icon
+- [x] **Cell hover/action redesign** (per the detailed spec in notes): fixed-position icon
   slots so nothing moves on hover — edit/add icon always visible (muted) in a reserved
   slot; delete icon in its own reserved slot to the *right* of edit/add, rendered only on
   cell hover (muted → warning color on direct hover); hovered cell gets a border/box-shadow
   so icon↔cell grouping is unambiguous. Kill the current float-left delete / float-right
   add layout (`Allocations.jsx:49-82`).
-- [ ] **Horizontal continuous month scroll.** Replace `MonthPaginator` with a horizontally
+  Done: `AllocationCell` now renders `.cellInner` = value (`.cellValue`, flex-fills) + a
+  fixed-width `.cellActions` reserving two slots on the right — `.editSlot` (always-present
+  muted pencil on filled cells / square-plus on empty, brighter on cell hover) and
+  `.deleteSlot` (trash revealed only on cell hover, muted → `--u-danger-text` on direct
+  hover). Every alloc cell (editable / finalized / inert / totals) reserves the slot width
+  so the number column stays aligned and nothing shifts on hover. Hovered editable cells get
+  an inset `--accent-color` ring (a box-shadow, composing over the inline fund-color bg).
+- [x] **Horizontal continuous month scroll.** Replace `MonthPaginator` with a horizontally
   scrollable month strip: sticky fund-name column (with pool indicators from Stage 5),
   months as columns extending left into the past, loading older months on scroll
   (windowed fetch via the existing allocations/finalizations queries). Preserve `?month=`
   deep-linking as initial scroll position. Keep the per-month header controls
   (add, copy-from-previous, finalized lock).
+  Done: dropped `MonthPaginator`/`?month=` write-back. The window is bounded by TWO growable
+  edges (`oldestSom`/`newestSom` state, `monthRange` builds the column list between them), so
+  it grows into BOTH the past and the future on scroll. `onScroll` grows whichever edge the
+  scroll nears (within `LOAD_THRESHOLD_PX`): a left-grow prepends `LOAD_CHUNK` older months and
+  a `useLayoutEffect` (keyed on `oldestSom`) restores `scrollLeft` by the width just added so
+  the visible months never jump (classic upward-infinite-scroll anchor); a right-grow appends
+  `LOAD_CHUNK` future months and needs no restore (right-appends don't shift existing content).
+  `MAX_MONTHS` caps the total in both directions. The initial window keeps a `FUTURE_MONTHS`
+  buffer past today AND past any deep-linked month, so a deep-linked FUTURE month is never
+  pinned to the far-right edge (previously it became `newestSom` exactly, jamming it against the
+  edge with pre-fund past months dominating the view). The per-month `useQueries` hook caches by
+  month value, so grows fetch only the new columns and a still-loading month renders empty then
+  fills — `isInitialPending` gates the full spinner on the FIRST load only. `?month=` is read
+  once on mount and scrolled just past the sticky fund column (else the newest month at the far
+  right). Per-month header controls (add / copy-from-previous / finalized lock) unchanged.
+  Verified via Chrome DevTools MCP: initial render (current month centered, future reachable),
+  bidirectional infinite scroll (past AND future, no cap-out), prepend-without-jump, future
+  deep-link now landing the target in view with context on both sides, and the hover ring/delete
+  reveal.
 
 ## Stage 7 — Statements page cards redesign
 

@@ -6,15 +6,20 @@ import dayjs from 'dayjs';
  */
 
 /**
- * The `count` months ending at `endSom` (inclusive), oldest first, each as
- * its first-of-month YYYY-MM-DD string (the shape the allocation APIs want).
+ * Every month from `oldestSom` to `newestSom` (both inclusive), oldest first,
+ * each as its first-of-month YYYY-MM-DD string (the shape the allocation APIs
+ * want). The strip grows on BOTH edges, so the window is bounded by its two
+ * ends rather than an end + a count.
  */
-export function monthWindowOf(endSom, count) {
-    const end = dayjs(endSom).startOf('month');
-    return Array.from(
-        { length: count },
-        (_, i) => end.subtract(count - 1 - i, 'month').format('YYYY-MM-01')
-    );
+export function monthRange(oldestSom, newestSom) {
+    const end = dayjs(newestSom).startOf('month');
+    const out = [];
+    let cur = dayjs(oldestSom).startOf('month');
+    while ( !cur.isAfter(end) ) {
+        out.push(cur.format('YYYY-MM-01'));
+        cur = cur.add(1, 'month');
+    }
+    return out;
 }
 
 /**

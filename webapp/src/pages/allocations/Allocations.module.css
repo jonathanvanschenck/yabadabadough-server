@@ -218,19 +218,56 @@
 }
 
 .allocCell {
-    position: relative;
     text-align: right;
     white-space: nowrap;
+}
+
+/* Cell content: the value fills, action icons live in FIXED reserved slots on
+ * the right so nothing shifts on hover. Every alloc cell (editable, finalized,
+ * inert, totals) reserves the slot width, keeping the number column aligned. */
+.cellInner {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+}
+
+.cellValue {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cellActions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.15rem;
+    width: 2.1rem;
+}
+
+.editSlot,
+.deleteSlot {
+    width: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .editableCell {
     cursor: pointer;
 }
 
+/* Hovered editable cell: a soft accent ring groups it with its action icons
+ * (a box-shadow composes over the inline fund-color background, which a
+ * background-color could not) plus the usual glow wash. */
 .editableCell:hover {
-    background-image:
-        linear-gradient(var(--glow-color), var(--glow-color)),
-        linear-gradient(var(--glow-color), var(--glow-color));
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
+    box-shadow: inset 0 0 0 1px var(--accent-color);
 }
 
 /* Finalized and ineligible cells recede behind a neutral scrim; finalized
@@ -247,37 +284,40 @@
         linear-gradient(var(--glow-color), var(--glow-color));
 }
 
-/* A faint "set me" mark on empty editable cells, visible on cell hover */
-.hoverPlus {
-    opacity: 0;
+/* The always-present edit/add glyph: muted at rest, clearer on cell hover so
+ * the reserved slot never changes size, only emphasis. */
+.editSlot {
     color: var(--font-faint);
+    opacity: 0.45;
+    transition: opacity 0.1s ease, color 0.1s ease;
 }
 
-.editableCell:hover .hoverPlus {
-    opacity: 0.8;
+.editableCell:hover .editSlot {
+    opacity: 0.95;
+    color: var(--font-secondary-color);
 }
 
-/* The remove affordance on a filled editable cell, visible on cell hover */
+/* The remove affordance: its slot is always reserved to the right of edit/add,
+ * but the glyph is revealed only on cell hover (muted -> danger on direct
+ * hover). */
 .cellDelete {
-    position: absolute;
-    left: 0.3rem;
-    top: 50%;
-    transform: translateY(-50%);
     border: none;
     background: none;
-    padding: 0 0.1rem;
+    padding: 0;
+    margin: 0;
     cursor: pointer;
     color: var(--font-faint);
     opacity: 0;
     line-height: 1;
+    transition: opacity 0.1s ease, color 0.1s ease;
 }
 
 .allocCell:hover .cellDelete {
-    opacity: 0.7;
+    opacity: 0.6;
 }
 
 .cellDelete:hover {
-    opacity: 1 !important;
+    opacity: 1;
     color: var(--u-danger-text);
 }
 
