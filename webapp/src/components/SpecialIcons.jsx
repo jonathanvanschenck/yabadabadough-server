@@ -52,13 +52,13 @@ export function FundTypeIcon({ status, className, marginRight, marginLeft, ...re
     let fundTypeIcon;
     switch (fundTypeOf(status)) {
         case "pool":
-            fundTypeIcon = "fa-solid fa-water";
+            fundTypeIcon = "fa-solid fa-vault";
             break;
         case "monthly":
-            fundTypeIcon = "fa-solid fa-calendar-days";
+            fundTypeIcon = "fa-solid fa-arrows-rotate";
             break;
         case "tracked":
-            fundTypeIcon = "fa-solid fa-chart-line";
+            fundTypeIcon = "fa-solid fa-coins";
             break;
         case "untracked":
             fundTypeIcon = "fa-solid fa-folder";

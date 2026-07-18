@@ -211,16 +211,28 @@ are largely independent of each other and can be reordered.
 
 *(Before Stage 6, which builds on the new icons.)*
 
-- [ ] **Re-imagine tracked/pool/monthly icons.** Current mapping in
+- [x] **Re-imagine tracked/pool/monthly icons.** Current mapping in
   `SpecialIcons.jsx:51` (pool→water, monthly→calendar-days, tracked→chart-line,
   untracked→folder) doesn't communicate the concepts. Propose 2–3 candidate icon sets
   (FontAwesome-only) with a rendered comparison for Jonathan to pick from; the concepts to
   convey: *tracked* = has a real balance; *pool* = source/sink reservoir that descendants
   draw from; *monthly* = resets each month. Update `FundTypeIcon`, `FundTypeBadge`,
   legend/tooltips everywhere they appear.
-- [ ] **Pool indicator on allocations page.** Parent funds that are pools get the pool
+  Done: rendered a 3-set comparison artifact (glyph + badge + in-context mock, in the real
+  Warm Stone surface); Jonathan picked **Set A · "Vault & cycle"**: tracked→`coins`,
+  pool→`vault`, monthly→`arrows-rotate` (the big win — a cycle glyph reads as "resets each
+  month" where a calendar only says "a date"), untracked→`folder` (kept). `FundTypeIcon`
+  switched, `Icons.jsx` registers `faCoins`/`faVault`/`faArrowsRotate` and drops the
+  now-unused `faWater` (`faCalendarDays`/`faChartLine` stay — still used by the date picker /
+  Funds show-all toggle). `FundTypeBadge`/`FundLabel` derive centrally from `FundTypeIcon`, so
+  every badge + selector updated with no other edits; no icon-referencing legend exists.
+- [x] **Pool indicator on allocations page.** Parent funds that are pools get the pool
   symbol (and perhaps a subtle row treatment) in the allocations grid's fund column, so
   it's obvious where allocation money is drawn from.
+  Done: pool funds render the vault `FundTypeIcon` after the name in the sticky fund column
+  (tooltip "Pool — allocations to its descendants are drawn from here") plus a `.poolCell`
+  amber left-rail (`inset` box-shadow, so it composes over the inline fund-color cell
+  background).
 
 ## Stage 6 — Allocations page overhaul
 

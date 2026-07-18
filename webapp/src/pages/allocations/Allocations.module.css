@@ -210,6 +210,13 @@
     text-overflow: ellipsis;
 }
 
+/* Pool funds are the source/sink allocations draw from: mark the row with a
+ * left accent rail (an inset box-shadow, so it composes over the inline
+ * fund-color background) alongside the vault icon in the fund column. */
+.poolCell {
+    box-shadow: inset 0.2rem 0 0 var(--accent-color);
+}
+
 .allocCell {
     position: relative;
     text-align: right;

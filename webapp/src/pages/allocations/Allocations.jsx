@@ -11,6 +11,7 @@ import {
 import { MonthPaginator } from '../../components/MonthPaginator.jsx';
 import { IconButton } from '../../components/Buttons.jsx';
 import { FundLabel } from '../../components/Badges.jsx';
+import { FundTypeIcon } from '../../components/SpecialIcons.jsx';
 import {
     SetAllocationModal,
     DeleteAllocationModal,
@@ -275,13 +276,21 @@ export default function Page() {
                                 return (
                                     <tr key={fund.id} className={styles.bodyRow}>
                                         <td
-                                            className={`${styles.fundCell} ${styles.stickyCol}`}
+                                            className={`${styles.fundCell} ${styles.stickyCol}`
+                                                + (fund.status.pool ? ` ${styles.poolCell}` : '')}
                                             style={{
                                                 backgroundColor: fundColorVar(fund.color, 'main'),
                                                 paddingLeft: `${0.5 + depth * 1.1}rem`
                                             }}
                                         >
                                             <FundLabel fund={fund} />
+                                            { fund.status.pool &&
+                                                <FundTypeIcon
+                                                    status={fund.status}
+                                                    marginLeft="0.4rem"
+                                                    title="Pool — allocations to its descendants are drawn from here"
+                                                />
+                                            }
                                         </td>
                                         { months.map((som, i) => {
                                             const allocation = allocMaps[i].get(fund.id) ?? null;

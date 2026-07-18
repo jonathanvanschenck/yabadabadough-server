@@ -33,7 +33,9 @@ import {
     faCircleXmark,
     faCircleQuestion,
     // Domain icons: fund types, statement states, roles (see SpecialIcons.jsx)
-    faWater,
+    faCoins,
+    faVault,
+    faArrowsRotate,
     faCalendarDays,
     faChartLine,
     faFolder,
@@ -83,7 +85,9 @@ library.add(
     faCircleXmark,
     faCircleQuestion,
 
-    faWater,
+    faCoins,
+    faVault,
+    faArrowsRotate,
     faCalendarDays,
     faChartLine,
     faFolder,
