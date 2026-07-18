@@ -277,16 +277,37 @@ are largely independent of each other and can be reordered.
 
 ## Stage 7 — Statements page cards redesign
 
-- [ ] **Cards layout.** Replace the `SearchableTable` on `Statements.jsx` with vertically
+- [x] **Cards layout.** Replace the `SearchableTable` on `Statements.jsx` with vertically
   stacked cards (state badge, date, source, amount, note), keeping the server-side
   search/sort/pagination controls above the list. Design for narrow screens first.
-- [ ] **Inline easy path on pending cards.** From/to fund selectors + description input +
+  Done: `Statements.jsx` now renders a `StatementCard` list (header = state badge / date /
+  source / right-aligned amount, wrapping on narrow; note line; state-tinted). The old
+  clickable-header sort is gone (no column heads), so sort moved into the filter bar as a
+  single "Sort by" `LabeledSelector` whose options encode `<order_by>:<direction>` pairs;
+  search moved up next to it as a `LabeledTextInput` (still debounced server-side). Filter
+  bar wraps to a vertical stack on phones; the card list scrolls with `Pagination` pinned
+  below. First-load shows a centered `Spinner`; background refetches dim the list
+  (`isPlaceholderData`).
+- [x] **Inline easy path on pending cards.** From/to fund selectors + description input +
   confirm button directly on the card for the common single-transaction reconcile —
   no modal. Uses the Stage 4 description-defaulting rule (one description field fills both
   group and line). Amount/date come from the statement item.
-- [ ] **Advanced workflows stay as buttons → modals.** Split-group reconcile
+  Done: `InlinePendingReconcile` (per-card local state, editors only) posts
+  `create_from_statements` with `statement_ids: [id]` and one line — amount = the item's
+  magnitude, date defaulted server-side to the item date, and the single description field
+  fills BOTH the group and the lone line (no null line description sent). Description seeds
+  from the item note (key fallback); Confirm disables until both funds are picked (and
+  differ) and the description is non-blank. On success the item leaves the pending list, so
+  the card just re-renders reconciled.
+- [x] **Advanced workflows stay as buttons → modals.** Split-group reconcile
   (`ReconcileStatementsModal`), link-to-existing (`LinkStatementModal`), edit, delete,
   ignore-toggle — as secondary actions on the card.
+  Done: `CardActions` renders the state-appropriate secondary icons — pending: advanced
+  reconcile (`ReconcileStatementsModal`, retitled "split / transfer / custom date"), link,
+  ignore; ignored: un-ignore; reconciled: view group (→ `/transaction-group/:id`) — plus
+  edit + delete everywhere, all disabled for non-editors. Verified via Chrome DevTools MCP:
+  pending inline form + actions, reconciled view-group card, non-clipped fund dropdown
+  (portal), and the phone-width stacked layout; no console errors.
 
 ---
 
