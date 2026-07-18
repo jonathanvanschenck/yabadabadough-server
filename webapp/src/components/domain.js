@@ -41,8 +41,22 @@ export function formatDollars(value) {
  * grid's rows are flattenings of this tree.
  */
 export function buildFundTree(funds, startedBy) {
+    return buildTreeOver(funds, f => f.status.tracked && f.start && f.start.date <= startedBy);
+}
+
+/**
+ * Hierarchy tree over ALL the given funds (tracked or not) -- the selector
+ * variant of buildFundTree, for ordering dropdown options and labeling them
+ * with ancestor context. Same node shape and effective-parent rule; a fund
+ * whose ancestors were all filtered out of `funds` (e.g. by a server-side
+ * query filter) roots its own subtree.
+ */
+export function buildFundOptionTree(funds) {
+    return buildTreeOver(funds, () => true);
+}
+
+function buildTreeOver(funds, isNode) {
     const byId = new Map(funds.map(f => [ f.id, f ]));
-    const isNode = (f) => f.status.tracked && f.start && f.start.date <= startedBy;
     const nodes = new Map(
         funds.filter(isNode).map(f => [ f.id, { fund: f, children: [] } ])
     );

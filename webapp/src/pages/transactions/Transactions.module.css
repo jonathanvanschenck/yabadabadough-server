@@ -270,7 +270,12 @@
     background-image: linear-gradient(var(--glow-color), var(--glow-color));
 }
 
-.fundThBars {
+/* Group tier rows: one per nesting level (root on top), each group a labeled
+ * cell spanning its subtree's columns. Every column draws its own full-width
+ * fill (adjacent fills of one group join seamlessly); the segment's first
+ * column draws the label, sized in the JSX to the whole segment's width and
+ * overhanging the next columns like the angled labels do. */
+.fundThTiers {
     position: absolute;
     bottom: 1.45rem;
     left: 0;
@@ -279,9 +284,56 @@
     flex-direction: column;
 }
 
-.fundThBar {
-    height: 0.25rem;
+.fundThTier {
+    position: relative;
+    height: 1.05rem;
     margin-top: 0.15rem;
+}
+
+.fundThTierFill {
+    position: absolute;
+    inset: 0;
+}
+
+.fundThTierLabel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: none;
+    background: none;
+    margin: 0;
+    padding: 0 0.35rem;
+    font-family: inherit;
+    font-size: 0.66rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    text-align: left;
+}
+
+button.fundThTierLabel {
+    cursor: pointer;
+}
+
+button.fundThTierLabel:hover .tierCaret {
+    opacity: 1;
+}
+
+.tierCaret {
+    font-size: 0.55rem;
+    opacity: 0.7;
+    flex: none;
+}
+
+.tierName {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 .fundThControls {

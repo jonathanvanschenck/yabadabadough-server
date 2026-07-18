@@ -12,6 +12,20 @@
     color: var(--font-muted);
 }
 
+/* A fund dropdown option: faint ancestor-path prefix + the fund badge */
+.fundOption {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.fundOptionPath {
+    color: var(--font-faint);
+    font-size: 0.75em;
+    white-space: nowrap;
+}
+
 .colorFrozen {
     display: flex;
     align-items: center;

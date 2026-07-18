@@ -68,6 +68,10 @@ function usePersistedIdSet(storageKey) {
     return [ ids, setIds, toggle ];
 }
 
+/** Must match the `.fundTh` width in Transactions.module.css: a group tier
+ *  label spans `segment columns × this` to run across its whole subtree. */
+const FUND_COL_WIDTH_REM = 4.25;
+
 /** Tiny borderless icon button -- the page's "subtle, icon-only" affordance. */
 function GhostButton({ icon, title, onClick, disabled = false, className = '' }) {
     return (
@@ -629,11 +633,11 @@ export default function Page() {
         clearSelection();
     }, [som, columns, expandedGroupIds, groupsQ.data, clearSelection]);
 
-    // The header must be tall enough for the angled labels plus one group-bar
+    // The header must be tall enough for the angled labels plus one group-tier
     // row per nesting level; the totals row sticks directly beneath it (see
     // --thead-height in the CSS)
     const barRows = columns.reduce((max, col) => Math.max(max, col.bars.length), 0);
-    const theadHeightRem = 8 + barRows * 0.4;
+    const theadHeightRem = 8 + barRows * 1.2;
 
     // The rem estimate above sets the header's height, but its true rendered
     // height also carries cell padding + the bottom border (content-box), so
@@ -764,9 +768,9 @@ export default function Page() {
                                         key={col.fund.id}
                                         className={`${styles.fundTh} ${col.fund.id === hoveredFundId ? styles.colHover : ''}`}
                                         // --fund-base-height is the split line between the
-                                        // upright base rectangle (bars/controls) and the
-                                        // skewed label parallelogram; it clears the bar rows
-                                        style={{ zIndex: 80 - colIndex, '--fund-base-height': `calc(1.7rem + ${barRows * 0.4}rem)` }}
+                                        // upright base rectangle (tiers/controls) and the
+                                        // skewed label parallelogram; it clears the tier rows
+                                        style={{ zIndex: 80 - colIndex, '--fund-base-height': `calc(1.7rem + ${barRows * 1.2}rem)` }}
                                         data-fund-id={col.fund.id}
                                     >
                                         <div className={styles.fundThBase} />
@@ -783,39 +787,76 @@ export default function Page() {
                                             </span>
                                         </div>
                                         { barRows > 0 &&
-                                            // One stacked segment per nesting level; adjacent
-                                            // segments of the same group read as a single bar
-                                            // spanning that group's subtree. Deepest level on
-                                            // TOP (row d shows bars[barRows - 1 - d], so the
-                                            // outermost group always sits on the bottom row)
-                                            <div className={styles.fundThBars}>
+                                            // One tier row per nesting level, ROOT tier on top
+                                            // (row d shows bars[d]). Every column paints a fill
+                                            // for its group at that level; the segment's FIRST
+                                            // column also carries the group's label, sized to
+                                            // span the whole segment (a subtree's visible
+                                            // columns are always a contiguous run) and painting
+                                            // over the next columns' fills via the ths'
+                                            // descending z-index, like the angled labels
+                                            <div className={styles.fundThTiers}>
                                                 { Array.from({ length: barRows }, (_, d) => {
-                                                    const bar = col.bars[barRows - 1 - d];
+                                                    const bar = col.bars[d];
+                                                    const isSegmentStart = bar != null
+                                                        && columns[colIndex - 1]?.bars[d]?.id !== bar.id;
+                                                    let span = 0;
+                                                    while ( isSegmentStart && columns[colIndex + span]?.bars[d]?.id === bar.id ) span += 1;
+                                                    // The label only toggles collapse when the
+                                                    // segment starts on the group's OWN column:
+                                                    // with that column hidden, collapsing would
+                                                    // vanish the whole subtree with no way back
+                                                    const canToggle = isSegmentStart && bar.id === col.fund.id;
+                                                    const label = canToggle && col.isCollapsed
+                                                        ? `${bar.name} +${col.memberIds.length - 1}`
+                                                        : bar?.name;
+                                                    const labelStyle = {
+                                                        width: `${span * FUND_COL_WIDTH_REM}rem`,
+                                                        color: fundColorVar(bar?.color, 'text')
+                                                    };
                                                     return (
-                                                        <div
-                                                            key={d}
-                                                            className={styles.fundThBar}
-                                                            style={{
-                                                                backgroundColor: bar
-                                                                    ? fundColorVar(bar.color, 'dot')
-                                                                    : 'transparent'
-                                                            }}
-                                                            title={bar?.name}
-                                                        />
+                                                        <div key={d} className={styles.fundThTier}>
+                                                            { bar != null &&
+                                                                <div
+                                                                    className={styles.fundThTierFill}
+                                                                    style={{
+                                                                        backgroundColor: fundColorVar(bar.color, 'main'),
+                                                                        ...(isSegmentStart
+                                                                            ? { borderLeft: `3px solid ${fundColorVar(bar.color, 'dot')}` }
+                                                                            : {})
+                                                                    }}
+                                                                />
+                                                            }
+                                                            { isSegmentStart && (canToggle
+                                                                ? <button
+                                                                    type="button"
+                                                                    className={styles.fundThTierLabel}
+                                                                    style={labelStyle}
+                                                                    title={col.isCollapsed
+                                                                        ? `Expand the children of ${bar.name}`
+                                                                        : `Collapse the children of ${bar.name} into this column`}
+                                                                    aria-label={col.isCollapsed
+                                                                        ? `Expand the children of ${bar.name}`
+                                                                        : `Collapse the children of ${bar.name} into this column`}
+                                                                    onClick={() => toggleCollapsed(bar.id)}
+                                                                >
+                                                                    <span className={styles.tierCaret}>{col.isCollapsed ? '▸' : '▾'}</span>
+                                                                    <span className={styles.tierName}>{label}</span>
+                                                                </button>
+                                                                : <span
+                                                                    className={styles.fundThTierLabel}
+                                                                    style={labelStyle}
+                                                                    title={bar.name}
+                                                                >
+                                                                    <span className={styles.tierName}>{label}</span>
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     );
                                                 })}
                                             </div>
                                         }
                                         <div className={styles.fundThControls}>
-                                            { col.hasChildren &&
-                                                <GhostButton
-                                                    icon={col.isCollapsed ? 'fa-square-plus' : 'fa-square-minus'}
-                                                    title={col.isCollapsed
-                                                        ? `Expand the children of ${col.fund.name}`
-                                                        : `Collapse the children of ${col.fund.name} into this column`}
-                                                    onClick={() => toggleCollapsed(col.fund.id)}
-                                                />
-                                            }
                                             <GhostButton
                                                 icon="fa-eye-slash"
                                                 title={`Hide the ${col.fund.name} column`}

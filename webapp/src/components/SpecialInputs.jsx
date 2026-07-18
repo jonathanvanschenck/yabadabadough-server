@@ -1,10 +1,23 @@
 import { useCallback } from 'react';
 import { useGetFundsQuery, useGetUsersQuery, useGetMonthFinalizationsQuery, useGetStatementSourcesQuery } from '../hooks/Queries.jsx';
+import { buildFundOptionTree } from './domain.js';
 import { LabeledSearchableSelector, LabeledSelector, LabeledTextInput } from './Inputs.jsx';
 import { FundTypeBadge, FinalizedBadge } from './Badges.jsx';
 import { FundColorDot } from './SpecialIcons.jsx';
 import { FUND_COLORS, fundColorVar } from '../hooks/fundColors.js';
 import styles from './SpecialInputs.module.css';
+
+/** Flatten a buildFundOptionTree result depth-first into
+ *  `{ fund, path }` options, `path` the ancestor names outermost-first. */
+function flattenWithPaths(roots) {
+    const out = [];
+    const walk = (node, path) => {
+        out.push({ fund: node.fund, path });
+        node.children.forEach(child => walk(child, [ ...path, node.fund.name ]));
+    };
+    roots.forEach(root => walk(root, []));
+    return out;
+}
 
 /**
  * Fund picker. The filter props (tracked/monthly/pool/root/descendantOf) are
@@ -12,6 +25,11 @@ import styles from './SpecialInputs.module.css';
  * what the server will actually accept (e.g. tracked={true} for allocation
  * targets, pool={true} for pool picks). `excludeIds` additionally drops
  * specific funds client-side (e.g. a fund itself when picking its parent).
+ *
+ * Options are ordered by the fund hierarchy (depth-first, siblings by name)
+ * with a faint ancestor-path prefix on each nested fund -- hierarchy is
+ * computed over the FILTERED list, so a fund whose ancestors are filtered
+ * out simply roots its own subtree.
  *
  * Passing `onCreateNew` (a `(searchTerm) => void` callback) surfaces a
  * "Create new fund" row at the top of the dropdown; it's off unless the caller
@@ -47,19 +65,32 @@ export function FundSearchableSelector({
     }, [onChange]);
 
     const excludeIdStrs = (excludeIds ?? []).map(id => id.toString());
-    // Sort by name client-side: the funds endpoint only orders by id
-    const funds = allFunds
-        ? allFunds
-            .filter(f => !excludeIdStrs.includes(f.id.toString()))
-            .toSorted((a, b) => a.name.localeCompare(b.name))
+    // Options come in fund-tree order (depth-first, siblings by name -- the
+    // same ordering as the transactions/allocations grids), each labeled with
+    // its ancestor path so hierarchy survives the search filter hiding
+    // parents. The tree is built BEFORE excluding so an excluded fund still
+    // appears in its children's paths.
+    const options = allFunds
+        ? flattenWithPaths(buildFundOptionTree(allFunds))
+            .filter(({ fund }) => !excludeIdStrs.includes(fund.id.toString()))
         : null;
 
-    const fundKeys = funds ? funds.map(f => f.id.toString()) : [];
-    const fundDisplayNames = funds ? funds.map(f => <FundTypeBadge status={f.status} label={f.name} color={f.color} />) : [];
-    // The display names are JSX badges; searching needs the plain fund names.
-    const fundSearchTexts = funds ? funds.map(f => f.name) : [];
-    const _currentFund = funds && value
-        ? (funds.find(f => f.id.toString() === value.toString()) || originalFund || null)
+    const fundKeys = options ? options.map(({ fund }) => fund.id.toString()) : [];
+    const fundDisplayNames = options
+        ? options.map(({ fund, path }) => (
+            <span className={styles.fundOption}>
+                { path.length > 0 &&
+                    <span className={styles.fundOptionPath}>{path.join(' ▸ ')} ▸</span>
+                }
+                <FundTypeBadge status={fund.status} label={fund.name} color={fund.color} />
+            </span>
+        ))
+        : [];
+    // The display names are JSX; searching needs plain text. Ancestor names
+    // are included so searching a parent surfaces its whole subtree.
+    const fundSearchTexts = options ? options.map(({ fund, path }) => [ ...path, fund.name ].join(' ')) : [];
+    const _currentFund = allFunds && value
+        ? (allFunds.find(f => f.id.toString() === value.toString()) || originalFund || null)
         : (originalFund || null);
 
     return (
