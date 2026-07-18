@@ -87,6 +87,23 @@ export function RoleBadge({ role, label, ...rest }) {
 }
 
 /**
+ * A user's effective-role badges in one row, admin-first. `roles` is the
+ * API's EFFECTIVE set (admin implies every other role), so an admin always
+ * reads "Admin Editor Reader".
+ */
+export function EffectiveRoleBadges({ roles, style, ...rest }) {
+    const active = ["admin", "editor", "reader"].filter(role => roles?.[role]);
+    if (active.length === 0) {
+        return <span style={{ color: 'var(--font-muted)', ...style }} {...rest}>No roles</span>;
+    }
+    return (
+        <span style={{ display: 'inline-flex', gap: '1rem', flexWrap: 'wrap', ...style }} {...rest}>
+            {active.map(role => <RoleBadge key={role} role={role} />)}
+        </span>
+    );
+}
+
+/**
  * Active/expired for sessions and API keys. Derive `value` from expires_at
  * (null means never expires -- API keys only):
  * `expires_at == null || new Date(expires_at) > Date.now()`

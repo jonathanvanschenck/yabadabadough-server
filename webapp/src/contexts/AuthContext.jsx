@@ -92,6 +92,7 @@ export function parseURL(obj) {
 
 export const AuthContext = createContext(null);
 export const AuthLogoutContext = createContext(null);
+export const AuthRevokeAllContext = createContext(null);
 export const AuthEscalationContext = createContext(null);
 export const AuthRolesContext = createContext(null);
 export const AuthedFetchContext = createContext(null);
@@ -157,6 +158,13 @@ export function useLogout() {
     }
     return logoutCallback;
 }
+export function useRevokeAllSessions() {
+    const revokeAllCallback = useContext(AuthRevokeAllContext);
+    if ( revokeAllCallback === null ) {
+        throw new Error("useRevokeAllSessions must be used within an AuthContextProvider");
+    }
+    return revokeAllCallback;
+}
 
 
 const MIN_DISPLAY_TIME = 300; // Minimum time to show the loading placeholder (in ms)
@@ -167,6 +175,7 @@ const InitialAuthState = {
     disableAuth: false,
     identifier: null,
     userId: null,
+    sessionId: null,
     roles: {
         admin: false,
         adminable: false,
@@ -181,6 +190,7 @@ const Unauthed = {
     disableAuth: false,
     identifier: null,
     userId: null,
+    sessionId: null,
     roles: {
         admin: false,
         adminable: false,
@@ -202,6 +212,9 @@ function extractAuthFields(data) {
     return {
         identifier: data.user.email,
         userId: data.user.id,
+        // Null when /authenticate cannot resolve the session behind a
+        // still-valid access token (e.g. logged out elsewhere)
+        sessionId: data.session?.id ?? null,
         server_roles: {
             adminable: data.user.roles.admin,
             editor: data.user.roles.editor,
@@ -255,6 +268,7 @@ function authReducer(auth, { action, authRef, log }) {
                 disableAuth: false,
                 identifier: action.identifier,
                 userId: action.userId,
+                sessionId: action.sessionId ?? null,
                 roles: {
                     adminable: !!action.server_roles.adminable,
                     editor: !!action.server_roles.editor,
@@ -279,6 +293,7 @@ function authReducer(auth, { action, authRef, log }) {
                 disableAuth: true,
                 identifier: "auth-disabled",
                 userId: null,
+                sessionId: null,
                 roles: {
                     adminable: true,
                     admin: false,
@@ -342,6 +357,37 @@ export function AuthContextProvider({ children }) {
         }
 
         return dispatch({ type: "logout", msg: "User called logoutCallback" });
+    }, [
+        dispatch,
+        authRef,
+    ]);
+
+    // Revoke EVERY session for the authed user (POST /api/auth/revoke-all):
+    // all devices lose the ability to refresh. The server clears this
+    // client's cookies too, so treat success as a logout locally.
+    const revokeAllCallback = useCallback(async ()=>{
+        // Nothing to revoke when the server runs with auth disabled
+        if ( authRef.current?.disableAuth ) return;
+
+        const resp = await fetch(
+            "/api/auth/revoke-all",
+            {
+                method: "POST",
+                credentials: "include" // Include cookies for authentication
+            }
+        );
+
+        if ( !resp.ok ) {
+            const err = new APIError(resp.status);
+            try {
+                err.add_details(await resp.json());
+            } catch (_) {
+                // Ignore JSON parsing errors
+            }
+            throw err;
+        }
+
+        return dispatch({ type: "logout", msg: "User revoked all of their sessions" });
     }, [
         dispatch,
         authRef,
@@ -711,6 +757,7 @@ export function AuthContextProvider({ children }) {
         <AuthContext value={ auth }>
             <AuthEscalationContext value={ { escalateCallback, deescalateCallback } }>
                 <AuthLogoutContext value={ logoutCallback }>
+                <AuthRevokeAllContext value={ revokeAllCallback }>
                     <AuthedFetchContext value={ { authedFetch, authedFetchJSON, authedFetchPageJSON, authedFetchAllJSON } }>
                         { auth.neverQueried
                             ? <LoadingPlaceholder description="Verifying user" animateDelay={MIN_DISPLAY_TIME}/>
@@ -721,6 +768,7 @@ export function AuthContextProvider({ children }) {
                                     : children
                         }
                     </AuthedFetchContext>
+                </AuthRevokeAllContext>
                 </AuthLogoutContext>
             </AuthEscalationContext>
         </AuthContext>

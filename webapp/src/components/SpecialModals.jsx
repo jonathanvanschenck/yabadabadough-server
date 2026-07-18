@@ -54,7 +54,7 @@ import {
     usePostUserApiKeyMutation,
     useDeleteUserApiKeyMutation
 } from '../hooks/Queries.jsx';
-import { useAuth, useAuthRoles } from '../contexts/AuthContext.jsx';
+import { useAuth, useAuthRoles, useLogout, useRevokeAllSessions } from '../contexts/AuthContext.jsx';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard.js';
 import CopiedToast from './CopiedToast.jsx';
 
@@ -3208,6 +3208,8 @@ export function ChangePasswordModal({ isOpen, setIsOpen, user }) {
         isPending: postIsPending
     } = usePostUserPasswordMutation();
 
+    const logout = useLogout();
+
     const handleSubmit = useCallback(() => {
         postMutate(
             {
@@ -3219,14 +3221,20 @@ export function ChangePasswordModal({ isOpen, setIsOpen, user }) {
                 }
             },
             {
-                onSuccess: () => setIsOpen(false),
+                onSuccess: () => {
+                    setIsOpen(false);
+                    // Changing your OWN password with revoke_sessions kills the
+                    // session behind this client too -- log out cleanly now
+                    // instead of dying at the next token refresh
+                    if ( isSelf && data.revoke_sessions ) logout();
+                },
                 onError: (err) => setSubmitError({
                     message: err.message,
                     details: err.details?.message
                 })
             }
         );
-    }, [user, data, isAdminReset, postMutate, setIsOpen]);
+    }, [user, data, isAdminReset, isSelf, postMutate, setIsOpen, logout]);
 
     return (
         <CardModal
@@ -3333,6 +3341,39 @@ export function DeleteSessionModal({ isOpen, setIsOpen, session }) {
             confirmText="Revoke Session"
             confirmButtonClassName={styles.dangerConfirmButton}
             onConfirm={deleteOnConfirm}
+        />
+    );
+}
+
+/**
+ * Revoke EVERY session for the CURRENTLY AUTHED user (POST /api/auth/revoke-all
+ * -- there is no revoke-all route for other users; admins revoke foreign
+ * sessions one at a time or via a password reset). Success logs this client
+ * out too, straight to the login modal.
+ */
+export function RevokeAllSessionsModal({ isOpen, setIsOpen }) {
+
+    const revokeAll = useRevokeAllSessions();
+
+    return (
+        <ConfirmationModal
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            title="Revoke All Sessions"
+            content={<>
+                <div style={{ textAlign: 'center' }}>
+                    Are you sure you want to revoke <strong>every</strong> one of your
+                    login sessions?
+                </div>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                    All of your devices — including this one — are logged out and must
+                    sign in again (outstanding access tokens still live out their
+                    ~20 minute expiry). API keys are not affected.
+                </div>
+            </>}
+            confirmText="Revoke All Sessions"
+            confirmButtonClassName={styles.dangerConfirmButton}
+            onConfirm={revokeAll}
         />
     );
 }

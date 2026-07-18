@@ -1,0 +1,53 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+.topBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.createButton {
+    color: var(--font-secondary-color); /* Also changes border color and box-shadow */
+    background: var(--bg-primary-color);
+
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+}
+
+.tableWrapper {
+    overflow-y: auto;
+    flex-grow: 1;
+    position: relative;
+}
+
+.tableContainer {
+    height: 100%;
+}
+
+.centerState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 1rem;
+    text-align: center;
+    color: var(--font-primary-color);
+}
+
+.centerState p {
+    margin: 0;
+    max-width: 32rem;
+}
+
+.errorTitle {
+    color: var(--font-danger-color);
+    margin: 0;
+}

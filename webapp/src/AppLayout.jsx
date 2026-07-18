@@ -103,6 +103,12 @@ function App() {
                     <NavLink to="/transactions">Transactions</NavLink>
                     <NavLink to="/allocations">Allocations</NavLink>
                     <NavLink to="/statements">Statements</NavLink>
+                    { auth.roles.adminable &&
+                        <NavLink to="/users">Users</NavLink>
+                    }
+                    { auth.userId != null &&
+                        <NavLink to={`/user/${auth.userId}`}>My account</NavLink>
+                    }
                 </div>
                 <EscalationModeToggler />
                 <div style={{ "text-align": "center" }}>

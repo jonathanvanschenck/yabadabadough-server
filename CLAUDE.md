@@ -18,7 +18,7 @@ The React webapp lives in `webapp/` and has its own conventions file at `webapp/
 - Fresh schema applied automatically to new databases via `db/migrations/_schema.sql`
 
 ### Scripts
-- Create a user (bootstrap; no API yet): `node scripts/create-user.js <email> <password> [--admin] [--editor]`
+- Create a user (bootstrap; day-to-day user management lives in the API/webapp): `node scripts/create-user.js <email> <password> [--admin] [--editor]`
 - Reset a password: `node scripts/create-user.js <email> <new-password> --set-password`
 - Generate/rotate a JWT signing key pair: `node scripts/generate-jwt-key.js [dir]`
 
