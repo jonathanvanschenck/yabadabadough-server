@@ -506,7 +506,11 @@ allocations.
   compare is needed (unlike `Session.token`, which is stored plaintext and compared)
 - Per-key role scope: `reader` (default 1) / `editor` (default 0) flags mask the OWNER's
   effective roles at exchange time; `admin` is never minted from an API key (no column — user
-  management stays interactive-login-only). Hierarchy: minted roles = user effective ∩ key flags
+  management stays interactive-login-only). Hierarchy: minted roles = user effective ∩ key flags.
+  The `/api/auth/api-token` response reports BOTH, deliberately: `user` is the key's OWNER (their
+  full account roles, `admin` included — it is an account record, not a scope) and `granted_roles`
+  is what the returned token actually carries, built from the same payload object that gets
+  signed so the two can never drift
 - `expires_at` is NULLABLE (null = never expires); expired keys refuse exchange but stay
   listed (no prune sweep — visibility over housekeeping; negative `ttl_days` fabricates
   expired keys in tests, and there is no create-time sweep to worry about, unlike sessions)

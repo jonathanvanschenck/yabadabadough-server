@@ -64,7 +64,7 @@ export default function SearchableTable({
     const searchTerm = onSearchChange ? searchValue : localSearchTerm;
 
     return (
-        <div className={`${styles.tableContainer} ${className}`}>
+        <div className={`${styles.tableContainer} ${showSearch ? '' : styles.noSearchBar} ${className}`}>
             {/* Search input */}
             {showSearch && (
                 <div className={styles.searchContainer}>

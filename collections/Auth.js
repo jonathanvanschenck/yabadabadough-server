@@ -540,7 +540,7 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Exchange an API Key for an Access Token";
 
-            static openapi_Description = "Exchange an API key (minted at POST /api/users/user/:user_id/api-keys) for a short-lived (~20m) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=20m expiry.";
+            static openapi_Description = "Exchange an API key (minted at POST /api/users/user/:user_id/api-keys) for a short-lived (~20m) sessionless access token carrying the key's role scope -- never admin. No cookies are set: this is the programmatic path, and clients simply re-exchange when the token expires. Revoking the key stops future exchanges; already-minted access tokens live out their <=20m expiry. NOTE the response's `user` block is the key's OWNER (their full account roles, admin included); what the TOKEN grants is `granted_roles`.";
 
             static openapi_RequestBodySchema = {
                 type: 'object',
@@ -582,11 +582,26 @@ module.exports = class AuthCollection extends Collection {
                 const user = User.for_id(this.db, key.user_id);
                 if ( !user ) await fail();
 
+                // Built once and both signed AND reported, so the advertised
+                // scope can never drift from what the token actually carries
+                const payload = user.to_api_key_access_token_payload(key);
+
                 return {
+                    // The key's OWNER, with their FULL account roles -- which
+                    // are deliberately NOT what this token grants (an admin
+                    // minting a reader-only key still reads as admin here)
                     user: user.to_api(),
+                    api_key_id: key.id,
+                    // What the token actually carries: owner effective roles
+                    // masked by the key's flags, admin always false
+                    granted_roles: {
+                        admin: payload.admin,
+                        reader: payload.reader,
+                        editor: payload.editor,
+                    },
                     tokens: {
                         access: this.token_manager.tokenize(
-                            user.to_api_key_access_token_payload(key),
+                            payload,
                             { ttl_s: User.ACCESS_TOKEN_TTL_S }
                         ),
                     },
@@ -596,7 +611,21 @@ module.exports = class AuthCollection extends Collection {
             static openapi_ResponseSchema = {
                 type: 'object',
                 properties: {
-                    user: { '$ref': '#/components/schemas/UserSchema' },
+                    user: {
+                        allOf: [ { '$ref': '#/components/schemas/UserSchema' } ],
+                        description: "The KEY'S OWNER and their full account roles -- NOT the scope of the returned token (see granted_roles)"
+                    },
+                    api_key_id: { type: 'integer', description: "Id of the API key that minted the token" },
+                    granted_roles: {
+                        type: 'object',
+                        description: "What the returned access token actually carries: the owner's effective roles masked by the key's flags. admin is always false.",
+                        properties: {
+                            admin: { type: 'boolean', description: "Always false -- API keys never mint admin" },
+                            reader: { type: 'boolean' },
+                            editor: { type: 'boolean' }
+                        },
+                        required: [ 'admin', 'reader', 'editor' ]
+                    },
                     tokens: {
                         type: 'object',
                         properties: {
@@ -605,7 +634,7 @@ module.exports = class AuthCollection extends Collection {
                         required: [ 'access' ]
                     }
                 },
-                required: [ 'user', 'tokens' ]
+                required: [ 'user', 'api_key_id', 'granted_roles', 'tokens' ]
             };
 
             static openapi_ErrorResponses = [ {

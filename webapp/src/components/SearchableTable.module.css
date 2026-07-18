@@ -1,6 +1,14 @@
 .tableContainer {
     overflow-y: auto;
     position: relative;
+    /* How far down the sticky <thead> parks: clear of the sticky search bar
+       when there is one, flush to the top when there isn't (otherwise short
+       tables park their header ON TOP of their own rows) */
+    --sticky-header-top: 4rem;
+}
+
+.tableContainer.noSearchBar {
+    --sticky-header-top: 0rem;
 }
 
 .searchContainer {
@@ -91,7 +99,7 @@
 .stickyHeader {
     background-color: var(--bg-secondary-color);
     position: sticky;
-    top: 4rem;
+    top: var(--sticky-header-top, 4rem);
     z-index: 1;
     box-shadow: 0 2px 5px -1px var(--shadow-color);
 }
