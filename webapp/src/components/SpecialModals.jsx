@@ -19,13 +19,11 @@ import {
     LabeledTextArea
 } from './Inputs.jsx';
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
-import { FundLabel } from './Badges.jsx';
 import Spinner from './Spinner.jsx';
-import { formatDollars, fundIdsContainingMonthly } from './domain.js';
+import { fundIdsContainingMonthly } from './domain.js';
 import {
     useGetFundsQuery,
     useGetTransactionGroupsQuery,
-    useGetTransactionGroupQuery,
     useGetLatestMonthFinalizationQuery,
     useGetMonthFinalizationsQuery,
     useGetFundFinalizationsQuery,
@@ -41,6 +39,7 @@ import {
     usePostImportStatementsMutation,
     usePatchStatementMutation,
     usePostStatementLinkMutation,
+    usePostStatementUnlinkMutation,
     useDeleteStatementMutation,
     usePutAllocationMutation,
     useDeleteAllocationMutation,
@@ -2029,6 +2028,51 @@ export function DeleteStatementModal({ isOpen, setIsOpen, statement, closePopout
     );
 }
 
+/**
+ * Unlink a RECONCILED item back to pending. This is the "this bank line is not
+ * actually explained by that group" undo -- the group and its transactions
+ * survive untouched, no money moves. Deliberately distinct from deleting the
+ * group (which destroys the transactions); the copy spells the difference out.
+ */
+export function UnlinkStatementModal({ isOpen, setIsOpen, statement, closePopoutCallback }) {
+
+    const {
+        mutateAsync: unlinkMutate // NOTE, mutateAsync to return a promise, which throws on error -> handled by ConfirmationModal
+    } = usePostStatementUnlinkMutation();
+
+    const unlinkOnConfirm = useCallback(async () => {
+        return unlinkMutate(
+            { formData: { id: statement.id } },
+            {
+                onSuccess: () => {
+                    if (closePopoutCallback) closePopoutCallback();
+                }
+            }
+        );
+    }, [ unlinkMutate, closePopoutCallback, statement ]);
+
+    return (
+        <ConfirmationModal
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            title="Unlink Bank Statement Item"
+            content={<>
+                <div style={{ textAlign: 'center' }}>
+                    Unlink <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)}) from its transaction group?
+                </div>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalHint}>
+                    This means <strong>this bank line is not actually explained by that group</strong>. The item returns to <strong>pending</strong> so you can reconcile it correctly. The transaction group and its transactions are <strong>NOT</strong> deleted, and no money moves.
+                </div>
+                <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalHint}>
+                    If instead the group itself shouldn't exist, close this and <strong>delete the transaction group</strong> — that destroys its transactions and releases every item it reconciled.
+                </div>
+            </>}
+            confirmText="Unlink"
+            onConfirm={unlinkOnConfirm}
+        />
+    );
+}
+
 export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] }) {
 
     const defaultData = () => ({
@@ -2371,104 +2415,6 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
         </CardModal>
     );
 }
-
-/**
- * View a transaction group (typically the one reconciling a statement item):
- * details, transaction lines, and any reconciled items. Offers the
- * unlink-by-deleting-the-group escape hatch (the ONLY way to unlink — the
- * released items go back to pending; re-pointing a reconciled item at a
- * different group is deliberately unsupported by the API).
- */
-export function ViewTransactionGroupModal({ isOpen, setIsOpen, groupId }) {
-
-    const roles = useAuthRoles();
-    const [ isDeleteOpen, setIsDeleteOpen ] = useState(false);
-
-    const groupQ = useGetTransactionGroupQuery(groupId, { enabled: isOpen && groupId != null });
-    const fundsQ = useGetFundsQuery({}, { enabled: isOpen });
-    const fundById = useMemo(
-        () => new Map((fundsQ.data ?? []).map(f => [ f.id, f ])),
-        [fundsQ.data]
-    );
-
-    const group = groupQ.data;
-
-    return (
-        <CardModal
-            title={`Transaction Group: ${group?.description ?? ''}`}
-            isOpen={isOpen}
-            setIsOpen={setIsOpen}
-            size="lg"
-        >
-            { groupQ.isPending
-                ? <CardSection><div className={styles.linkCandidatesEmpty}><Spinner size="1.5rem" /></div></CardSection>
-                : groupQ.isError
-                ? <CardErrorSection errorMessage={groupQ.error.message} errorMessageDetails={groupQ.error.details?.message} />
-                : group && <>
-                    <CardSection title="Details">
-                        <CardAutoGrid>
-                            <LabeledTextInput label="Date" value={group.date} isFrozen={true} />
-                            <LabeledTextInput label="Description" value={group.description} isFrozen={true} />
-                            <LabeledTextArea label="Note" value={group.note} isFrozen={true} nullPlaceholder="(none)" />
-                        </CardAutoGrid>
-                    </CardSection>
-
-                    <CardSection title="Transactions">
-                        <div className={styles.statementItemsList}>
-                            { group.transactions.map(t => (
-                                <div key={t.id} className={styles.statementItem}>
-                                    <span className={styles.groupTransactionFunds}>
-                                        <FundLabel fund={fundById.get(t.source_fund_id)} />
-                                        <FontAwesomeIcon icon="fa-solid fa-arrow-right" size="xs" />
-                                        <FundLabel fund={fundById.get(t.target_fund_id)} />
-                                    </span>
-                                    <span className="tabular-nums">{formatDollars(t.amount)}</span>
-                                    <span className={styles.statementItemNote} title={t.description}>{t.description}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </CardSection>
-
-                    <CardSection title="Reconciled bank statement items">
-                        { group.statements.length === 0
-                            ? <p className={styles.modalHint}>None — this group is not reconciled to any imported items.</p>
-                            : <div className={styles.statementItemsList}>
-                                { group.statements.map(s => (
-                                    <div key={s.id} className={styles.statementItem}>
-                                        <strong>{s.source}</strong>
-                                        <span className="tabular-nums">{s.date}</span>
-                                        <span className="tabular-nums">{formatMoney(s.amount)}</span>
-                                        <span className={styles.statementItemNote}>{s.note ?? s.key}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        }
-                    </CardSection>
-
-                    <CardActionFooter>
-                        <IconButton
-                            text="Unlink (delete group)"
-                            icon="fa-trash"
-                            ariaLabel="Delete this transaction group, releasing its statement items back to pending"
-                            title="Deleting the group is the only way to unlink: its transactions are destroyed and every reconciled item returns to pending"
-                            disabled={!roles.editor}
-                            buttonClassName={styles.dangerConfirmButton}
-                            onClick={() => setIsDeleteOpen(true)}
-                        />
-                    </CardActionFooter>
-
-                    <DeleteTransactionGroupModal
-                        isOpen={isDeleteOpen}
-                        setIsOpen={setIsDeleteOpen}
-                        group={group}
-                        closePopoutCallback={() => setIsOpen(false)}
-                    />
-                </>
-            }
-        </CardModal>
-    );
-}
-
 
 // ---------------------------------------------------------------------------
 // Allocations

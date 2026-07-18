@@ -2,6 +2,7 @@ const { expect } = require("chai");
 const { create_connection, initialize_db, ConflictError } = require("../../lib/db.js");
 const BankStatementItem = require("../../models/BankStatementItem.js");
 const TransactionGroup = require("../../models/TransactionGroup.js");
+const MonthFinalization = require("../../models/MonthFinalization.js");
 const Fund = require("../../models/Fund.js");
 const YDate = require("../../lib/YDate.js");
 
@@ -411,6 +412,99 @@ describe("BankStatementItem Model", () => {
 
             const group = reconcile(item);
             expect(BankStatementItem.for_id(db, item.id).group_id).to.equal(group.id);
+        });
+    });
+
+    describe("unlink()", () => {
+        let item;
+
+        beforeEach(() => {
+            item = BankStatementItem.create(db, {
+                source: "boa", key: "txn-001", amount: -52.30, date: YDate.parse("2026-06-02"),
+            });
+        });
+
+        it("should release a reconciled item back to pending, leaving the group intact", () => {
+            const group = reconcile(item);
+            expect(BankStatementItem.for_id(db, item.id).group_id).to.equal(group.id);
+
+            const fresh = BankStatementItem.for_id(db, item.id).unlink(db);
+
+            expect(fresh.group_id).to.be.null;
+            expect(fresh.state).to.equal("pending");
+
+            // The group and its transactions survive untouched
+            const surviving = TransactionGroup.for_id(db, group.id);
+            expect(surviving).to.not.be.null;
+            expect(surviving.transactions).to.have.lengthOf(1);
+            // ...but no longer hydrates this item
+            expect(surviving.statements).to.deep.equal([]);
+        });
+
+        it("should release only the named item from a shared (transfer) group", () => {
+            const peer = BankStatementItem.create(db, {
+                source: "chase", key: "txn-xfer", amount: 52.30, date: YDate.parse("2026-06-02"),
+            });
+            const group = TransactionGroup.create_from_statements(db, {
+                statement_ids: [ item.id, peer.id ],
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 52.30,
+                    description: "Transfer",
+                }]
+            });
+
+            BankStatementItem.for_id(db, item.id).unlink(db);
+
+            expect(BankStatementItem.for_id(db, item.id).group_id).to.be.null;
+            // The peer stays reconciled to the surviving group
+            expect(BankStatementItem.for_id(db, peer.id).group_id).to.equal(group.id);
+        });
+
+        it("should support unlink-then-relink (re-pointing) an item to a new group", () => {
+            reconcile(item);
+            BankStatementItem.for_id(db, item.id).unlink(db);
+
+            const again = reconcile(item);
+            expect(BankStatementItem.for_id(db, item.id).group_id).to.equal(again.id);
+        });
+
+        it("should refuse to unlink a pending item", () => {
+            expect(() => item.unlink(db)).to.throw(ConflictError);
+        });
+
+        it("should refuse to unlink an ignored item", () => {
+            const ignored = item.update(db, { ignored: true });
+            expect(() => ignored.unlink(db)).to.throw(ConflictError);
+        });
+
+        it("should refuse a double unlink", () => {
+            reconcile(item);
+            BankStatementItem.for_id(db, item.id).unlink(db);
+            expect(() => BankStatementItem.for_id(db, item.id).unlink(db)).to.throw(ConflictError);
+        });
+
+        it("should not care about a finalized month (no money moves)", () => {
+            // Reconcile inside January, then finalize January; unlink must
+            // still succeed because it moves no money (mirrors link_statements)
+            const jan_item = BankStatementItem.create(db, {
+                source: "boa", key: "txn-jan", amount: -10.00, date: YDate.parse("2026-01-15"),
+            });
+            const group = TransactionGroup.create_from_statements(db, {
+                statement_ids: [ jan_item.id ],
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 10.00,
+                    description: "January spend",
+                }]
+            });
+            MonthFinalization.create(db, { month: YDate.parse("2026-01-01") });
+
+            const fresh = BankStatementItem.for_id(db, jan_item.id).unlink(db);
+            expect(fresh.group_id).to.be.null;
+            expect(TransactionGroup.for_id(db, group.id)).to.not.be.null;
         });
     });
 

@@ -23,6 +23,7 @@ import {
     ImportStatementsCSVModal,
     ReconcileStatementsModal,
     LinkStatementModal,
+    UnlinkStatementModal,
     EditStatementModal,
     DeleteStatementModal
 } from '../../components/SpecialModals.jsx';
@@ -159,7 +160,8 @@ function InlinePendingReconcile({ statement }) {
  * Secondary (advanced) actions, by state:
  *  - pending:    advanced reconcile (split/transfer/custom date), link, ignore
  *  - ignored:    un-ignore (back to pending)
- *  - reconciled: view the linked group (which owns the unlink escape hatch)
+ *  - reconciled: view the linked group, or unlink (release back to pending
+ *    without touching the group — distinct from deleting the group)
  * plus edit (note) and delete (with the are-you-sure modal) everywhere.
  */
 function CardActions({ statement, isEditor, togglingId, onToggleIgnored, onAction }) {
@@ -205,15 +207,23 @@ function CardActions({ statement, isEditor, togglingId, onToggleIgnored, onActio
                     onClick={() => onToggleIgnored(statement)}
                 />
             }
-            { state === 'reconciled' &&
+            { state === 'reconciled' && <>
                 <TightIconButton
                     icon="fa-arrow-up-right-from-square"
                     tone="info"
                     ariaLabel="View the linked transaction group"
-                    title="View the linked transaction group (unlink from there)"
+                    title="View the linked transaction group"
                     onClick={() => onAction('viewGroup', statement)}
                 />
-            }
+                <TightIconButton
+                    icon="fa-link-slash"
+                    tone="warn"
+                    ariaLabel="Unlink from the transaction group"
+                    title="Unlink: this bank line isn't explained by that group — release it to pending (the group is NOT deleted)"
+                    disabled={!isEditor}
+                    onClick={() => onAction('unlink', statement)}
+                />
+            </>}
             <TightIconButton
                 icon="fa-pen-to-square"
                 ariaLabel="Edit this item's note"
@@ -476,6 +486,11 @@ export default function Page() {
             />
             <LinkStatementModal
                 isOpen={targetKind === 'link'}
+                setIsOpen={closeAction}
+                statement={targetStatement}
+            />
+            <UnlinkStatementModal
+                isOpen={targetKind === 'unlink'}
                 setIsOpen={closeAction}
                 statement={targetStatement}
             />

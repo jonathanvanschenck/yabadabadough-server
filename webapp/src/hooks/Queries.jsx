@@ -1116,9 +1116,11 @@ export function usePatchTransactionGroupTransactionsMutation() {
 }
 
 /**
- * Delete a Transaction Group and all of its transactions (the only way to
- * unlink reconciled bank statement items, which are released back to
- * pending). Finalized months and allocation groups 409.
+ * Delete a Transaction Group and all of its transactions (this is how you
+ * undo a categorization; reconciled bank statement items are released back to
+ * pending -- to release an item WITHOUT destroying the group, use
+ * usePostStatementUnlinkMutation instead). Finalized months and allocation
+ * groups 409.
  *
  * @typedef {object} DeleteTransactionGroupMutationData
  * @property {object} formData
@@ -1247,6 +1249,31 @@ export function usePostStatementLinkMutation() {
         return await fetch("/api/statements/statement/" + encodeURIComponent(id) + "/link", {
             method: 'POST',
             body
+        });
+    });
+}
+
+/**
+ * Unlink (release) a RECONCILED Bank Statement Item back to PENDING: "this
+ * bank line is not actually explained by that group". The transaction group
+ * and its transactions SURVIVE untouched and no money moves (allowed even in
+ * a finalized month). This is NOT how you undo a categorization -- to say
+ * "that group shouldn't exist", delete the transaction group instead. 409s
+ * unless the item is currently reconciled. Re-point an item by unlink+link.
+ *
+ * @typedef {object} PostStatementUnlinkMutationData
+ * @property {object} formData
+ * @property {number} formData.id - The bank statement item ID
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult}
+ */
+export function usePostStatementUnlinkMutation() {
+    const fetch = useAuthedFetchJSON();
+    const roles = useAuthRoles();
+    return useInvalidatingMutation(async ({ formData }) => {
+        if ( !roles.editor ) throwLocal403EditorError();
+        return await fetch("/api/statements/statement/" + encodeURIComponent(formData.id) + "/unlink", {
+            method: 'POST'
         });
     });
 }

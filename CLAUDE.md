@@ -363,8 +363,15 @@ TransactionGroup, `finalized_months_since` in Fund).
   transfer): no transactions are created, allocation/eom_cleanup groups are refused, and —
   unlike group creation — a finalized-month group IS allowed (nothing moves; note a mislink
   there can only be undone by deleting the ITEM without the group and re-importing).
-  Re-pointing a reconciled item at a different group is deliberately unsupported
-- Unlinking only via group deletion (FK `ON DELETE SET NULL` releases items to pending) or
+- **Unlink** (`item.unlink(db)` / `POST /api/statements/statement/:id/unlink`, editor) releases
+  a RECONCILED item back to pending while the group and its transactions survive untouched —
+  "this bank line is not actually explained by that group". No money moves, so (like
+  `link_statements`) there is NO finalized-month guard; it errors (409) unless the item is
+  currently reconciled. SQL locality keeps it on BSI (touches only its own `group_id`). This is
+  distinct from group deletion ("that group shouldn't exist" — destroys the transactions).
+  Re-pointing a reconciled item at a different group is now supported deliberately as two steps:
+  unlink, then link
+- Unlinking otherwise via group deletion (FK `ON DELETE SET NULL` releases items to pending) or
   `TransactionGroup.delete_statement_item(db, item, { with_group = true })`. Deletion lives on
   TransactionGroup (the with_group arm deletes a group in the same sqlite transaction, and the
   require direction is strictly TG → BSI); `item.delete()` is a throwing stub pointing there

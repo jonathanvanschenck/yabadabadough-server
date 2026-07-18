@@ -19,6 +19,7 @@ import {
     EditTransactionGroupTransactionsModal,
     EditTransactionModal,
     DeleteTransactionGroupModal,
+    UnlinkStatementModal,
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
 import { formatDollars } from '../../components/domain.js';
@@ -108,6 +109,7 @@ export default function TransactionGroupPage() {
     const [ editTxnsOpen, setEditTxnsOpen ] = useState(false);
     const [ editLine, setEditLine ] = useState(null); // the transaction being line-edited
     const [ deleteOpen, setDeleteOpen ] = useState(false);
+    const [ unlinkTarget, setUnlinkTarget ] = useState(null); // the statement item being unlinked
 
     // Deep-link scroll + highlight: on load (or when the fragment changes to a
     // different line), scroll the `#transaction-<id>` row into view and flash
@@ -295,30 +297,48 @@ export default function TransactionGroupPage() {
                 <CardSection title="Reconciled bank statement items">
                     { group.statements.length === 0
                         ? <p className={styles.mutedNote}>None — this group is not reconciled to any imported items.</p>
-                        : <div className={styles.lineTableScroll}>
-                            <table className={styles.lineTable}>
-                                <thead>
-                                    <tr>
-                                        <th>Source</th>
-                                        <th>Date</th>
-                                        <th className={styles.lineAmount}>Amount</th>
-                                        <th>Note</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    { group.statements.map(s => (
-                                        <tr key={s.id} className={styles.lineRow}>
-                                            <td><strong>{s.source}</strong></td>
-                                            <td className="tabular-nums">{s.date}</td>
-                                            <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(s.amount)}</td>
-                                            <td className={styles.lineNote} title={s.note ?? s.key}>
-                                                <span className={styles.lineNoteText}>{s.note ?? s.key}</span>
-                                            </td>
+                        : <>
+                            <div className={styles.lineTableScroll}>
+                                <table className={styles.lineTable}>
+                                    <thead>
+                                        <tr>
+                                            <th>Source</th>
+                                            <th>Date</th>
+                                            <th className={styles.lineAmount}>Amount</th>
+                                            <th>Note</th>
+                                            <th aria-label="Actions" />
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                    </thead>
+                                    <tbody>
+                                        { group.statements.map(s => (
+                                            <tr key={s.id} className={styles.lineRow}>
+                                                <td><strong>{s.source}</strong></td>
+                                                <td className="tabular-nums">{s.date}</td>
+                                                <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(s.amount)}</td>
+                                                <td className={styles.lineNote} title={s.note ?? s.key}>
+                                                    <span className={styles.lineNoteText}>{s.note ?? s.key}</span>
+                                                </td>
+                                                <td className={styles.lineActions}>
+                                                    { isEditor &&
+                                                        <TightIconButton
+                                                            icon="fa-link-slash"
+                                                            tone="warn"
+                                                            ariaLabel={`Unlink ${s.source} statement item`}
+                                                            title="Unlink: this bank line isn't explained by this group — release it to pending (the group is NOT deleted)"
+                                                            onClick={() => setUnlinkTarget(s)}
+                                                        />
+                                                    }
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p className={styles.mutedNote}>
+                                Unlink releases an item back to pending without touching this
+                                group. To undo the categorization entirely, delete the group above.
+                            </p>
+                        </>
                     }
                 </CardSection>
             </Card>
@@ -344,6 +364,11 @@ export default function TransactionGroupPage() {
                 setIsOpen={setDeleteOpen}
                 group={group}
                 closePopoutCallback={() => navigate("/transactions")}
+            />
+            <UnlinkStatementModal
+                isOpen={unlinkTarget != null}
+                setIsOpen={(open) => { if ( !open ) setUnlinkTarget(null); }}
+                statement={unlinkTarget}
             />
         </div>
     );

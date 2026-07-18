@@ -483,6 +483,62 @@ module.exports = class StatementsCollection extends Collection {
             ]
         },
 
+        class PostStatementUnlink extends Controller {
+            static path = "/statement/:statement_id/unlink";
+
+            static method = "POST";
+
+            static editor = true;
+
+            static openapi_Summary = "Unlink a Bank Statement Item from its Transaction Group";
+
+            static openapi_Description = "Release a RECONCILED item back to PENDING: this bank line is not actually explained by that transaction group. The group and its transactions SURVIVE untouched and no money moves -- so, like linking, this is allowed even in a finalized month. This is NOT how you undo a categorization: to say \"that group shouldn't exist\", delete the transaction group instead (DELETE /api/transactions/transaction-group/:id), which destroys its transactions and releases every item it reconciled. Errors 409 unless the item is currently reconciled (pending/ignored items have nothing to unlink). To re-point an item at a different group, unlink then link.";
+
+            static openapi_Parameters = [
+                this.StatementIDParam
+            ]
+
+            async parse_request(req) {
+                return { item: this.get_statement(req) };
+            }
+
+            async respond({ item }) {
+                const group_id = item.group_id;
+
+                let new_item;
+                try {
+                    new_item = item.unlink(this.db);
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                // No money moved: the item's state changed and the (former)
+                // group's hydrated statements array shrank
+                const invalidation_actions = [
+                    invalidate(QK.statements),
+                    invalidate(QK.statement(item.id)),
+                    invalidate(QK.transaction_groups),
+                ];
+                if ( group_id != null ) {
+                    invalidation_actions.push(invalidate(QK.transaction_group(group_id)));
+                }
+
+                this.broadcast_invalidations(invalidation_actions, { statement_id: item.id, group_id });
+
+                return {
+                    data: new_item.to_api(),
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({ "$ref": '#/components/schemas/BankStatementItemSchema' });
+
+            static openapi_ErrorResponses = [
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict (item is not reconciled)", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
+            ]
+        },
+
         class DeleteStatement extends Controller {
             static path = "/statement/:statement_id";
 

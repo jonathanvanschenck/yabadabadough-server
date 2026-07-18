@@ -43,9 +43,12 @@ const SELECT_COLUMNS = [
  *
  * group_id lives on THIS table (not on transaction_groups) so that
  * transfer-type events -- two items from two different bank imports, e.g.
- * checking -> savings -- can share a single group. Linking happens only via
- * TransactionGroup.create_from_statements; unlinking only via group deletion
- * (ON DELETE SET NULL) or TransactionGroup.delete_statement_item.
+ * checking -> savings -- can share a single group. Linking happens via
+ * TransactionGroup.create_from_statements / .link_statements; an item is
+ * released back to pending by `item.unlink(db)` (group survives untouched),
+ * by group deletion (ON DELETE SET NULL), or by
+ * TransactionGroup.delete_statement_item. Re-pointing a reconciled item at a
+ * different group is unlink-then-relink (two steps, deliberate).
  *
  * `amount` is signed: negative means money leaving that bank account. It is
  * intentionally never checked against the linked group's transactions.
@@ -112,6 +115,11 @@ module.exports = class BankStatementItem extends Base {
         link: `
             UPDATE bank_statement_items
             SET group_id = @group_id
+            WHERE id = @id
+        `,
+        unlink: `
+            UPDATE bank_statement_items
+            SET group_id = NULL
             WHERE id = @id
         `,
         delete: `
@@ -478,6 +486,36 @@ module.exports = class BankStatementItem extends Base {
         const transaction = this.constructor.build_transaction(
             db, "update", this.constructor._update.bind(this.constructor));
         return transaction(db, this, { ignored, note });
+    }
+
+    static _unlink(db, item) {
+        const fresh = this.for_id(db, item.id);
+        if ( !fresh ) {
+            throw new ForeignKeyError("Bank statement item does not exist: " + item.id);
+        }
+        if ( fresh.group_id == null ) {
+            throw new ConflictError("Bank statement item is not reconciled to a transaction group: " + item.id);
+        }
+
+        this.get_stmt(db, "unlink").run({ id: fresh.id });
+
+        return this.for_id(db, fresh.id);
+    }
+
+    /**
+     * Release a RECONCILED item back to pending: clears group_id while the
+     * linked transaction group and its transactions survive untouched. No
+     * money moves, so (like TransactionGroup.link_statements) there is NO
+     * finalized-month guard. Errors unless the item is currently reconciled.
+     *
+     * This is the "not actually explained by that group" undo -- distinct from
+     * deleting the group (which destroys its transactions). It is also the two-
+     * step re-point path: unlink, then link to the correct group.
+     */
+    unlink(db) {
+        const transaction = this.constructor.build_transaction(
+            db, "unlink", this.constructor._unlink.bind(this.constructor));
+        return transaction(db, this);
     }
 
     /**

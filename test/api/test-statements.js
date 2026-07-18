@@ -299,6 +299,75 @@ describe("Statements API", () => {
         });
     });
 
+    describe("POST /api/statements/statement/:statement_id/unlink", () => {
+        it("requires the editor role", async () => {
+            const [ item ] = import_items();
+            reconcile(item);
+            expect((await h.request(`/api/statements/statement/${item.id}/unlink`, { method: "POST", token: h.tokens.reader })).status).to.equal(403);
+        });
+
+        it("releases a reconciled item to pending while the group survives", async () => {
+            const [ item ] = import_items();
+            const group = reconcile(item);
+
+            const { status, body } = await h.request(`/api/statements/statement/${item.id}/unlink`, { method: "POST", token: h.tokens.editor });
+            expect(status).to.equal(200);
+            expect(body.data.id).to.equal(item.id);
+            expect(body.data.state).to.equal("pending");
+            expect(body.data.group_id).to.be.null;
+            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["statement", item.id.toString()] });
+            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["transaction-group", group.id.toString()] });
+            expect(body.invalidations).to.deep.include({ type: "invalidate", key: ["transaction-groups"] });
+
+            // Item back to pending; group and its transactions untouched
+            expect(BankStatementItem.for_id(h.db, item.id).group_id).to.be.null;
+            const surviving = TransactionGroup.for_id(h.db, group.id);
+            expect(surviving).to.not.be.null;
+            expect(surviving.transactions).to.have.lengthOf(1);
+            expect(surviving.statements).to.deep.equal([]);
+        });
+
+        it("404s on a missing item", async () => {
+            expect((await h.request(`/api/statements/statement/9999/unlink`, { method: "POST", token: h.tokens.editor })).status).to.equal(404);
+        });
+
+        it("409s on pending and ignored items", async () => {
+            const [ pending, toIgnore ] = import_items();
+
+            expect((await h.request(`/api/statements/statement/${pending.id}/unlink`, { method: "POST", token: h.tokens.editor })).status).to.equal(409);
+
+            BankStatementItem.for_id(h.db, toIgnore.id).update(h.db, { ignored: true });
+            expect((await h.request(`/api/statements/statement/${toIgnore.id}/unlink`, { method: "POST", token: h.tokens.editor })).status).to.equal(409);
+        });
+
+        it("409s on a double unlink", async () => {
+            const [ item ] = import_items();
+            reconcile(item);
+
+            expect((await h.request(`/api/statements/statement/${item.id}/unlink`, { method: "POST", token: h.tokens.editor })).status).to.equal(200);
+            expect((await h.request(`/api/statements/statement/${item.id}/unlink`, { method: "POST", token: h.tokens.editor })).status).to.equal(409);
+        });
+
+        it("supports re-pointing an item to a new group (unlink then link)", async () => {
+            const [ item ] = import_items();
+            reconcile(item);
+
+            await h.request(`/api/statements/statement/${item.id}/unlink`, { method: "POST", token: h.tokens.editor });
+
+            const target = TransactionGroup.create_single(h.db, {
+                date: YDate.parse("2026-06-02"),
+                description: "Correct group",
+                source_fund_id: checking.id,
+                target_fund_id: groceries.id,
+                amount: 10.00,
+            });
+            const { status, body } = await h.request(`/api/statements/statement/${item.id}/link`, { method: "POST", token: h.tokens.editor, body: { group_id: target.id } });
+            expect(status).to.equal(200);
+            expect(body.data.statements.map((s) => s.id)).to.deep.equal([ item.id ]);
+            expect(BankStatementItem.for_id(h.db, item.id).group_id).to.equal(target.id);
+        });
+    });
+
     describe("DELETE /api/statements/statement/:statement_id", () => {
         it("deletes a pending item", async () => {
             const [ item ] = import_items();
