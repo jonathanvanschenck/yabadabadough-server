@@ -574,19 +574,22 @@ function newTransactionLine(fields = {}) {
     };
 }
 
-function transactionLineValidity(line) {
+// `descriptionOptional` relaxes the description-required check: a blank line
+// description then inherits the group description at the call site (the
+// single-line "same as group" convenience — see CreateTransactionGroupModal).
+function transactionLineValidity(line, { descriptionOptional = false } = {}) {
     return {
         source_fund_id: !line.source_fund_id
             ? 'Source fund is required.'
             : (line.source_fund_id === line.target_fund_id ? 'Source and target must differ.' : null),
         target_fund_id: !line.target_fund_id ? 'Target fund is required.' : null,
         amount: (line.amount == null || line.amount <= 0) ? 'Amount must be positive.' : null,
-        description: !line.description?.trim() ? 'Description is required.' : null,
+        description: (descriptionOptional || line.description?.trim()) ? null : 'Description is required.',
     };
 }
 
-function transactionLineHasProblem(line) {
-    return Object.values(transactionLineValidity(line)).some(v => v != null);
+function transactionLineHasProblem(line, opts) {
+    return Object.values(transactionLineValidity(line, opts)).some(v => v != null);
 }
 
 function transactionLineToSpec(line) {
@@ -599,9 +602,9 @@ function transactionLineToSpec(line) {
     };
 }
 
-function TransactionLineFields({ line, onChange, onRemove, removable = true, onRequestCreateFund = null }) {
+function TransactionLineFields({ line, onChange, onRemove, removable = true, onRequestCreateFund = null, descriptionOptional = false, descriptionPlaceholder = 'Enter description' }) {
 
-    const validity = transactionLineValidity(line);
+    const validity = transactionLineValidity(line, { descriptionOptional });
 
     return (
         <div className={styles.transactionLineContainer}>
@@ -659,10 +662,10 @@ function TransactionLineFields({ line, onChange, onRemove, removable = true, onR
                     label="Description"
                     value={line.description}
                     isFrozen={false}
-                    isRequired={true}
-                    nullPlaceholder="Enter description"
+                    isRequired={!descriptionOptional}
+                    nullPlaceholder={descriptionPlaceholder}
                     onChange={(value) => onChange('description', value)}
-                    allowNull={false}
+                    allowNull={descriptionOptional}
                     validityMessage={validity.description}
                 />
                 <LabeledTextArea
@@ -679,7 +682,15 @@ function TransactionLineFields({ line, onChange, onRemove, removable = true, onR
     );
 }
 
-function TransactionLinesEditor({ lines, setLines, minLines = 1, onRequestCreateFund = null }) {
+function TransactionLinesEditor({ lines, setLines, minLines = 1, onRequestCreateFund = null, inheritDescription = false, groupDescription = null }) {
+
+    // Single-line convenience: a blank line description inherits the group
+    // description (substituted at the call site). Only applies while there is
+    // exactly one line -- add a second and every line needs its own description.
+    const descriptionOptional = inheritDescription && lines.length === 1;
+    const descriptionPlaceholder = descriptionOptional
+        ? (groupDescription?.trim() ? `Same as group: ${groupDescription.trim()}` : 'Same as group description')
+        : 'Enter description';
 
     const updateLine = (key, field, value) => {
         setLines(prev => prev.map(l => l._key === key ? { ...l, [field]: value } : l));
@@ -700,6 +711,8 @@ function TransactionLinesEditor({ lines, setLines, minLines = 1, onRequestCreate
                     onChange={(field, value) => updateLine(line._key, field, value)}
                     onRemove={() => removeLine(line._key)}
                     removable={lines.length > minLines}
+                    descriptionOptional={descriptionOptional}
+                    descriptionPlaceholder={descriptionPlaceholder}
                     onRequestCreateFund={onRequestCreateFund
                         ? (field, name) => onRequestCreateFund(line._key, field, name)
                         : null}
@@ -767,7 +780,11 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
         date: !data.date ? 'Date is required.' : dateFloorValidity(data.date),
         description: !data.description?.trim() ? 'Description is required.' : null,
     };
-    const linesHaveProblems = lines.length < 1 || lines.some(transactionLineHasProblem);
+    // A lone transaction inherits the group description when left blank, so its
+    // description field is optional in that case (validated + sent accordingly).
+    const inheritDescription = lines.length === 1;
+    const linesHaveProblems = lines.length < 1
+        || lines.some(l => transactionLineHasProblem(l, { descriptionOptional: inheritDescription }));
 
     const {
         mutate: postMutate,
@@ -775,13 +792,22 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
     } = usePostTransactionGroupMutation();
 
     const handleSubmit = useCallback(() => {
+        // Single-line groups: a blank line description inherits the group
+        // description here at the call site (no null line descriptions sent).
+        const inheritOne = lines.length === 1;
         postMutate(
             {
                 formData: {
                     date: data.date,
                     description: data.description,
                     note: data.note ?? null,
-                    transactions: lines.map(transactionLineToSpec)
+                    transactions: lines.map(line => {
+                        const spec = transactionLineToSpec(line);
+                        if (inheritOne && !spec.description?.trim()) {
+                            spec.description = data.description;
+                        }
+                        return spec;
+                    })
                 }
             },
             {
@@ -838,6 +864,8 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
                 <TransactionLinesEditor
                     lines={lines}
                     setLines={setLines}
+                    inheritDescription={true}
+                    groupDescription={data.description}
                     onRequestCreateFund={(lineKey, field, name) => setCreateFundReq({ lineKey, field, name })}
                 />
             </CardSection>

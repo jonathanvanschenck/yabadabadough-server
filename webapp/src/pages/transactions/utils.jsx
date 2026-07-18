@@ -100,6 +100,32 @@ export function outsideTotalOf(transactions, trackedIds) {
 }
 
 /**
+ * Break `outsideTotalOf` down per untracked fund: each untracked fund that the
+ * transactions touch, with its net contribution to the outside total (money
+ * FROM it positive, money TO it negative). Zero-net funds and rows with no
+ * untracked leg drop out. Sorted by magnitude, largest first. `fundsById` maps
+ * every fund id (tracked or not) to its record for labeling.
+ */
+export function outsideBreakdownOf(transactions, trackedIds, fundsById) {
+    const map = new Map();
+    for ( const t of transactions ) {
+        if ( !trackedIds.has(t.source_fund_id) ) {
+            map.set(t.source_fund_id, (map.get(t.source_fund_id) ?? 0) + t.amount);
+        }
+        if ( !trackedIds.has(t.target_fund_id) ) {
+            map.set(t.target_fund_id, (map.get(t.target_fund_id) ?? 0) - t.amount);
+        }
+    }
+    const out = [];
+    for ( const [ fundId, amount ] of map ) {
+        if ( amount === 0 ) continue;
+        out.push({ fundId, fund: fundsById.get(fundId) ?? null, amount });
+    }
+    out.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+    return out;
+}
+
+/**
  * Sum a Map's values over `ids`, or null when NONE of the ids are present
  * (the "empty cell" state, distinct from a legitimate zero).
  */

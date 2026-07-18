@@ -351,6 +351,75 @@ td.colHover {
     text-align: right;
     white-space: nowrap;
     min-width: 3.75rem;
+    /* amounts are drag-selectable for the sum tool -- never text-select them */
+    user-select: none;
+}
+
+/* A cell in the current sum selection: an info-tinted ring (box-shadow, so it
+ * survives the fund columns' inline backgrounds and the hover glow) plus a
+ * translucent fill that stacks over any fund tint. */
+.amountCell.selected {
+    box-shadow: inset 0 0 0 2px var(--u-info);
+    background-image: linear-gradient(
+        color-mix(in oklab, var(--u-info) 22%, transparent),
+        color-mix(in oklab, var(--u-info) 22%, transparent)
+    );
+}
+
+/* Fixed slot to the RIGHT of a Total cell's number, always present so every
+ * Total-column number aligns whether or not the cell has a breakdown icon. */
+.breakdownSlot {
+    display: inline-block;
+    width: 1rem;
+    margin-left: 0.25rem;
+    text-align: center;
+    vertical-align: baseline;
+}
+
+/* Info affordance on a Total cell -- opens the untracked-fund breakdown */
+.breakdownTrigger {
+    display: inline-block;
+    color: var(--font-faint);
+    cursor: help;
+    vertical-align: baseline;
+}
+
+.breakdownTrigger:hover {
+    color: var(--u-info-text);
+}
+
+.breakdownPopover {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 12rem;
+}
+
+.breakdownTitle {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+}
+
+.breakdownRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.breakdownUnknown {
+    color: var(--font-muted);
+    font-style: italic;
+}
+
+.breakdownNet {
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.3rem;
+    margin-top: 0.1rem;
+    font-weight: 600;
+    color: var(--font-secondary-color);
 }
 
 /* Stand-in for a group row's amounts while it is expanded (the real values
@@ -385,10 +454,13 @@ td.colHover {
     color: var(--font-faint);
 }
 
-/* Month totals: sticky right beneath the header */
+/* Month totals: sticky right beneath the header. The offset is the MEASURED
+ * header height (--totals-offset, set by the page) so cell padding + the
+ * header's bottom border can't overlap and squish this row; the rem estimate
+ * is only the first-paint fallback. */
 .totalsRow td {
     position: sticky;
-    top: var(--thead-height);
+    top: var(--totals-offset, var(--thead-height));
     z-index: 2;
     background-color: var(--bg-elevated-color);
     border-bottom: 1px solid var(--input-border-color);
@@ -445,4 +517,47 @@ td.colHover {
 
 .ghostDelete:hover:not(:disabled) {
     color: var(--font-danger-color);
+}
+
+/* ---- Floating selection sum readout ---- */
+
+.selectionReadout {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.5rem;
+    z-index: 50;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background-color: var(--bg-elevated-color);
+    border: 1px solid var(--u-info-border);
+    border-radius: 0.5rem;
+    box-shadow: 0 0.5rem 1.5rem var(--shadow-color);
+}
+
+.selectionSum {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--font-primary-color);
+}
+
+.selectionMeta {
+    font-size: 0.78rem;
+    color: var(--font-muted);
+}
+
+.selectionClear {
+    align-self: center;
+    border: none;
+    background: none;
+    padding: 0.1rem 0.25rem;
+    cursor: pointer;
+    color: var(--font-faint);
+    line-height: 1;
+}
+
+.selectionClear:hover {
+    color: var(--font-primary-color);
 }

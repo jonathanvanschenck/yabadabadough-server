@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useSearchParams } from 'react-router';
 import dayjs from 'dayjs';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -20,7 +20,8 @@ import {
     UnfinalizeMonthModal
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
-import { FinalizedBadge } from '../../components/Badges.jsx';
+import { FinalizedBadge, FundLabel } from '../../components/Badges.jsx';
+import { HoverPopover } from '../../components/HoverPopover.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { formatDollars } from '../../components/domain.js';
 import { fundColorVar } from '../../hooks/fundColors.js';
@@ -32,6 +33,7 @@ import {
     allColumnIdsOf,
     netAmountsByFund,
     outsideTotalOf,
+    outsideBreakdownOf,
     sumOver
 } from './utils.jsx';
 import styles from './Transactions.module.css';
@@ -83,28 +85,91 @@ function GhostButton({ icon, title, onClick, disabled = false, className = '' })
 }
 
 /**
+ * The per-untracked-fund breakdown of a Total cell, shown in its hover/pin
+ * popover: each untracked fund that money crossed to/from, and the net total.
+ */
+function OutsideBreakdown({ breakdown, total }) {
+    return (
+        <div className={styles.breakdownPopover}>
+            <div className={styles.breakdownTitle}>Flow from untracked funds</div>
+            { breakdown.map(({ fundId, fund, amount }) => (
+                <div key={fundId} className={styles.breakdownRow}>
+                    { fund
+                        ? <FundLabel fund={fund} />
+                        : <span className={styles.breakdownUnknown}>Fund #{fundId}</span> }
+                    <span className={`tabular-nums ${amount < 0 ? styles.negative : ''}`}>
+                        {formatDollars(amount)}
+                    </span>
+                </div>
+            ))}
+            <div className={`${styles.breakdownRow} ${styles.breakdownNet}`}>
+                <span>Net</span>
+                <span className={`tabular-nums ${total < 0 ? styles.negative : ''}`}>
+                    {formatDollars(total)}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+/**
  * One spreadsheet amount cell: empty when null, red negatives, faint zeros.
  * Fund-column cells (`fund` set) are tinted with the fund's color
  * (`variant`: 'main' for transaction rows, 'muted' for balance rows), carry
  * `data-fund-id` for the delegated column-hover handler, and glow while
  * their column is hovered. `isOmitted` replaces a would-be value with a
  * faint mark (an expanded group's amounts live on the rows below it).
+ *
+ * A `selKey` (with `selCol`) makes the cell selectable for the sum tool: a
+ * cell that HOLDS a value carries the full `data-sel-*` set (key + value) and
+ * highlights while `selected`; an empty cell in a selectable column still emits
+ * `data-sel-col` alone -- a position with no key/value -- so a rectangle select
+ * can extend across or onto it without it contributing to the sum. Passing
+ * `breakdown` (any array, even empty) marks this as a Total
+ * cell: it reserves a fixed icon slot to the RIGHT of the number -- so every
+ * Total-column number aligns whether or not it has a breakdown -- and, when the
+ * array is non-empty, fills that slot with the info affordance opening the
+ * untracked-fund breakdown popover.
  */
-function AmountCell({ value, className = '', fund, variant = 'main', isColHovered = false, isOmitted = false }) {
+function AmountCell({
+    value, className = '', fund, variant = 'main', isColHovered = false, isOmitted = false,
+    selKey = null, selCol = null, selected = false, breakdown = null
+}) {
+    const canSelect = selKey != null && value != null && !isOmitted;
     const hoverClass = isColHovered ? styles.colHover : '';
+    const selectedClass = canSelect && selected ? styles.selected : '';
     const style = fund ? { backgroundColor: fundColorVar(fund.color, variant) } : undefined;
+    const isTotalCell = breakdown != null; // reserve the aligned icon slot
+    const hasBreakdown = isTotalCell && breakdown.length > 0 && value != null && !isOmitted;
     return (
         <td
-            className={`${styles.amountCell} ${hoverClass} ${value != null ? 'tabular-nums' : ''} ${className}`}
+            className={`${styles.amountCell} ${hoverClass} ${selectedClass} ${value != null ? 'tabular-nums' : ''} ${className}`}
             style={style}
             data-fund-id={fund?.id}
+            data-sel-key={canSelect ? selKey : undefined}
+            data-sel-col={selKey != null ? selCol : undefined}
+            data-sel-value={canSelect ? value : undefined}
         >
             { value != null && (
                 isOmitted
                     ? <span className={styles.omittedMark} title="Shown on the expanded transaction rows below">⋯</span>
-                    : <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                        {formatDollars(value)}
-                    </span>
+                    : <>
+                        <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
+                            {formatDollars(value)}
+                        </span>
+                        { isTotalCell &&
+                            <span className={styles.breakdownSlot}>
+                                { hasBreakdown &&
+                                    <HoverPopover
+                                        triggerClassName={styles.breakdownTrigger}
+                                        trigger={<FontAwesomeIcon icon="fa-solid fa-circle-info" size="xs" />}
+                                    >
+                                        <OutsideBreakdown breakdown={breakdown} total={value} />
+                                    </HoverPopover>
+                                }
+                            </span>
+                        }
+                    </>
             )}
         </td>
     );
@@ -113,8 +178,12 @@ function AmountCell({ value, className = '', fund, variant = 'main', isColHovere
 /**
  * A "computed balance" row (month totals / balance forward / finalized EOM):
  * label in the description column, one summed cell per fund column.
+ *
+ * A `selPrefix` makes the fund cells selectable for the sum tool (keyed
+ * `<selPrefix>:<col>`, col aligned with the group rows' fund columns so a
+ * rectangle can span both); the balance-forward row opts in.
  */
-function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = '' }) {
+function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = '', selPrefix = null, selectedKeys = null }) {
     return (
         <tr className={`${styles.balanceRow} ${rowClassName}`}>
             <td className={`${styles.dateCell} ${styles.stickyCol1}`} />
@@ -122,15 +191,21 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
                 <span title={title}>{label}</span>
             </td>
             <td className={`${styles.amountCell} ${styles.stickyCol3}`} />
-            { columns.map(col => (
-                <AmountCell
-                    key={col.fund.id}
-                    value={sumOver(map, col.memberIds)}
-                    fund={col.fund}
-                    variant="muted"
-                    isColHovered={col.fund.id === hoveredFundId}
-                />
-            ))}
+            { columns.map((col, i) => {
+                const selKey = selPrefix != null ? `${selPrefix}:${i + 1}` : null;
+                return (
+                    <AmountCell
+                        key={col.fund.id}
+                        value={sumOver(map, col.memberIds)}
+                        fund={col.fund}
+                        variant="muted"
+                        isColHovered={col.fund.id === hoveredFundId}
+                        selKey={selKey}
+                        selCol={selKey != null ? i + 1 : null}
+                        selected={selKey != null && selectedKeys != null && selectedKeys.has(selKey)}
+                    />
+                );
+            })}
             <td className={styles.spacerCell} />
         </tr>
     );
@@ -140,7 +215,7 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
  * A transaction group row, plus -- when expanded -- one indented row per
  * transaction line.
  */
-function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onToggleExpand, onShowNote, onDeleteGroup, isMonthFinalized = false, isEditor = false, rowClassName = '' }) {
+function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hoveredFundId, isExpanded, onToggleExpand, onShowNote, onDeleteGroup, isMonthFinalized = false, isEditor = false, rowClassName = '' }) {
     const netMap = netAmountsByFund(group.transactions);
     const isSpecial = group.status.allocation || group.status.eom_cleanup;
     const deleteDisabledReason = !isEditor
@@ -187,16 +262,26 @@ function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onTo
                 value={outsideTotalOf(group.transactions, trackedIds)}
                 className={styles.stickyCol3}
                 isOmitted={isExpanded}
+                selKey={`g${group.id}:0`}
+                selCol={0}
+                selected={selectedKeys.has(`g${group.id}:0`)}
+                breakdown={isExpanded ? null : outsideBreakdownOf(group.transactions, trackedIds, fundsById)}
             />
-            { columns.map(col => (
-                <AmountCell
-                    key={col.fund.id}
-                    value={sumOver(netMap, col.memberIds)}
-                    fund={col.fund}
-                    isColHovered={col.fund.id === hoveredFundId}
-                    isOmitted={isExpanded}
-                />
-            ))}
+            { columns.map((col, i) => {
+                const selKey = `g${group.id}:${i + 1}`;
+                return (
+                    <AmountCell
+                        key={col.fund.id}
+                        value={sumOver(netMap, col.memberIds)}
+                        fund={col.fund}
+                        isColHovered={col.fund.id === hoveredFundId}
+                        isOmitted={isExpanded}
+                        selKey={selKey}
+                        selCol={i + 1}
+                        selected={selectedKeys.has(selKey)}
+                    />
+                );
+            })}
             <td className={styles.spacerCell} />
         </tr>
         { isExpanded && group.transactions.map(t => {
@@ -220,20 +305,183 @@ function GroupRows({ group, columns, trackedIds, hoveredFundId, isExpanded, onTo
                             />
                         }
                     </td>
-                    <AmountCell value={outsideTotalOf([ t ], trackedIds)} className={styles.stickyCol3} />
-                    { columns.map(col => (
-                        <AmountCell
-                            key={col.fund.id}
-                            value={sumOver(tMap, col.memberIds)}
-                            fund={col.fund}
-                            isColHovered={col.fund.id === hoveredFundId}
-                        />
-                    ))}
+                    <AmountCell
+                        value={outsideTotalOf([ t ], trackedIds)}
+                        className={styles.stickyCol3}
+                        selKey={`t${t.id}:0`}
+                        selCol={0}
+                        selected={selectedKeys.has(`t${t.id}:0`)}
+                        breakdown={outsideBreakdownOf([ t ], trackedIds, fundsById)}
+                    />
+                    { columns.map((col, i) => {
+                        const selKey = `t${t.id}:${i + 1}`;
+                        return (
+                            <AmountCell
+                                key={col.fund.id}
+                                value={sumOver(tMap, col.memberIds)}
+                                fund={col.fund}
+                                isColHovered={col.fund.id === hoveredFundId}
+                                selKey={selKey}
+                                selCol={i + 1}
+                                selected={selectedKeys.has(selKey)}
+                            />
+                        );
+                    })}
                     <td className={styles.spacerCell} />
                 </tr>
             );
         })}
     </>);
+}
+
+/**
+ * Spreadsheet-style selection of amount cells (`data-sel-*`) for the sum tool.
+ * Click sets an anchor and selects one cell; drag paints a rectangle from the
+ * anchor; shift-click / shift-drag keep the existing anchor and extend to the
+ * pointer; ctrl/cmd-click / ctrl-drag UNION a fresh rectangle onto the existing
+ * selection (accumulate disjoint ranges) instead of replacing it. Coordinates
+ * are read fresh from the DOM at each gesture (row = index among tbody rows,
+ * col = `data-sel-col`), so nothing is stored that expansion or column changes
+ * could make stale. Selection is a Map of cell key → value; the readout sums the
+ * values. Escape and any outside pointerdown clear it -- but a click on an EMPTY
+ * (valueless) cell in a selectable column is NOT "outside": a plain/ctrl click
+ * there is a no-op, while a shift-click still extends the rectangle out to it, so
+ * a block select can start or end on a blank cell.
+ */
+function useCellSelection(tableRef) {
+    const [ selection, setSelection ] = useState(() => new Map());
+    const selectionRef = useRef(selection); // latest selection for additive snapshots
+    selectionRef.current = selection;
+    const dragRef = useRef(null);       // { anchorKey, additive, base } while a drag is active
+    const anchorKeyRef = useRef(null);  // survives gestures (shift extends from it)
+
+    const clearSelection = useCallback(() => {
+        anchorKeyRef.current = null;
+        setSelection(prev => (prev.size === 0 ? prev : new Map()));
+    }, []);
+
+    const coordsOfCell = useCallback((cell) => {
+        const table = tableRef.current;
+        if ( table == null || cell == null ) return null;
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const row = rows.indexOf(cell.closest('tr'));
+        if ( row < 0 ) return null;
+        return { row, col: parseInt(cell.dataset.selCol, 10) };
+    }, [tableRef]);
+
+    const coordsOfKey = useCallback((key) => {
+        const table = tableRef.current;
+        if ( table == null || key == null ) return null;
+        return coordsOfCell(table.querySelector(`[data-sel-key="${key}"]`));
+    }, [tableRef, coordsOfCell]);
+
+    const collectRect = useCallback((a, b) => {
+        const table = tableRef.current;
+        const out = new Map();
+        if ( table == null || a == null || b == null ) return out;
+        const minR = Math.min(a.row, b.row), maxR = Math.max(a.row, b.row);
+        const minC = Math.min(a.col, b.col), maxC = Math.max(a.col, b.col);
+        Array.from(table.querySelectorAll('tbody tr')).forEach((tr, ri) => {
+            if ( ri < minR || ri > maxR ) return;
+            tr.querySelectorAll('[data-sel-key]').forEach(cell => {
+                const c = parseInt(cell.dataset.selCol, 10);
+                if ( c < minC || c > maxC ) return;
+                out.set(cell.dataset.selKey, Number(cell.dataset.selValue));
+            });
+        });
+        return out;
+    }, [tableRef]);
+
+    const updateFromDrag = useCallback((targetCell) => {
+        if ( dragRef.current == null ) return;
+        const { anchorKey, additive, base } = dragRef.current;
+        const anchor = coordsOfKey(anchorKey);
+        const target = coordsOfCell(targetCell);
+        if ( anchor == null || target == null ) return;
+        const rect = collectRect(anchor, target);
+        if ( !additive ) { setSelection(rect); return; }
+        const merged = new Map(base);
+        for ( const [ k, v ] of rect ) merged.set(k, v);
+        setSelection(merged);
+    }, [coordsOfKey, coordsOfCell, collectRect]);
+
+    // Track the pointer through the drag (over any cell, even under the header)
+    useEffect(() => {
+        const onMove = (e) => {
+            if ( dragRef.current == null ) return;
+            // `[data-sel-col]` (not `-key`) so the rectangle keeps tracking across
+            // empty cells -- a drag needn't stay over filled cells to grow.
+            const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-sel-col]');
+            if ( cell != null && tableRef.current?.contains(cell) ) updateFromDrag(cell);
+        };
+        const onUp = () => { dragRef.current = null; };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+    }, [tableRef, updateFromDrag]);
+
+    const onTablePointerDown = useCallback((e) => {
+        if ( e.button !== 0 ) return; // primary button only
+        const cell = e.target.closest?.('[data-sel-col]');
+        if ( cell == null ) return; // clearing is handled by the document listener
+        const target = coordsOfCell(cell);
+        if ( target == null ) return;
+        // Empty (valueless) cell: it has a position but no key, so it can't be an
+        // anchor or hold a value. A shift-click still REGISTERS -- extend the
+        // rectangle from the existing anchor out to this blank cell -- so a block
+        // select can end on a blank cell. Any other click (plain or ctrl) on a
+        // blank cell is a no-op: never clear, never select.
+        if ( cell.dataset.selKey == null ) {
+            e.preventDefault();
+            const anchor = coordsOfKey(anchorKeyRef.current);
+            if ( e.shiftKey && anchor != null ) {
+                dragRef.current = { anchorKey: anchorKeyRef.current, additive: false, base: null };
+                setSelection(collectRect(anchor, target));
+            }
+            return;
+        }
+        e.preventDefault(); // no native text selection while dragging
+        // Ctrl/Cmd: anchor a NEW rectangle here and union it onto the existing
+        // selection (snapshotted as `base`), so a further drag keeps adding.
+        if ( e.ctrlKey || e.metaKey ) {
+            anchorKeyRef.current = cell.dataset.selKey;
+            const base = new Map(selectionRef.current);
+            dragRef.current = { anchorKey: anchorKeyRef.current, additive: true, base };
+            const merged = new Map(base);
+            for ( const [ k, v ] of collectRect(target, target) ) merged.set(k, v);
+            setSelection(merged);
+            return;
+        }
+        const keepAnchor = e.shiftKey && coordsOfKey(anchorKeyRef.current) != null;
+        if ( !keepAnchor ) anchorKeyRef.current = cell.dataset.selKey;
+        dragRef.current = { anchorKey: anchorKeyRef.current, additive: false, base: null };
+        setSelection(collectRect(coordsOfKey(anchorKeyRef.current) ?? target, target));
+    }, [coordsOfCell, coordsOfKey, collectRect]);
+
+    // Escape clears; any pointerdown outside a selectable cell / the readout clears
+    useEffect(() => {
+        const onKeyDown = (e) => { if ( e.key === 'Escape' ) clearSelection(); };
+        const onPointerDown = (e) => {
+            // A blank selectable cell carries data-sel-col (no key); clicking it
+            // must not count as "outside" and clear -- the table handler no-ops it.
+            const inCell = e.target.closest?.('[data-sel-col]');
+            const inReadout = e.target.closest?.('[data-selection-readout]');
+            if ( inCell == null && inReadout == null ) clearSelection();
+        };
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('pointerdown', onPointerDown, true);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.removeEventListener('pointerdown', onPointerDown, true);
+        };
+    }, [clearSelection]);
+
+    let sum = 0;
+    for ( const v of selection.values() ) sum += v;
+    return { selectedKeys: selection, onTablePointerDown, clearSelection, sum, count: selection.size };
 }
 
 export default function Page() {
@@ -267,6 +515,15 @@ export default function Page() {
 
     const roles = useAuthRoles();
     const isEditor = !!roles.editor;
+
+    const tableRef = useRef(null);
+    const {
+        selectedKeys,
+        onTablePointerDown,
+        clearSelection,
+        sum: selectionSum,
+        count: selectionCount
+    } = useCellSelection(tableRef);
 
     // Column hover, delegated: fund cells carry data-fund-id, one handler on
     // the table tracks which column the pointer is in (null elsewhere)
@@ -319,6 +576,10 @@ export default function Page() {
         () => new Set((funds ?? []).filter(f => f.status.tracked).map(f => f.id)),
         [funds]
     );
+    const fundsById = useMemo(
+        () => new Map((funds ?? []).map(f => [ f.id, f ])),
+        [funds]
+    );
     const columnRoots = useMemo(() => buildFundColumnTree(funds ?? [], eom), [funds, eom]);
     const columns = useMemo(
         () => visibleColumnsOf(columnRoots, hiddenIds, collapsedIds),
@@ -360,11 +621,34 @@ export default function Page() {
         [groupsQ.data]
     );
 
+    // Selection keys are re-resolved from the DOM each gesture, but a selected
+    // cell that disappears (month change, group collapse, column hidden) would
+    // leave a stale value in the sum -- so drop the selection when the visible
+    // structure shifts.
+    useEffect(() => {
+        clearSelection();
+    }, [som, columns, expandedGroupIds, groupsQ.data, clearSelection]);
+
     // The header must be tall enough for the angled labels plus one group-bar
     // row per nesting level; the totals row sticks directly beneath it (see
     // --thead-height in the CSS)
     const barRows = columns.reduce((max, col) => Math.max(max, col.bars.length), 0);
     const theadHeightRem = 8 + barRows * 0.4;
+
+    // The rem estimate above sets the header's height, but its true rendered
+    // height also carries cell padding + the bottom border (content-box), so
+    // the totals row -- which sticks at that offset -- was overlapped and
+    // squished by the header. Measure the real header box and pin the totals
+    // sticky offset (--totals-offset) to it (React 19 ref-callback cleanup).
+    const [ theadHeight, setTheadHeight ] = useState(null);
+    const theadRef = useCallback((node) => {
+        if ( node == null ) return;
+        const update = () => setTheadHeight(node.offsetHeight);
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
 
     const isPending = fundsQ.isPending || groupsQ.isPending || enteringQ.isPending
         || eomQ.isPending || monthsQ.isPending
@@ -447,13 +731,21 @@ export default function Page() {
                 </div>
                 : isPending
                 ? <div className={styles.centerState}><Spinner size="2rem" /></div>
-                : <div className={styles.tableScroll} style={{ '--thead-height': `${theadHeightRem}rem` }}>
+                : <div
+                    className={styles.tableScroll}
+                    style={{
+                        '--thead-height': `${theadHeightRem}rem`,
+                        ...(theadHeight != null ? { '--totals-offset': `${theadHeight}px` } : {})
+                    }}
+                >
                     <table
+                        ref={tableRef}
                         className={styles.table}
                         onMouseOver={handleTableMouseOver}
                         onMouseLeave={() => setHoveredFundId(null)}
+                        onPointerDown={onTablePointerDown}
                     >
-                        <thead>
+                        <thead ref={theadRef}>
                             <tr>
                                 <th className={`${styles.leadTh} ${styles.stickyCol1}`}>Date</th>
                                 <th className={`${styles.leadTh} ${styles.stickyCol2}`}>Description</th>
@@ -543,6 +835,8 @@ export default function Page() {
                                 columns={columns}
                                 hoveredFundId={hoveredFundId}
                                 rowClassName={styles.totalsRow}
+                                selPrefix="tot"
+                                selectedKeys={selectedKeys}
                             />
                             <BalanceRow
                                 label="Balance forward"
@@ -551,6 +845,8 @@ export default function Page() {
                                 columns={columns}
                                 hoveredFundId={hoveredFundId}
                                 rowClassName={styles.forwardRow}
+                                selPrefix="fwd"
+                                selectedKeys={selectedKeys}
                             />
                             { bodyGroups.length === 0 &&
                                 <tr>
@@ -565,6 +861,8 @@ export default function Page() {
                                     group={group}
                                     columns={columns}
                                     trackedIds={trackedIds}
+                                    fundsById={fundsById}
+                                    selectedKeys={selectedKeys}
                                     hoveredFundId={hoveredFundId}
                                     isExpanded={expandedGroupIds.has(group.id)}
                                     onToggleExpand={() => toggleExpanded(group.id)}
@@ -582,6 +880,8 @@ export default function Page() {
                                     columns={columns}
                                     hoveredFundId={hoveredFundId}
                                     rowClassName={styles.finalizedRow}
+                                    selPrefix="eom"
+                                    selectedKeys={selectedKeys}
                                 />
                                 { cleanupGroups.map(group => (
                                     <GroupRows
@@ -589,7 +889,9 @@ export default function Page() {
                                         group={group}
                                         columns={columns}
                                         trackedIds={trackedIds}
-                                    hoveredFundId={hoveredFundId}
+                                        fundsById={fundsById}
+                                        selectedKeys={selectedKeys}
+                                        hoveredFundId={hoveredFundId}
                                         isExpanded={expandedGroupIds.has(group.id)}
                                         onToggleExpand={() => toggleExpanded(group.id)}
                                         onShowNote={setNoteTarget}
@@ -602,6 +904,25 @@ export default function Page() {
                             </>}
                         </tbody>
                     </table>
+                </div>
+            }
+
+            { selectionCount > 0 &&
+                <div className={styles.selectionReadout} data-selection-readout>
+                    <span className={styles.selectionSum}>{formatDollars(selectionSum)}</span>
+                    <span className={styles.selectionMeta}>
+                        {selectionCount} {selectionCount === 1 ? 'cell' : 'cells'}
+                        { selectionCount > 1 && ` · avg ${formatDollars(selectionSum / selectionCount)}` }
+                    </span>
+                    <button
+                        type="button"
+                        className={styles.selectionClear}
+                        onClick={clearSelection}
+                        title="Clear selection (Esc)"
+                        aria-label="Clear selection"
+                    >
+                        <FontAwesomeIcon icon="fa-solid fa-xmark" />
+                    </button>
                 </div>
             }
 

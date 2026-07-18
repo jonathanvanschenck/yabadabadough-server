@@ -163,25 +163,49 @@ are largely independent of each other and can be reordered.
 
 ## Stage 4 — Transactions page polish
 
-- [ ] **Single-transaction description defaulting.** In CreateTransactionGroupModal (and the
+- [x] **Single-transaction description defaulting.** In CreateTransactionGroupModal (and the
   statements easy path in Stage 7): when a group has exactly one line, the transaction
   description mirrors the group description unless the user explicitly diverges (leave
   line description blank → inherit; UI shows placeholder "same as group").
   Decide whether inheritance happens at the API call site (send the group description) or
   display time (render group description when line description is null) — prefer call site,
   no schema change.
-- [ ] **Fix sticky-header squish of the Totals row.** The sticky top rows
+  Done: chose the call site. `transactionLineValidity`/`transactionLineHasProblem` take a
+  `descriptionOptional` flag; `TransactionLinesEditor` gains `inheritDescription` +
+  `groupDescription`, and while there is exactly one line its description field is optional
+  with a live "Same as group: <desc>" placeholder. CreateTransactionGroupModal validates
+  with the flag and, at submit, substitutes the group description into a blank lone line —
+  no null line descriptions sent, no schema change. EditTransactionGroupTransactionsModal is
+  untouched (defaults off; existing-line descriptions stay required).
+- [x] **Fix sticky-header squish of the Totals row.** The sticky top rows
   (`theadHeightRem` computation at `Transactions.jsx:342`, `totalsRow` stick offset)
   squeeze the "<Month> totals" row; fix the offset math / row heights so the totals row
   keeps full height while stuck.
-- [ ] **Cell selection + sum.** Click / shift-click / drag / shift-drag to select amount
+  Done: the rem estimate sets the header's height, but its true rendered box also carries
+  cell padding + the bottom border (content-box), so the totals row (stuck at that offset)
+  was overlapped. A ResizeObserver (React 19 ref-callback) measures the real `<thead>`
+  height into `--totals-offset`; `.totalsRow td { top: var(--totals-offset, var(--thead-height)) }`
+  now pins the row exactly beneath the header (rem estimate is just the first-paint fallback).
+- [x] **Cell selection + sum.** Click / shift-click / drag / shift-drag to select amount
   cells in the grid, with a floating (or status-bar) readout of count + sum. Pointer-event
   based, page-local state; selection cleared on Escape/outside click. This is the largest
   polish item — implement after squish fix since both touch the grid.
-- [ ] **"Total" column untracked-fund breakdown.** The third sticky column shows net flow
+  Done: selectable amount cells (group + transaction rows, Total + fund columns) carry
+  `data-sel-*`; a page-local `useCellSelection(tableRef)` hook builds a rectangular
+  selection from anchor→pointer, reading row/col coordinates fresh from the DOM each gesture
+  (click sets anchor, drag paints, shift keeps the anchor and extends). Selection is a
+  Map of key→value; a fixed bottom-right readout shows sum · count · avg with a clear ✕.
+  Escape and any outside pointerdown clear it; structural changes (month/columns/expansion)
+  drop it so the sum never counts vanished cells. Selected cells get an info-tinted ring.
+- [x] **"Total" column untracked-fund breakdown.** The third sticky column shows net flow
   from untracked funds (`outsideTotalOf`, `transactions/utils.jsx:93`). Add an info
   affordance (hover tooltip + click-to-pin popover for touch) listing which untracked
   fund(s) contribute and by how much.
+  Done: `outsideBreakdownOf(transactions, trackedIds, fundsById)` computes the per-untracked
+  fund contributions (magnitude-sorted). A new reusable `HoverPopover` component (portal +
+  fixed positioning, so it is never clipped by the scrolling grid; opens on hover, pins on
+  click for touch, closes on scroll/resize/Escape/outside-click) hosts a small `ⓘ` on each
+  Total cell that has outside flow, listing each fund (via `FundLabel`) + amount and the net.
 
 ## Stage 5 — Fund iconography
 
