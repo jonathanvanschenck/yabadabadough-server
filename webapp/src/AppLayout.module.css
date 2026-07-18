@@ -49,7 +49,8 @@
 }
 
 .navBar {
-    width: 10vw;
+    width: 11rem;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--font-muted);
@@ -64,6 +65,7 @@
 
 .mainContents {
     flex-grow: 1;
+    min-width: 0; /* let wide content scroll inside the page, not push the flex row wider */
     height: 100%;
 
     /* Scrollbar styles */
@@ -79,7 +81,6 @@
     padding: 0.3rem 0.5rem;
     border-radius: 4px;
     transition: font-weight 0.2s, color 0.2s;
-    word-break: break-word; /* eventually, this should be a popout to the right, which will allow non-breaking text */
 }
 .navBarLinks a[aria-current="page"] {
     font-weight: bold;
