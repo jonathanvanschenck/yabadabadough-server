@@ -123,7 +123,23 @@
     min-height: 0;
 }
 
+/* Collapsing/hiding a column adds or removes several table columns at once,
+ * which is jarring as a hard cut. The page wraps those toggles in a View
+ * Transition (see withColumnTransition in the JSX) and this shortens the
+ * default cross-fade to a blink. View-transition pseudo-elements live on the
+ * document root, not this component -- they are inert unless we start one. */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: 180ms;
+}
+
 .table {
+    /* Cell padding is a variable because the fund-column geometry is derived
+     * from it: there is no global `box-sizing: border-box`, so a fund column's
+     * true PITCH is its content width plus this padding on both sides. Group
+     * tier labels span `n × pitch` -- see .fundThTierLabel. */
+    --cell-pad-x: 0.4rem;
     border-collapse: separate; /* collapse breaks sticky borders */
     border-spacing: 0;
     font-size: 0.78rem;
@@ -132,7 +148,7 @@
 
 .table td,
 .table th {
-    padding: 0.15rem 0.4rem;
+    padding: 0.15rem var(--cell-pad-x);
     background-color: var(--bg-secondary-color);
 }
 
@@ -206,10 +222,13 @@
  * spanning that group's subtree), and the tiny collapse/hide controls at
  * the base. The label's `bottom` is set inline (it clears the bar rows). */
 .fundTh {
+    --fund-col-width: 4.25rem;
+    /* What one column occupies end to end -- content box plus both paddings */
+    --fund-col-pitch: calc(var(--fund-col-width) + 2 * var(--cell-pad-x));
     position: relative;
-    width: 4.25rem;
-    min-width: 4.25rem;
-    max-width: 4.25rem;
+    width: var(--fund-col-width);
+    min-width: var(--fund-col-width);
+    max-width: var(--fund-col-width);
 }
 
 /* The label is anchored at the split line (`bottom` = --fund-base-height, set
@@ -295,11 +314,16 @@
     inset: 0;
 }
 
+/* The label covers its whole segment: `--tier-span` (the number of columns the
+ * group spans, set inline) times the column pitch. `.fundThTiers` is pinned to
+ * the th's PADDING box, so left:0 is the true column edge and n × pitch lands
+ * exactly on the segment's far edge. */
 .fundThTierLabel {
     position: absolute;
     top: 0;
     bottom: 0;
     left: 0;
+    width: calc(var(--tier-span, 1) * var(--fund-col-pitch));
     z-index: 1;
     display: flex;
     align-items: center;
@@ -318,6 +342,11 @@
 
 button.fundThTierLabel {
     cursor: pointer;
+}
+
+/* Glow the whole clickable extent, so the segment the click acts on is obvious */
+button.fundThTierLabel:hover {
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
 }
 
 button.fundThTierLabel:hover .tierCaret {
@@ -407,11 +436,14 @@ td.colHover {
     user-select: none;
 }
 
-/* A cell in the current sum selection: an info-tinted ring (box-shadow, so it
- * survives the fund columns' inline backgrounds and the hover glow) plus a
- * translucent fill that stacks over any fund tint. */
+/* A cell in the current sum selection: a translucent info fill stacking over
+ * any fund tint. Rectangle selections cover every POSITION in the region,
+ * valued or not, so the block reads as one solid area rather than a scatter of
+ * the cells that happen to hold numbers -- and the info-tinted rule is drawn
+ * INLINE (box-shadow, so it survives the inline fund backgrounds and the hover
+ * glow) on only the sides that lie on the region's boundary, outlining the
+ * whole block once. */
 .amountCell.selected {
-    box-shadow: inset 0 0 0 2px var(--u-info);
     background-image: linear-gradient(
         color-mix(in oklab, var(--u-info) 22%, transparent),
         color-mix(in oklab, var(--u-info) 22%, transparent)
