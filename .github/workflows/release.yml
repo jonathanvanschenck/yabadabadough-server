@@ -1,0 +1,79 @@
+# Publishes a container image to the GitHub Container Registry when a version
+# tag (v1.2.3) is pushed. See the "Releases" section of the README for the
+# full cut-a-release procedure.
+#
+# The root package.json `version` is the single source of truth (the server
+# reports it, the webapp bakes it in); this workflow refuses to publish if the
+# pushed tag disagrees with it, so the image tag and the version the running
+# app reports can never drift.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write # push to ghcr.io via the built-in GITHUB_TOKEN
+
+jobs:
+  # Never publish an image from a commit whose tests are red. Tags can be
+  # pushed on any commit, so we re-run rather than trust prior PR CI.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches package.json version
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::git tag ${GITHUB_REF_NAME} does not match package.json ($pkg). Run 'npm version' to bump package.json to match the tag."
+            exit 1
+          fi
+
+      # QEMU lets the amd64 runner cross-build the arm64 image (better-sqlite3
+      # compiles from source on arm64 — slower, but the Dockerfile has the
+      # toolchain for it).
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Derives image tags from the git tag: {{version}} -> 1.2.3,
+      # {{major}}.{{minor}} -> 1.2, plus `latest` (auto, only for non-prerelease
+      # tags via the default flavor). Also stamps OCI labels linking the image
+      # back to this repo.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

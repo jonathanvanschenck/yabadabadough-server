@@ -71,19 +71,23 @@ it:
   it fails the app still works, but clients stop noticing each other's changes
   until a manual refresh.
 
-## Deploying a built image instead of building on the host
+## Where the image comes from
 
-Building on the production host is fine for a personal deployment, but if you
-would rather build elsewhere, replace the `build:` block in
-`docker-compose.yml` with a pinned image:
+This stack pulls the published image from the GitHub Container Registry:
 
 ```yaml
   server:
-    image: your-registry/yabadabadough:1.0.0
+    image: ghcr.io/jonathanvanschenck/yabadabadough-server:1.0.0
 ```
 
 Pin a real version rather than `latest`, so `docker compose up -d` is a
-deliberate upgrade and not a surprise one.
+deliberate upgrade and not a surprise one. Bump the tag and
+`docker compose pull && docker compose up -d` to upgrade. (Published tags and
+the release procedure are in the main README's *Releases* section.)
+
+To build from the repo on this host instead — for local changes, or an
+architecture no image is published for — comment the `image:` line out and
+uncomment the `build:` block in `docker-compose.yml`.
 
 ## Operations
 
