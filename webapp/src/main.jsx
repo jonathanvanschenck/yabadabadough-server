@@ -14,6 +14,7 @@ import RouteError from './pages/error/RouteError.jsx'
 import Home from './pages/home/Home.jsx'
 import Funds from './pages/funds/Funds.jsx'
 import Fund from './pages/fund/Fund.jsx'
+import Balances from './pages/balances/Balances.jsx'
 import Transactions from './pages/transactions/Transactions.jsx'
 import TransactionGroup from './pages/transaction_group/TransactionGroup.jsx'
 import Allocations from './pages/allocations/Allocations.jsx'
@@ -31,6 +32,7 @@ const router = createBrowserRouter(
                 { index: true, Component: Home },
                 { path: "funds", Component: Funds },
                 { path: "fund/:id", Component: Fund },
+                { path: "balances", Component: Balances },
                 { path: "transactions", Component: Transactions },
                 { path: "transaction-group/:id", Component: TransactionGroup },
                 { path: "allocations", Component: Allocations },

@@ -260,6 +260,54 @@ describe("Funds API", () => {
             expect(status).to.equal(400);
             expect(body.message).to.include("Bad parameter: on");
         });
+
+        it("omits closed funds from the date they stop being active", async () => {
+            // Drain groceries so it can be closed, then close it
+            TransactionGroup.create_single(h.db, {
+                date: YDate.parse("2026-01-11"),
+                description: "Return",
+                source_fund_id: groceries.id,
+                target_fund_id: checking.id,
+                amount: 100.00,
+            });
+            Fund.for_id(h.db, groceries.id).update(h.db, { deprecated: YDate.parse("2026-01-15") });
+
+            // Still active before, and ON its last active day
+            let res = await h.request("/api/funds/balances?on=2026-01-14", { token: h.tokens.reader });
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
+
+            res = await h.request("/api/funds/balances?on=2026-01-15", { token: h.tokens.reader });
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
+
+            // Gone the day after -- and gone from the undated (all-time) view
+            res = await h.request("/api/funds/balances?on=2026-01-16", { token: h.tokens.reader });
+            expect(res.status).to.equal(200);
+            expect(res.headers.get("x-total-count")).to.equal("1");
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id ]);
+
+            res = await h.request("/api/funds/balances", { token: h.tokens.reader });
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id ]);
+        });
+
+        it("keeps closed funds with include_deprecated", async () => {
+            TransactionGroup.create_single(h.db, {
+                date: YDate.parse("2026-01-11"),
+                description: "Return",
+                source_fund_id: groceries.id,
+                target_fund_id: checking.id,
+                amount: 100.00,
+            });
+            Fund.for_id(h.db, groceries.id).update(h.db, { deprecated: YDate.parse("2026-01-15") });
+
+            let res = await h.request("/api/funds/balances?on=2026-01-16&include_deprecated=true", {
+                token: h.tokens.reader,
+            });
+            expect(res.headers.get("x-total-count")).to.equal("2");
+            expect(res.body.find((b) => b.fund_id === groceries.id).balance).to.equal(0);
+
+            res = await h.request("/api/funds/balances?include_deprecated=true", { token: h.tokens.reader });
+            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
+        });
     });
 
     describe("POST /api/funds/funds", () => {

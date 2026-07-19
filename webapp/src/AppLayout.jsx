@@ -100,6 +100,7 @@ function App() {
                 <div className={ styles.navBarLinks }>
                     <NavLink to="/">Home</NavLink>
                     <NavLink to="/funds">Funds</NavLink>
+                    <NavLink to="/balances">Balances</NavLink>
                     <NavLink to="/transactions">Transactions</NavLink>
                     <NavLink to="/allocations">Allocations</NavLink>
                     <NavLink to="/statements">Statements</NavLink>

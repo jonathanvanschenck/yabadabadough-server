@@ -1,0 +1,189 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+/* ---- Top bar: title | date picker + reset | semantics hint ---- */
+
+.topBar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-top: 0.5rem;
+}
+
+.topBarSide {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.topBarRight {
+    justify-content: flex-end;
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.pageTitle {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+/* The date is the page's one control, so it sits centered and reads as a
+ * phrase with the title ("Balances | on | Mar 4, 2026") rather than as a
+ * labelled form field. */
+.dateControl {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dateLabel {
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.provisionalBanner {
+    margin: 0;
+    font-size: 0.8rem;
+}
+
+/* ---- Loading / error / empty states ---- */
+
+.centerState {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.errorTitle {
+    color: var(--font-danger-color);
+    margin: 0;
+}
+
+.emptyState {
+    text-align: center;
+    color: var(--font-faint);
+    padding: 1.5rem 0.5rem;
+    font-style: italic;
+}
+
+/* ---- The table ----
+ *
+ * Only three columns, so unlike the allocations grid there is nothing to
+ * scroll horizontally and no sticky fund column -- just a sticky header and
+ * a sticky totals row beneath it (z-index 4 / 2, and every sticky cell needs
+ * a SOLID background or the rows scroll through it). --thead-height parks
+ * the totals row directly under the header.
+ */
+
+.tableScroll {
+    --thead-height: 2.2rem;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.table {
+    border-collapse: separate; /* collapse breaks sticky borders */
+    border-spacing: 0;
+    font-size: 0.8rem;
+    width: 100%;
+    max-width: 46rem;
+}
+
+.table td,
+.table th {
+    padding: 0.2rem 0.5rem;
+    background-color: var(--bg-secondary-color);
+}
+
+.table td {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    height: var(--thead-height);
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 500;
+    color: var(--font-secondary-color);
+    text-align: left;
+}
+
+.fundTh {
+    width: 60%;
+}
+
+.moneyTh {
+    width: 20%;
+    text-align: right;
+}
+
+/* ---- Totals ---- */
+
+.totalsRow td {
+    position: sticky;
+    top: var(--thead-height);
+    z-index: 2;
+    background-color: var(--bg-elevated-color);
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 600;
+}
+
+.totalsLabel {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--font-faint);
+}
+
+.totalsCell {
+    color: var(--font-secondary-color);
+}
+
+/* ---- Rows ----
+ *
+ * Hover highlights compose as a background-image glow layer (not
+ * background-color: the fund cells carry inline fund-color backgrounds,
+ * which would win over any stylesheet color). */
+
+.bodyRow:hover td {
+    background-image: linear-gradient(var(--glow-color), var(--glow-color));
+}
+
+.fundCell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Pool funds are the source/sink their descendants draw from: mark the row
+ * with a left accent rail (an inset box-shadow, so it composes over the
+ * inline fund-color background) alongside the vault icon. */
+.poolCell {
+    box-shadow: inset 0.2rem 0 0 var(--accent-color);
+}
+
+.moneyCell {
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* The roll-up restates money already counted in the column to its left, so
+ * it recedes -- present for the parents that need it, never competing with
+ * each fund's own figure. */
+.rollupCell {
+    color: var(--font-muted);
+}

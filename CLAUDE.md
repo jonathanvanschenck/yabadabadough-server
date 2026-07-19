@@ -338,7 +338,11 @@ TransactionGroup, `finalized_months_since` in Fund).
   unfinalizing a month while any fund is deprecated during-or-after it, and once any month
   after the date is finalized the deprecation itself is immutable (unfinalize back first).
   `from_db` filters: `deprecated` (bool), `active_as_of` (not deprecated before date; both on
-  the API), `deprecated_since` (internal). Webapp: hidden from transaction columns/allocation
+  the API), `deprecated_since` (internal). `GET /funds/balances` applies them itself: closed
+  funds are omitted by default (`active_as_of: on`, degrading to `deprecated: false` when no
+  `on` is given — there is deliberately no server-clock "today", and a closed fund's all-time
+  balance is necessarily zero anyway), and `?include_deprecated=true` keeps them.
+  Webapp: hidden from transaction columns/allocation
   rows for months after the date, dropped from `FundSearchableSelector` by default, hidden on
   the funds page behind a toggle, and every `FundLabel` renders muted + an archive icon.
   Cross-model behavior tests live in `test/models/test-deprecation.js` +
