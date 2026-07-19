@@ -323,11 +323,15 @@ module.exports = class MonthFinalization extends Base {
 
         // ------------------------------------------------------------------
         // Collect the funds to finalize: tracked funds that have started by
-        // the end of this month
+        // the end of this month and are not deprecated before it begins. A
+        // fund deprecated before this month is finished history: no
+        // finalization row (its balance is frozen at zero from its last
+        // active month's cache point on)
         // ------------------------------------------------------------------
         const funds = Fund.from_db(db, {
             tracked: true,
             started_until: eom,
+            active_as_of: som,
             limit: null,
             order_by: null,
         });
@@ -353,7 +357,13 @@ module.exports = class MonthFinalization extends Base {
         // relaying through intermediate monthly parents), which guarantees
         // sonm_balance = 0 for every monthly fund, even when nested.
         // ------------------------------------------------------------------
-        const monthly_funds = funds.filter(f => f.monthly);
+        // A deprecated monthly fund needs no cleanup: the deprecation rules
+        // guarantee it is already settled at zero (every month before its
+        // deprecation month was finalized when it was deprecated, and its
+        // balance is zero from its last active day on), and deprecated funds
+        // may not be involved in new transactions -- so its (zero) cleanup
+        // line is skipped rather than recorded
+        const monthly_funds = funds.filter(f => f.monthly && !f.deprecated);
 
         const cleanup_flows = new Map(); // fund_id -> net cleanup flow (in - out)
         const cleanups = []; // { fund, pool, amount } where amount is signed (fund -> pool)
@@ -488,6 +498,20 @@ module.exports = class MonthFinalization extends Base {
      * finalized month (no LIFO check here) -- `_delete` enforces that.
      */
     static _unfinalize_one(db, month) {
+        // A fund deprecated during-or-after this month depends on the month's
+        // frozen state (its zero-balance promise, and -- for monthly funds --
+        // the cleanup transactions about to be deleted here). Un-deprecate
+        // such funds first; the fund update path allows that exactly when no
+        // LATER month is finalized, so the two guards never deadlock.
+        const still_deprecated = Fund.from_db(db, {
+            deprecated_since: month.som_date,
+            limit: 1,
+            order_by: null,
+        })[0];
+        if ( still_deprecated ) {
+            throw new ConflictError("Cannot unfinalize a month with a fund deprecated during-or-after it; un-deprecate the fund first: " + still_deprecated.name);
+        }
+
         const fund_ids = this.get_stmt(db, "finalized_fund_ids")
             .all({ month_id: month.id })
             .map(row => row.fund_id);

@@ -112,6 +112,13 @@ CREATE TABLE funds (
                         )),
 
 
+    -- Deprecation: the fund's LAST ACTIVE day ('YYYY-MM-DD'); NULL while the
+    -- fund is active. A deprecated fund is frozen -- no transaction of any
+    -- kind may involve it. The real rules (zero balance on the date, no
+    -- transactions after it, descendants deprecate first) live at the model
+    -- layer; the tracked-only rule is backstopped by the check below
+    deprecated        TEXT,
+
     -- Meta data
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
@@ -119,6 +126,11 @@ CREATE TABLE funds (
     CHECK (
         (tracked = 1 AND start_date IS NOT NULL AND start_balance IS NOT NULL)
         OR (tracked = 0 AND start_date IS NULL AND start_balance IS NULL)
+    ),
+    -- Only tracked funds can be deprecated
+    CHECK (
+        deprecated IS NULL
+        OR tracked = 1
     ),
     -- monthlys MUST have a parent into which their EOM balances flow
     -- NOTE : monthlys additionally require a POOL ancestor; that is a

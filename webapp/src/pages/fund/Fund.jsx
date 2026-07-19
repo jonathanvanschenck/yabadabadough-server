@@ -77,7 +77,8 @@ const EMPTY_FORM = {
     start_balance: null,
     monthly: false,
     pool: false,
-    color: null
+    color: null,
+    deprecated: null
 };
 
 function formFromFund(fundDetail) {
@@ -89,7 +90,8 @@ function formFromFund(fundDetail) {
         start_balance: fundDetail.start?.forward_balance ?? null,
         monthly: fundDetail.status.monthly,
         pool: fundDetail.status.pool,
-        color: fundDetail.color
+        color: fundDetail.color,
+        deprecated: fundDetail.deprecated ?? null
     };
 }
 
@@ -303,6 +305,16 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                             isFrozen={!isEditing || historyLocked}
                             isChanged={formData.start_balance !== originalData.start_balance}
                             inputTitle={historyLocked ? lockedTitle : "The balance entering the start date; immutable once any month has been finalized"}
+                        />
+                        <LabeledDateInput
+                            label="Deprecated (last active day)"
+                            value={formData.deprecated}
+                            onChange={(value) => handleInputChange('deprecated', value || null)}
+                            isFrozen={!isEditing}
+                            isChanged={formData.deprecated !== originalData.deprecated}
+                            allowNull={true}
+                            nullPlaceholder="Active"
+                            inputTitle={"Deprecating requires a zero balance on this date, no transactions after it, and all sub-funds deprecated first. A deprecated fund is frozen -- no transaction may involve it -- and hidden from months after this date. Clear to re-activate."}
                         />
                     </CardAutoGrid>
                 </CardSection>

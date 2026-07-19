@@ -44,14 +44,27 @@ export function FundTypeBadge({ status, label, color, ...rest }) {
  * tinted to the fund's `-text` color (neutral default when no color chosen).
  * `size` sizes the dot; set `showType` to also prefix the fund-type icon.
  * Always carries the color as both the dot AND the label so a fund reads the
- * same everywhere. Returns null for a missing fund (loading states).
+ * same everywhere. A deprecated fund mutes its name and trails a small
+ * archive icon (with the last-active date in the hover title) -- again
+ * everywhere, so a dead fund is never mistaken for a live one. Returns null
+ * for a missing fund (loading states).
  */
 export function FundLabel({ fund, dot = true, showType = false, size, className, style, ...rest }) {
     if ( !fund ) return null;
-    return <span className={className} style={style} {...rest}>
+    const isDeprecated = fund.deprecated != null;
+    return <span
+        className={className}
+        style={style}
+        title={isDeprecated ? `Deprecated — last active ${fund.deprecated}` : undefined}
+        {...rest}
+    >
         {dot && <FundColorDot color={fund.color} size={size} marginRight="0.5rem" />}
         {showType && <FundTypeIcon status={fund.status} marginRight="0.5rem" />}
-        <span style={{ color: fundColorVar(fund.color, 'text') }}>{fund.name}</span>
+        <span style={{ color: isDeprecated ? 'var(--font-muted)' : fundColorVar(fund.color, 'text') }}>{fund.name}</span>
+        {isDeprecated && <FontAwesomeIcon
+            icon="fa-solid fa-box-archive"
+            style={{ marginLeft: '0.4rem', color: 'var(--font-muted)', fontSize: '0.8em' }}
+        />}
     </span>;
 }
 

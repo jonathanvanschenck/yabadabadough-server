@@ -617,6 +617,12 @@ module.exports = class TransactionGroup extends Base {
         //        via its own internal path)
         this.assert_month_unfinalized(db, group.date);
 
+        // Deprecated funds are frozen: destroying their history would move
+        // balances that deprecation promised are final (un-deprecate first)
+        if ( Transaction._group_involves_deprecated_fund(db, group.id) ) {
+            throw new ConflictError("Cannot delete a transaction group involving a deprecated fund");
+        }
+
         Transaction._delete_for_group(db, group.id);
         this.get_stmt(db, "delete").run({ id: group.id });
     }

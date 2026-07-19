@@ -662,7 +662,7 @@ export default function Page() {
         () => new Map((funds ?? []).map(f => [ f.id, f ])),
         [funds]
     );
-    const columnRoots = useMemo(() => buildFundColumnTree(funds ?? [], eom), [funds, eom]);
+    const columnRoots = useMemo(() => buildFundColumnTree(funds ?? [], eom, som), [funds, eom, som]);
     const columns = useMemo(
         () => visibleColumnsOf(columnRoots, hiddenIds, collapsedIds),
         [columnRoots, hiddenIds, collapsedIds]

@@ -173,7 +173,13 @@ export default function Page() {
     const funds = fundsQ.data;
 
     const fundsById = useMemo(() => new Map((funds ?? []).map(f => [ f.id, f ])), [funds]);
-    const rows = useMemo(() => fundRowsOf(buildFundTree(funds ?? [], windowEom)), [funds, windowEom]);
+    // A fund deprecated before the window's oldest month has no row at all;
+    // one deprecated inside the window keeps its row (its historical
+    // allocations are still on show) with the post-deprecation cells inert
+    const rows = useMemo(
+        () => fundRowsOf(buildFundTree(funds ?? [], windowEom, oldestSom)),
+        [funds, windowEom, oldestSom]
+    );
     const poolAncestors = useMemo(
         () => new Map(rows.map(({ fund }) => [ fund.id, nearestPoolAncestorOf(fund, fundsById) ])),
         [rows, fundsById]
@@ -422,6 +428,8 @@ export default function Page() {
                                                 ? `${monthTitleOf(som)} is read-only (finalized)`
                                                 : isEditable
                                                 ? `Set ${fund.name}'s allocation for ${monthTitleOf(som)}`
+                                                : fund.deprecated != null
+                                                ? `${fund.name} is deprecated (last active ${fund.deprecated})`
                                                 : `${fund.name} cannot receive an allocation in ${monthTitleOf(som)} (fund or pool ancestor not started, or no pool ancestor)`;
                                             return (
                                                 <AllocationCell

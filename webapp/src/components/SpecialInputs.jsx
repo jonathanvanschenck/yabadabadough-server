@@ -26,6 +26,10 @@ function flattenWithPaths(roots) {
  * targets, pool={true} for pool picks). `excludeIds` additionally drops
  * specific funds client-side (e.g. a fund itself when picking its parent).
  *
+ * Deprecated funds are dropped by default (the server refuses them for
+ * every new transaction/allocation/parent anyway); the currently-selected
+ * fund always stays listed, and `includeDeprecated` re-admits them all.
+ *
  * Options are ordered by the fund hierarchy (depth-first, siblings by name)
  * with a faint ancestor-path prefix on each nested fund -- hierarchy is
  * computed over the FILTERED list, so a fund whose ancestors are filtered
@@ -48,6 +52,7 @@ export function FundSearchableSelector({
     root,
     descendantOf,
     excludeIds,
+    includeDeprecated = false,
     batchSize,
     ...rest
 }) {
@@ -73,6 +78,9 @@ export function FundSearchableSelector({
     const options = allFunds
         ? flattenWithPaths(buildFundOptionTree(allFunds))
             .filter(({ fund }) => !excludeIdStrs.includes(fund.id.toString()))
+            .filter(({ fund }) => includeDeprecated
+                || fund.deprecated == null
+                || (value != null && fund.id.toString() === value.toString()))
         : null;
 
     const fundKeys = options ? options.map(({ fund }) => fund.id.toString()) : [];

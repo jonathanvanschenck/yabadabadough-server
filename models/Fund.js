@@ -32,6 +32,7 @@ const SELECT_COLUMNS = [
     "funds.monthly AS monthly",
     "funds.pool AS pool",
     "funds.color AS color",
+    "funds.deprecated AS deprecated",
     "funds.created_at AS created_at",
     "funds.finalization_id AS finalization_id",
     // The cache point is the *sonm* values: sonm_balance is the forward balance
@@ -176,6 +177,67 @@ module.exports = class Fund extends Base {
               AND date < @date
             LIMIT 1
         `,
+        has_transactions_after: `
+            SELECT 1
+            FROM transactions
+            WHERE (source_fund_id = @fund_id OR target_fund_id = @fund_id)
+              AND date > @date
+            LIMIT 1
+        `,
+        // The first tracked fund STRICTLY below the given fund that is not
+        // deprecated at-or-before @date: deprecating a fund requires its
+        // whole subtree to be deprecated first (descendant dates <= its own)
+        active_descendant_after: `
+            WITH RECURSIVE subtree(id) AS (
+                SELECT @id
+                UNION
+                SELECT f.id FROM funds f JOIN subtree ON f.parent_id = subtree.id
+            )
+            SELECT funds.id AS id, funds.name AS name
+            FROM funds
+            WHERE funds.id IN (SELECT id FROM subtree)
+              AND funds.id != @id
+              AND funds.tracked = 1
+              AND (funds.deprecated IS NULL OR funds.deprecated > @date)
+            LIMIT 1
+        `,
+        // The earliest-deprecated fund at-or-above the given fund
+        // (self-inclusive chain). To check a fund's ANCESTORS, start from its
+        // parent_id (mirrors nearest_pool_from)
+        deprecated_at_or_above: `
+            WITH RECURSIVE chain(id, depth) AS (
+                SELECT @id, 0
+                UNION ALL
+                SELECT f.parent_id, c.depth + 1
+                FROM funds f
+                JOIN chain c ON f.id = c.id
+                WHERE f.parent_id IS NOT NULL
+                  AND c.depth < 50 -- Safety limit
+            )
+            SELECT funds.id AS id, funds.name AS name, funds.deprecated AS deprecated
+            FROM chain
+            JOIN funds ON funds.id = chain.id
+            WHERE funds.deprecated IS NOT NULL
+            ORDER BY funds.deprecated ASC
+            LIMIT 1
+        `,
+        // Inline (rather than requiring MonthFinalization) to avoid a circular
+        // require -- guards deprecation changes once later months are frozen
+        finalized_month_after: `
+            SELECT 1
+            FROM month_finalizations
+            WHERE som_date > @date
+            LIMIT 1
+        `,
+        // Whether finalization has reached @sonm_date (months finalize
+        // contiguously, so one row at-or-past it means everything before is
+        // locked in). Inline for the same circular-require reason
+        finalized_through: `
+            SELECT 1
+            FROM month_finalizations
+            WHERE sonm_date >= @sonm_date
+            LIMIT 1
+        `,
         update: `
             UPDATE funds
             SET name = @name,
@@ -185,7 +247,8 @@ module.exports = class Fund extends Base {
                 tracked = @tracked,
                 monthly = @monthly,
                 pool = @pool,
-                color = @color
+                color = @color,
+                deprecated = @deprecated
             WHERE id = @id
         `,
         delete: `
@@ -210,6 +273,7 @@ module.exports = class Fund extends Base {
         monthly,
         pool,
         color,
+        deprecated,
         finalization_id,
         cached_balance,
         cached_date,
@@ -226,6 +290,7 @@ module.exports = class Fund extends Base {
         this.monthly = monthly;
         this.pool = pool;
         this.color = color;
+        this.deprecated = deprecated;
         this.finalization_id = finalization_id;
         this.cached_balance = cached_balance;
         this.cached_date = cached_date;
@@ -273,9 +338,10 @@ module.exports = class Fund extends Base {
                 required: [ 'tracked', 'monthly', 'pool', 'root' ]
             },
             color: { type: 'string', nullable: true, enum: [ ...FUND_COLORS, null ], description: "Palette color slug (see lib/fund_colors.mjs)" },
+            deprecated: { type: 'string', format: 'date', nullable: true, description: "The fund's LAST ACTIVE day; null while the fund is active. A deprecated fund is frozen: its balance is zero from this date on and no transaction of any kind may involve it." },
             created_at: { type: 'string', format: 'date-time' }
         },
-        required: [ 'id', 'name', 'parent_id', 'start', 'cache', 'status', 'color', 'created_at' ]
+        required: [ 'id', 'name', 'parent_id', 'start', 'cache', 'status', 'color', 'deprecated', 'created_at' ]
     };
 
     to_api() {
@@ -303,6 +369,9 @@ module.exports = class Fund extends Base {
             },
 
             color: this.color,
+            // The fund's last active day (null = active); deprecated funds
+            // are frozen at zero balance from this date on
+            deprecated: this.deprecated ? this.deprecated.toJSON() : null,
             created_at: this.created_at.toISOString(),
         };
     }
@@ -337,6 +406,7 @@ module.exports = class Fund extends Base {
             monthly: stmt2boolean(row.monthly),
             pool: stmt2boolean(row.pool),
             color: row.color,
+            deprecated: stmt2ydate(row.deprecated),
             finalization_id: row.finalization_id,
             cached_balance,
             cached_date,
@@ -361,6 +431,9 @@ module.exports = class Fund extends Base {
         pool,
         root,
         descendant_of, // fund id; self-inclusive subtree
+        deprecated, // boolean: whether the fund is deprecated at all
+        deprecated_since, // YDate: deprecated (non-null) on or after this date
+        active_as_of, // YDate: NOT deprecated before this date (active funds pass)
     }={}) {
         const wheres = [];
         const params = {};
@@ -436,6 +509,25 @@ module.exports = class Fund extends Base {
             );
             params.descendant_of = descendant_of;
             keys.push("descendant_of");
+        }
+        if ( deprecated !== undefined ) {
+            if ( deprecated ) {
+                wheres.push("funds.deprecated IS NOT NULL");
+                keys.push("deprecated");
+            } else {
+                wheres.push("funds.deprecated IS NULL");
+                keys.push("not_deprecated");
+            }
+        }
+        if ( deprecated_since !== undefined ) {
+            wheres.push("funds.deprecated >= @deprecated_since");
+            params.deprecated_since = ydate2stmt(deprecated_since);
+            keys.push("deprecated_since");
+        }
+        if ( active_as_of !== undefined ) {
+            wheres.push("(funds.deprecated IS NULL OR funds.deprecated >= @active_as_of)");
+            params.active_as_of = ydate2stmt(active_as_of);
+            keys.push("active_as_of");
         }
 
         return { wheres, params, keys };
@@ -523,6 +615,15 @@ module.exports = class Fund extends Base {
         }
         if ( parent_id && !this.get_stmt(db, "id_exists").get({ id:parent_id }) ) {
             throw new ForeignKeyError("Parent fund does not exist: "+parent_id);
+        }
+
+        // A deprecated branch is closed history: no new funds may be created
+        // anywhere under a deprecated fund
+        if ( parent_id ) {
+            const dep = this.get_stmt(db, "deprecated_at_or_above").get({ id: parent_id });
+            if ( dep ) {
+                throw new ConflictError("Cannot create a fund under a deprecated fund: " + dep.name);
+            }
         }
 
         // Monthly funds return their EOM balances to (and draw allocations
@@ -761,6 +862,11 @@ module.exports = class Fund extends Base {
             if ( ydate2stmt(pool.start_date) > row.date ) {
                 throw new ConflictError("Change would route the allocation for fund " + target.name + " from a pool that starts after the allocation date: " + pool.name);
             }
+            // Defensive: ancestor-consistency (active funds never sit under a
+            // deprecated fund) should make this unreachable
+            if ( pool.deprecated ) {
+                throw new ConflictError("Change would route the allocation for fund " + target.name + " through a deprecated pool: " + pool.name);
+            }
             if ( pool.id !== row.source_fund_id ) {
                 Transaction._set_source(db, { id: row.id, source_fund_id: pool.id });
             }
@@ -778,6 +884,7 @@ module.exports = class Fund extends Base {
             monthly: changes.monthly !== undefined ? changes.monthly : fund.monthly,
             pool: changes.pool !== undefined ? changes.pool : fund.pool,
             color: changes.color !== undefined ? changes.color : fund.color,
+            deprecated: changes.deprecated !== undefined ? changes.deprecated : fund.deprecated,
         };
 
         // Untracked funds carry no start values
@@ -808,8 +915,20 @@ module.exports = class Fund extends Base {
         if ( next.pool && next.monthly ) {
             throw new Error("Cannot make a fund both pool and monthly");
         }
+        if ( next.deprecated != null && !next.tracked ) {
+            throw new Error("Cannot deprecate an untracked fund");
+        }
 
         const parent_changed = next.parent_id !== fund.parent_id;
+        const deprecated_changed = ydate2stmt(next.deprecated) !== ydate2stmt(fund.deprecated);
+
+        // Once months after the deprecation date have been finalized, the
+        // fund's absence from them is history: the deprecation date can no
+        // longer be changed or cleared without unfinalizing back first
+        if ( deprecated_changed && fund.deprecated != null
+            && this.get_stmt(db, "finalized_month_after").get({ date: ydate2stmt(fund.deprecated) }) ) {
+            throw new ConflictError("Months after the fund's deprecation date have been finalized; unfinalize back before changing its deprecation");
+        }
 
         // History-affecting changes require the fund to be fully unfinalized
         const history_affected =
@@ -858,6 +977,7 @@ module.exports = class Fund extends Base {
             monthly: boolean2stmt(next.monthly),
             pool: boolean2stmt(next.pool),
             color: next.color,
+            deprecated: ydate2stmt(next.deprecated),
         });
 
         // Changes that can affect pool resolution must not orphan any
@@ -884,6 +1004,74 @@ module.exports = class Fund extends Base {
             }
         }
 
+        // Deprecation invariants, validated on the POST-update state so they
+        // compose with every other change in this update (all still inside
+        // the one sqlite transaction -- a throw rolls everything back).
+        // Re-checked on EVERY update of a deprecated fund (not just
+        // deprecation changes): e.g. a start_balance change on a
+        // never-finalized deprecated fund would silently break the
+        // frozen-at-zero promise
+        if ( next.deprecated != null ) {
+            const updated = this.for_id(db, fund.id);
+
+            // The date must fall inside the fund's tracked life
+            if ( ydate2stmt(updated.deprecated) < ydate2stmt(updated.start_date) ) {
+                throw new ConflictError("A fund cannot be deprecated before its start_date");
+            }
+
+            // The whole subtree deprecates first (bottom-up, descendant dates
+            // at-or-before this fund's) -- structural rules before money rules
+            const active = this.get_stmt(db, "active_descendant_after").get({
+                id: fund.id,
+                date: ydate2stmt(updated.deprecated),
+            });
+            if ( active ) {
+                throw new ConflictError("Cannot deprecate a fund before its tracked descendants: " + active.name);
+            }
+
+            // The last active day is exactly that: nothing may involve the
+            // fund after it...
+            if ( this.get_stmt(db, "has_transactions_after").get({
+                fund_id: fund.id,
+                date: ydate2stmt(updated.deprecated),
+            }) ) {
+                throw new ConflictError("Cannot deprecate: the fund has transactions after the deprecation date");
+            }
+            // ...and the fund must end its life at exactly zero
+            if ( currency2stmt(updated.calculate_balance_on(db, updated.deprecated)) !== 0 ) {
+                throw new ConflictError("Cannot deprecate: the fund's balance on the deprecation date is not zero");
+            }
+
+            // A monthly fund's balance is only settled once its earlier
+            // months' EOM cleanups exist: finalizing a month injects a
+            // cleanup transaction that would silently break the
+            // frozen-at-zero promise above. So every month before the
+            // deprecation month must already be finalized (the
+            // deprecation-month cleanup itself is guaranteed zero and is
+            // skipped by MonthFinalization)
+            if ( updated.monthly ) {
+                const som_d = updated.deprecated.start_of_month();
+                const started_same_month =
+                    ydate2stmt(updated.start_date.start_of_month()) === ydate2stmt(som_d);
+                if ( !started_same_month && !this.get_stmt(db, "finalized_through").get({
+                    sonm_date: ydate2stmt(som_d),
+                }) ) {
+                    throw new ConflictError("Cannot deprecate a monthly fund until every month before its deprecation month is finalized");
+                }
+            }
+        }
+
+        // Ancestor consistency, in both directions: un-deprecating (or
+        // date-shifting) under a deprecated ancestor, and reparenting into a
+        // deprecated branch
+        if ( next.parent_id != null ) {
+            const ancestor = this.get_stmt(db, "deprecated_at_or_above").get({ id: next.parent_id });
+            if ( ancestor && (next.deprecated == null
+                || ydate2stmt(next.deprecated) > ancestor.deprecated) ) {
+                throw new ConflictError("Fund sits under a deprecated fund (" + ancestor.name + ") and must be deprecated at-or-before that fund's date");
+            }
+        }
+
         return this.for_id(db, fund.id);
     }
 
@@ -897,6 +1085,7 @@ module.exports = class Fund extends Base {
         monthly,
         pool,
         color,
+        deprecated,
     }={}) {
         const transaction = this.constructor.build_transaction(
             db, "update", this.constructor._update.bind(this.constructor));
@@ -909,6 +1098,7 @@ module.exports = class Fund extends Base {
             monthly,
             pool,
             color,
+            deprecated,
         });
     }
 

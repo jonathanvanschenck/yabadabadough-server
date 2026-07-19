@@ -15,7 +15,7 @@ import styles from './Funds.module.css';
 
 const FUND_TYPE_SORT_ORDER = { pool: 0, tracked: 1, monthly: 2, untracked: 3 };
 
-function FundsTable({ showAll }) {
+function FundsTable({ showAll, showDeprecated }) {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortKey, setSortKey] = useState('name');
     const [direction, setDirection] = useState('asc');
@@ -51,6 +51,12 @@ function FundsTable({ showAll }) {
             cache_balance: fund.cache?.forward_balance ?? null,
         }));
 
+        // Deprecated funds are hidden unless asked for (client-side, like
+        // the search/sort)
+        if (!showDeprecated) {
+            flattened = flattened.filter(fund => fund.deprecated == null);
+        }
+
         // Filter by search term (name)
         if (searchTerm.trim()) {
             const searchLower = searchTerm.toLowerCase();
@@ -84,7 +90,7 @@ function FundsTable({ showAll }) {
 
             return direction === 'asc' ? comparison : -comparison;
         });
-    }, [data, searchTerm, sortKey, direction]);
+    }, [data, showDeprecated, searchTerm, sortKey, direction]);
 
     if (isError) {
         return (
@@ -353,6 +359,7 @@ function CreateNew() {
 
 export default function Page() {
     const [ showAll, setShowAll ] = useState(false);
+    const [ showDeprecated, setShowDeprecated ] = useState(false);
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', height: '100%', 'padding': '0 1rem' }}>
@@ -364,9 +371,15 @@ export default function Page() {
                     onClick={() => setShowAll(v => !v)}
                     buttonClassName={styles.showAllToggle}
                 />
+                <IconButton
+                    text={showDeprecated ? "Showing deprecated" : "Hiding deprecated"}
+                    icon="fa-box-archive"
+                    onClick={() => setShowDeprecated(v => !v)}
+                    buttonClassName={styles.showAllToggle}
+                />
                 <CreateNew />
             </div>
-            <FundsTable showAll={showAll} />
+            <FundsTable showAll={showAll} showDeprecated={showDeprecated} />
         </div>
     );
 }

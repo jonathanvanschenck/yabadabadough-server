@@ -53,6 +53,23 @@ module.exports = class Transaction extends Base {
               AND tracked = 1
               AND start_date > @date
         `,
+        fund_is_deprecated: `
+            SELECT 1
+            FROM funds
+            WHERE id = @id
+              AND deprecated IS NOT NULL
+        `,
+        // Whether any transaction in the group touches a deprecated fund
+        // (used by TransactionGroup's delete guard -- the SQL lives here
+        // because this model owns all transactions-table SQL)
+        group_involves_deprecated_fund: `
+            SELECT 1
+            FROM transactions
+            JOIN funds ON funds.id IN (transactions.source_fund_id, transactions.target_fund_id)
+            WHERE transactions.group_id = @group_id
+              AND funds.deprecated IS NOT NULL
+            LIMIT 1
+        `,
         group_exists: `
             SELECT 1
             FROM transaction_groups
@@ -418,6 +435,23 @@ module.exports = class Transaction extends Base {
         if ( this.get_stmt(db, "fund_starts_after").get({ id: target_fund_id, date: _date }) ) {
             throw new ConflictError("Transaction predates the target fund's start_date");
         }
+
+        // Deprecated funds are frozen: no transaction of any kind may involve
+        // them, regardless of date (their balance is promised to stay at zero
+        // from the deprecation date on -- even a backdated transaction would
+        // break that). Un-deprecate the fund to touch its history. This
+        // includes the internal eom_cleanup path: the deprecation rules
+        // guarantee no cleanup can ever be needed for a deprecated fund (a
+        // monthly fund cannot deprecate until the months before its
+        // deprecation month are finalized, and its deprecation-month cleanup
+        // is skipped as guaranteed-zero), so tripping this from finalization
+        // means a bug -- fail loudly.
+        if ( this.get_stmt(db, "fund_is_deprecated").get({ id: source_fund_id }) ) {
+            throw new ConflictError("The source fund is deprecated");
+        }
+        if ( this.get_stmt(db, "fund_is_deprecated").get({ id: target_fund_id }) ) {
+            throw new ConflictError("The target fund is deprecated");
+        }
     }
 
     /**
@@ -478,7 +512,27 @@ module.exports = class Transaction extends Base {
      * callers own the group-level bookkeeping (split, group deletion).
      */
     static _delete(db, id) {
+        // Deprecated funds are frozen: removing a historical line would move
+        // a balance that deprecation promised is final. (The unfinalize path
+        // deletes cleanup rows via its own raw SQL and is not subject to
+        // this -- it guards itself at the month level.)
+        const transaction = this.for_id(db, id);
+        if ( transaction && (
+            this.get_stmt(db, "fund_is_deprecated").get({ id: transaction.source_fund_id })
+            || this.get_stmt(db, "fund_is_deprecated").get({ id: transaction.target_fund_id })
+        ) ) {
+            throw new ConflictError("Cannot remove a transaction involving a deprecated fund");
+        }
         this.get_stmt(db, "delete").run({ id });
+    }
+
+    /**
+     * Whether any transaction in the group involves a deprecated fund (the
+     * group-level face of the freeze -- used by TransactionGroup's delete
+     * guard).
+     */
+    static _group_involves_deprecated_fund(db, group_id) {
+        return !!this.get_stmt(db, "group_involves_deprecated_fund").get({ group_id });
     }
 
     /**

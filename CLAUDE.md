@@ -290,6 +290,27 @@ TransactionGroup, `finalized_months_since` in Fund).
   hex values live only in `webapp/public/styles.css` as `--fund-<slug>` variables). Validated
   at the model layer and by the strict API parser, with a `CHECK` constraint as backstop;
   adding/renaming a slug means updating registry + styles.css + schema in one commit
+- `deprecated` is a nullable 'YYYY-MM-DD' date: the fund's LAST ACTIVE day (null = active;
+  tracked-only, db CHECK; PATCH-only at the API layer — funds are never created deprecated).
+  Setting it requires: every tracked descendant already deprecated at-or-before it (deprecate
+  bottom-up, un-deprecate top-down — a fund may never out-live a deprecated ancestor), no
+  transactions after the date, zero balance ON the date, and — monthly funds only — every
+  month before the deprecation month already finalized (else a later finalization's cleanup
+  would silently un-zero it). A deprecated fund is FROZEN: no transaction of any kind may
+  involve it — creates, line edits, removals, group deletes and date moves all refuse
+  (cosmetic group edits and statement link/unlink still work); un-deprecate to touch its
+  history (re-deprecating re-runs the checks). No new funds under a deprecated parent;
+  `Allocation.set`/`remove` refuse it and `copy_month` skips it SILENTLY (deliberate:
+  deprecate-at-EOM then copy-forward). MonthFinalization excludes funds deprecated before the
+  month (no rows; a deprecated monthly fund's guaranteed-zero cleanup is skipped), refuses
+  unfinalizing a month while any fund is deprecated during-or-after it, and once any month
+  after the date is finalized the deprecation itself is immutable (unfinalize back first).
+  `from_db` filters: `deprecated` (bool), `active_as_of` (not deprecated before date; both on
+  the API), `deprecated_since` (internal). Webapp: hidden from transaction columns/allocation
+  rows for months after the date, dropped from `FundSearchableSelector` by default, hidden on
+  the funds page behind a toggle, and every `FundLabel` renders muted + an archive icon.
+  Cross-model behavior tests live in `test/models/test-deprecation.js` +
+  `test/api/test-fund-deprecation.js`
 
 **Transaction Groups** (`transaction_groups` table):
 - Container for one or more related transactions

@@ -30,9 +30,11 @@ export function formatDollars(value) {
 /**
  * Build the tracked-fund hierarchy tree: one node per TRACKED fund that had
  * started by `startedBy` (a fund that did not exist yet has nothing to
- * show), children nested under their parents. A tracked fund whose parents
- * are all untracked (or not started) roots its own subtree -- the effective
- * parent is the nearest ancestor that is itself a node.
+ * show) and -- when `activeSince` is given -- was not deprecated before it
+ * (`deprecated` is the fund's LAST ACTIVE day, so a fund deprecated ON
+ * `activeSince` still shows). Children nest under their parents; a tracked
+ * fund whose parents are all filtered out roots its own subtree -- the
+ * effective parent is the nearest ancestor that is itself a node.
  *
  * Returns the list of root nodes; every node is
  * `{ fund, depth, children, subtreeIds }` with `subtreeIds` the fund ids of
@@ -40,8 +42,10 @@ export function formatDollars(value) {
  * name. Both the transactions spreadsheet's columns and the allocations
  * grid's rows are flattenings of this tree.
  */
-export function buildFundTree(funds, startedBy) {
-    return buildTreeOver(funds, f => f.status.tracked && f.start && f.start.date <= startedBy);
+export function buildFundTree(funds, startedBy, activeSince = null) {
+    return buildTreeOver(funds, f => f.status.tracked
+        && f.start && f.start.date <= startedBy
+        && (activeSince == null || f.deprecated == null || f.deprecated >= activeSince));
 }
 
 /**

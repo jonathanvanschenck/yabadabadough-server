@@ -43,8 +43,12 @@ const FUND_BODY_FIELDS = {
     start_date: [ "start_date", nullable(only_ydate), "YYYY-MM-DD string or null" ],
     start_balance: [ "start_balance", nullable(only_number), "number or null" ],
     color: [ "color", nullable(only_fund_color), "palette color slug or null" ],
+    // PATCH-only: funds are never created already-deprecated
+    deprecated: [ "deprecated", nullable(only_ydate), "YYYY-MM-DD string or null" ],
 };
 
+// Shared POST/PATCH body properties; the PATCH-only `deprecated` field is
+// added where the PATCH schema is declared
 const FundBodyProperties = {
     name: { type: 'string' },
     tracked: { type: 'boolean' },
@@ -188,6 +192,20 @@ module.exports = class FundsCollection extends Collection {
                     required: false,
                     schema: { type: 'integer' }
                 },
+                {
+                    name: 'deprecated',
+                    in: 'query',
+                    description: 'Filter by deprecation status (true: only deprecated funds, false: only active funds)',
+                    required: false,
+                    schema: { type: 'boolean' }
+                },
+                {
+                    name: 'active_as_of',
+                    in: 'query',
+                    description: 'Filter to funds NOT deprecated before this date (active funds always pass; a fund deprecated on-or-after the date was still active on it)',
+                    required: false,
+                    schema: { type: 'string', format: 'date' }
+                },
                 ...openapi_list_parameters([ 'id' ])
             ]
 
@@ -205,6 +223,8 @@ module.exports = class FundsCollection extends Collection {
                 filter.monthly = string_to_boolean(req.query?.monthly);
                 filter.pool = string_to_boolean(req.query?.pool);
                 filter.root = string_to_boolean(req.query?.root);
+                filter.deprecated = string_to_boolean(req.query?.deprecated);
+                filter.active_as_of = to_ydate(req.query?.active_as_of);
 
                 // Strict: a lenient fallback would silently return ALL funds
                 // instead of the subtree
@@ -457,7 +477,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "Update Fund";
 
-            static openapi_Description = "Update an existing fund. Only the fields included in the request body will be updated. History-affecting fields (start_date, start_balance, tracked, monthly, pool, and the parent of a fund that is or contains a monthly fund) are immutable while any finalizations exist for the fund (409). Hierarchy changes repoint allocation sources in unfinalized months.";
+            static openapi_Description = "Update an existing fund. Only the fields included in the request body will be updated. History-affecting fields (start_date, start_balance, tracked, monthly, pool, and the parent of a fund that is or contains a monthly fund) are immutable while any finalizations exist for the fund (409). Hierarchy changes repoint allocation sources in unfinalized months. Setting `deprecated` (the fund's LAST ACTIVE day) requires: a tracked fund, a zero balance on that date, no transactions after it, and every tracked descendant already deprecated at-or-before it; once set, the fund is frozen (no transaction of any kind may involve it) until `deprecated` is cleared -- which in turn is refused once any later month has been finalized (unfinalize back first).";
 
             static openapi_Parameters = [
                 this.FundIDParam
@@ -465,7 +485,10 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_RequestBodySchema = {
                 type: 'object',
-                properties: FundBodyProperties
+                properties: {
+                    ...FundBodyProperties,
+                    deprecated: { type: 'string', format: 'date', nullable: true, description: "The fund's LAST ACTIVE day; null re-activates the fund. See the route description for the invariants." }
+                }
             }
 
             async parse_request(req) {
@@ -478,6 +501,7 @@ module.exports = class FundsCollection extends Collection {
                     FUND_BODY_FIELDS.start_date,
                     FUND_BODY_FIELDS.start_balance,
                     FUND_BODY_FIELDS.color,
+                    FUND_BODY_FIELDS.deprecated,
                 ]);
 
                 return { fund: this.get_fund(req), patch };

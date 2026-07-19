@@ -54,12 +54,14 @@ export function nearestPoolAncestorOf(fund, byId) {
 
 /**
  * Whether the server would accept an allocation for this fund in the month
- * starting at `som`: the fund is tracked and started by the first of the
- * month, and its nearest pool ancestor has also started. (Mirrors the model
- * checks so ineligible cells render inert instead of collecting 409s.)
+ * starting at `som`: the fund is tracked, not deprecated (deprecated funds
+ * are frozen -- no new allocations in ANY month), and started by the first
+ * of the month, and its nearest pool ancestor has also started. (Mirrors the
+ * model checks so ineligible cells render inert instead of collecting 409s.)
  */
 export function canAllocate(fund, poolAncestor, som) {
     return fund.status.tracked
+        && fund.deprecated == null
         && fund.start != null && fund.start.date <= som
         && poolAncestor != null
         && poolAncestor.start != null && poolAncestor.start.date <= som;

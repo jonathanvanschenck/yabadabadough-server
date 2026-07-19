@@ -169,6 +169,10 @@ module.exports = class Allocation extends Base {
         if ( !fund.tracked ) {
             throw new ConflictError("Cannot allocate to an untracked fund: " + fund.name);
         }
+        // Deprecated funds are frozen -- no new allocations, in any month
+        if ( fund.deprecated ) {
+            throw new ConflictError("Cannot allocate to a deprecated fund: " + fund.name);
+        }
         // The month's allocations all live in one group dated som, and
         // transactions may not predate a fund's start_date -- so a fund
         // starting mid-month cannot receive an allocation in its start month
@@ -184,6 +188,11 @@ module.exports = class Allocation extends Base {
         }
         if ( ydate2stmt(pool.start_date) > ydate2stmt(som) ) {
             throw new ConflictError("Pool has not started by the start of the month: " + pool.name);
+        }
+        // Defensive: an active fund can never sit under a deprecated
+        // ancestor, so this should be unreachable
+        if ( pool.deprecated ) {
+            throw new ConflictError("Cannot allocate from a deprecated pool: " + pool.name);
         }
 
         let group = this._group_for_month(db, som);
@@ -255,6 +264,14 @@ module.exports = class Allocation extends Base {
 
         TransactionGroup.assert_month_unfinalized(db, som);
 
+        // A deprecated fund's allocations are frozen history (the underlying
+        // Transaction/TransactionGroup guards would refuse anyway; this just
+        // gives the honest error)
+        const fund = Fund.for_id(db, fund_id);
+        if ( fund?.deprecated ) {
+            throw new ConflictError("Cannot remove an allocation for a deprecated fund: " + fund.name);
+        }
+
         const group = this._group_for_month(db, som);
         const existing = group?.transactions.find(t => t.target_fund_id === fund_id);
         if ( !existing ) {
@@ -306,6 +323,11 @@ module.exports = class Allocation extends Base {
 
         for ( const allocation of from_allocations ) {
             if ( existing.has(allocation.fund_id) && on_conflict === "merge" ) continue;
+            // Deprecated funds are silently skipped (never an error):
+            // deprecate-at-EOM then copy-last-month-forward is the natural
+            // workflow, and the source month's allocation is immutable
+            // history that cannot be "fixed"
+            if ( Fund.for_id(db, allocation.fund_id)?.deprecated ) continue;
             // "overwrite" (and the conflict-free cases): _set replaces any
             // existing allocation. Sources are re-resolved against the
             // CURRENT hierarchy, not copied

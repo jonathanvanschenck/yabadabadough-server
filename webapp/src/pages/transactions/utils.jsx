@@ -25,11 +25,12 @@ export function hasNote(note) {
 
 /**
  * Build the fund column tree for a month: one column per tracked fund that
- * had started by `eom`, children to the right of their parents (see the
+ * had started by `eom` and was still active during the month -- a fund
+ * deprecated before `som` is finished history and gets no column (see the
  * shared buildFundTree in components/domain.js).
  */
-export function buildFundColumnTree(funds, eom) {
-    return buildFundTree(funds, eom);
+export function buildFundColumnTree(funds, eom, som) {
+    return buildFundTree(funds, eom, som);
 }
 
 /**
