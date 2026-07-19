@@ -351,7 +351,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "List Fund Balances";
 
-            static openapi_Description = "Calculate every tracked fund's balance in one response -- the bulk companion to the per-fund balance route (one round trip instead of N). Same semantics per fund: the current balance, or -- with `on` -- the balance on that date (every transaction up to AND on it). Funds whose start_date is after `on` are omitted (they had no balance yet); untracked funds are never included. Closed funds are omitted too unless `include_deprecated` is set: with `on`, any fund deprecated BEFORE it (a fund deprecated ON `on` was still active that day); without `on`, any deprecated fund at all -- with no reference date the only answerable question is whether the fund has a close date, and a closed fund's all-time balance is necessarily zero (deprecation requires a zero balance on the date and refuses any transaction after it). Not paginated. `provisional` is a property of the ledger and the requested date, not of the individual fund, so it is identical across every row.";
+            static openapi_Description = "Calculate every tracked fund's balance on `on` in one response -- the bulk companion to the per-fund balance route (one round trip instead of N). `on` is REQUIRED: the server has no clock of its own (the same timezone caution the finalization rules take), and \"every transaction\" is NOT a synonym for \"today\" -- allocations are dated the first of their month, so an unfiltered sum silently includes future money. Balances are inclusive of `on` (every transaction up to AND on it). Funds whose start_date is after `on` are omitted (they had no balance yet); untracked funds are never included. Closed funds are omitted too -- any fund deprecated BEFORE `on`, since a fund deprecated ON `on` was still active that day -- unless `include_deprecated` is set. Not paginated. `provisional` is a property of the ledger and the requested date, not of the individual fund, so it is identical across every row.";
 
             static query_key = [ "fund-balance", "all" ];
 
@@ -359,23 +359,28 @@ module.exports = class FundsCollection extends Collection {
                 {
                     name: 'on',
                     in: 'query',
-                    description: 'The date to calculate the balances on (default: today, i.e. all transactions). Funds starting after this date are omitted from the response.',
-                    required: false,
+                    description: 'The date to calculate the balances on (REQUIRED -- the server never assumes "today", and an unfiltered all-transactions sum would include future-dated allocations). Funds starting after this date are omitted from the response.',
+                    required: true,
                     schema: { type: 'string', format: 'date' }
                 },
                 {
                     name: 'include_deprecated',
                     in: 'query',
-                    description: 'Keep closed (deprecated) funds in the response. Default false: a fund already closed as of the requested date is omitted.',
+                    description: 'Keep closed (deprecated) funds in the response. Default false: a fund already closed before the requested date is omitted.',
                     required: false,
                     schema: { type: 'boolean' }
                 }
             ]
 
             async parse_request(req) {
-                // Strict: a lenient fallback would silently return the WRONG
-                // balances (the current ones instead of the requested date's)
-                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string") ?? null;
+                // Required, and strict: there is deliberately no fallback. A
+                // missing `on` used to mean "sum every transaction", which is
+                // NOT the same as "today" -- allocations are dated the first
+                // of their month, so future money leaked into a figure the
+                // caller read as current. Make the caller name its date.
+                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string");
+                if ( on === undefined ) throw new HTTPCodeError(400, "Missing parameter: on");
+
                 // Lenient (the usual query-param rule): a misparse falls back
                 // to the default, which only ever HIDES closed funds -- it
                 // cannot make a reported balance wrong
@@ -388,20 +393,13 @@ module.exports = class FundsCollection extends Collection {
                 // Closed funds drop out by default. `active_as_of` keeps a
                 // fund deprecated ON `on` (that is its LAST ACTIVE day), so a
                 // historical query still shows what was open back then.
-                // Without `on` there is no reference date to compare against
-                // -- and deliberately no server-clock "today" here, the same
-                // timezone caution the finalization rules take -- so the
-                // filter degrades to "has a close date at all", which costs
-                // nothing: such a fund's all-time balance is necessarily zero.
-                const deprecation_filter = include_deprecated ? {}
-                    : on ? { active_as_of: on }
-                    : { deprecated: false };
+                const deprecation_filter = include_deprecated ? {} : { active_as_of: on };
 
                 const funds = Fund.from_db(this.db, { tracked: true, ...deprecation_filter, limit: null });
 
                 // Frontier is a property of the ledger, not of any one fund:
                 // resolve it once rather than per row
-                const on_str = on ? on.toJSON() : null;
+                const on_str = on.toJSON();
                 const provisional = balance_on_is_provisional(
                     MonthFinalization.provisional_frontier(this.db),
                     on_str
@@ -411,11 +409,11 @@ module.exports = class FundsCollection extends Collection {
                 // report (the per-fund route 400s) -- omit it rather than
                 // failing the whole response
                 const balances = funds
-                    .filter((fund) => !on || fund.start_date.toJSON() <= on.toJSON())
+                    .filter((fund) => fund.start_date.toJSON() <= on_str)
                     .map((fund) => ({
                         fund_id: fund.id,
                         on: on_str,
-                        balance: on ? fund.calculate_balance_on(this.db, on) : fund.calculate_balance(this.db),
+                        balance: fund.calculate_balance_on(this.db, on),
                         provisional,
                     }));
 

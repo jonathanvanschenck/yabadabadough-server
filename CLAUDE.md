@@ -218,6 +218,14 @@ all follow the same shape:
 - `Transaction.net_transfer` bounds (`since`/`until`) are both inclusive, so
   `balance_on(D) = forward_balance_entering(C) + net_transfer(since=C, until=D)`.
 - Transactions may not predate a tracked fund's `start_date` (enforced at transaction creation).
+- **"All transactions" is NOT "today"**: allocations are dated the first of their month and are
+  created as real transactions the moment they are budgeted, so the ledger routinely holds
+  future-dated money. An unbounded sum therefore answers a question nobody asks. `GET
+  /funds/balances` accordingly REQUIRES `on` (400 `Missing parameter: on` without it) — the
+  server has no clock of its own (the same timezone caution behind not restricting finalization
+  of the current month), so the caller must name its date. The per-fund `GET
+  /funds/fund/:id/balance` still allows `on` to be omitted, which means all-transactions and
+  carries exactly this hazard; prefer passing `on` there too.
 - **Provisional balances** (`lib/provisional.mjs`): a balance is PROVISIONAL when an earlier
   month is still unfinalized — finalizing writes eom_cleanup transactions dated that month's
   last day, so the figure can move with no user action (a monthly fund showing 120 on Jan 31
@@ -339,9 +347,8 @@ TransactionGroup, `finalized_months_since` in Fund).
   after the date is finalized the deprecation itself is immutable (unfinalize back first).
   `from_db` filters: `deprecated` (bool), `active_as_of` (not deprecated before date; both on
   the API), `deprecated_since` (internal). `GET /funds/balances` applies them itself: closed
-  funds are omitted by default (`active_as_of: on`, degrading to `deprecated: false` when no
-  `on` is given — there is deliberately no server-clock "today", and a closed fund's all-time
-  balance is necessarily zero anyway), and `?include_deprecated=true` keeps them.
+  funds are omitted by default (`active_as_of: on` — a fund deprecated ON `on` was still active
+  that day), and `?include_deprecated=true` keeps them.
   Webapp: hidden from transaction columns/allocation
   rows for months after the date, dropped from `FundSearchableSelector` by default, hidden on
   the funds page behind a toggle, and every `FundLabel` renders muted + an archive icon.

@@ -208,18 +208,24 @@ describe("Funds API", () => {
         });
 
         it("requires authentication", async () => {
-            const { status } = await h.request("/api/funds/balances");
+            const { status } = await h.request("/api/funds/balances?on=2026-01-15");
             expect(status).to.equal(401);
         });
 
-        it("reports every tracked fund's current balance (untracked omitted)", async () => {
-            const { status, body, headers } = await h.request("/api/funds/balances", { token: h.tokens.reader });
+        it("reports every tracked fund's balance (untracked omitted)", async () => {
+            const { status, body, headers } = await h.request("/api/funds/balances?on=2026-01-15", { token: h.tokens.reader });
             expect(status).to.equal(200);
             expect(headers.get("x-total-count")).to.equal("2");
             expect(body).to.deep.equal([
-                { fund_id: checking.id, on: null, balance: 900, provisional: true },
-                { fund_id: groceries.id, on: null, balance: 100, provisional: true },
+                { fund_id: checking.id, on: "2026-01-15", balance: 900, provisional: false },
+                { fund_id: groceries.id, on: "2026-01-15", balance: 100, provisional: false },
             ]);
+        });
+
+        it("400s when `on` is omitted (the server never assumes today)", async () => {
+            const { status, body } = await h.request("/api/funds/balances", { token: h.tokens.reader });
+            expect(status).to.equal(400);
+            expect(body.message).to.include("Missing parameter: on");
         });
 
         it("reports balances on a date (inclusive)", async () => {
@@ -246,7 +252,7 @@ describe("Funds API", () => {
             expect(res.headers.get("x-total-count")).to.equal("2");
             expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
 
-            res = await h.request("/api/funds/balances", { token: h.tokens.reader });
+            res = await h.request("/api/funds/balances?on=2026-02-01", { token: h.tokens.reader });
             expect(res.body.map((b) => b.fund_id)).to.include(late.id);
 
             // A date before every fund's start is an empty list, not an error
@@ -279,13 +285,10 @@ describe("Funds API", () => {
             res = await h.request("/api/funds/balances?on=2026-01-15", { token: h.tokens.reader });
             expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
 
-            // Gone the day after -- and gone from the undated (all-time) view
+            // Gone the day after
             res = await h.request("/api/funds/balances?on=2026-01-16", { token: h.tokens.reader });
             expect(res.status).to.equal(200);
             expect(res.headers.get("x-total-count")).to.equal("1");
-            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id ]);
-
-            res = await h.request("/api/funds/balances", { token: h.tokens.reader });
             expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id ]);
         });
 
@@ -304,9 +307,6 @@ describe("Funds API", () => {
             });
             expect(res.headers.get("x-total-count")).to.equal("2");
             expect(res.body.find((b) => b.fund_id === groceries.id).balance).to.equal(0);
-
-            res = await h.request("/api/funds/balances?include_deprecated=true", { token: h.tokens.reader });
-            expect(res.body.map((b) => b.fund_id)).to.deep.equal([ checking.id, groceries.id ]);
         });
     });
 

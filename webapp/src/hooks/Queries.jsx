@@ -184,12 +184,22 @@ export function useGetFundBalanceQuery(
 }
 
 /**
- * Every tracked fund's balance in one response (the bulk companion to the
- * per-fund balance hook). Funds that had not started by `on` are omitted.
+ * Every tracked fund's balance ON `on` in one response (the bulk companion to
+ * the per-fund balance hook). Funds that had not started by `on`, and funds
+ * closed before it, are omitted.
+ *
+ * `on` (YYYY-MM-DD) is REQUIRED by the endpoint -- the server keeps no clock
+ * of its own, and there is no "just sum everything" mode: allocations are
+ * dated the first of their month, so an unfiltered total would quietly include
+ * future money. Callers wanting today pass today explicitly. Until `on` is
+ * known the query stays disabled rather than firing a certain 400.
  */
 export function useGetFundBalancesQuery(
     { on }={},
-    options={}
+    {
+        enabled = true,
+        ...options
+    }={}
 ) {
     const fetch = useAuthedFetchJSON();
 
@@ -204,6 +214,7 @@ export function useGetFundBalancesQuery(
             });
             return await fetch(url, { method: 'GET' });
         },
+        enabled: enabled && !!on,
         ...options
     });
 }
