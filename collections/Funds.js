@@ -477,7 +477,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "Update Fund";
 
-            static openapi_Description = "Update an existing fund. Only the fields included in the request body will be updated. History-affecting fields (start_date, start_balance, tracked, monthly, pool, and the parent of a fund that is or contains a monthly fund) are immutable while any finalizations exist for the fund (409). Hierarchy changes repoint allocation sources in unfinalized months. Setting `deprecated` (the fund's LAST ACTIVE day) requires: a tracked fund, a zero balance on that date, no transactions after it, and every tracked descendant already deprecated at-or-before it; once set, the fund is frozen (no transaction of any kind may involve it) until `deprecated` is cleared -- which in turn is refused once any later month has been finalized (unfinalize back first).";
+            static openapi_Description = "Update an existing fund. Only the fields included in the request body will be updated. History-affecting fields (start_date, start_balance, tracked, monthly, pool, and the parent of a fund that is or contains a monthly fund) are immutable while any finalizations exist for the fund (409). Hierarchy changes repoint allocation sources in unfinalized months. Setting `deprecated` (the fund's LAST ACTIVE day) requires: a tracked fund, a zero balance on that date, no transactions after it, and every tracked descendant already deprecated at-or-before it; once set, the fund is frozen (no transaction of any kind may involve it) until `deprecated` is cleared -- which in turn is refused once any later month has been finalized (unfinalize back first). To deprecate, prefer the dedicated POST `/fund/:fund_id/deprecate` route: it atomically drains the remaining balance and removes future allocations before setting the field, whereas this route requires the fund to already satisfy every invariant (zero balance, no later allocations).";
 
             static openapi_Parameters = [
                 this.FundIDParam
@@ -487,7 +487,7 @@ module.exports = class FundsCollection extends Collection {
                 type: 'object',
                 properties: {
                     ...FundBodyProperties,
-                    deprecated: { type: 'string', format: 'date', nullable: true, description: "The fund's LAST ACTIVE day; null re-activates the fund. See the route description for the invariants." }
+                    deprecated: { type: 'string', format: 'date', nullable: true, description: "The fund's LAST ACTIVE day; null re-activates the fund. See the route description for the invariants. Prefer the dedicated POST `/fund/:fund_id/deprecate` route, which atomically drains the remaining balance into a fund of your choice (and removes future allocations) before setting this field." }
                 }
             }
 

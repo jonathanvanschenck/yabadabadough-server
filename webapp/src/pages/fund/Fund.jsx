@@ -9,6 +9,7 @@ import {
     useGetFundsQuery,
     useGetFundBalanceQuery,
     useGetFundFinalizationsQuery,
+    useGetLatestMonthFinalizationQuery,
     usePatchFundMutation,
     useDeprecateFundMutation,
     useDeleteFundMutation
@@ -101,13 +102,25 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
         isPending: deprecateIsPending
     } = useDeprecateFundMutation();
 
+    // The earliest legal deprecation date: on/after the fund's start_date and
+    // outside every finalized month (months finalize contiguously, so "after
+    // the latest finalization" covers them all)
+    const latestFinalizationQ = useGetLatestMonthFinalizationQuery();
+    const minDate = [ latestFinalizationQ.data?.sonm_date, fundDetail?.start_date ]
+        .filter(d => d != null)
+        .sort()
+        .pop() ?? null;
+
     // Client-side mirrors of the server's checks (the server is the real
     // authority -- these just make the modal self-explanatory)
     const dataValidity = useMemo(() => ({
-        date: (date == null) ? 'A last active day is required.' : null,
+        date: (date == null) ? 'A last active day is required.'
+            : (minDate != null && date < minDate)
+                ? `The last active day must be on or after ${dayjs(minDate).format('MMM D, YYYY')} (after the fund started and outside finalized months).`
+            : null,
         transfer_to: (needsTransfer && transferToId == null)
             ? 'The remaining balance needs a destination fund.' : null,
-    }), [date, needsTransfer, transferToId]);
+    }), [date, minDate, needsTransfer, transferToId]);
 
     const handleSubmit = useCallback(() => {
         mutate(
@@ -167,6 +180,7 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
                             isRequired={true}
                             value={date}
                             onChange={(value) => { setDate(value || null); setSubmitError(null); }}
+                            min={minDate ?? undefined}
                             validityMessage={dataValidity.date}
                         />
                         <LabeledTextInput
