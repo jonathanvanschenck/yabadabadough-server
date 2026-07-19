@@ -6,8 +6,8 @@
   "scripts": {
     "test": "npx mocha"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Jonathan Van Schenck",
+  "license": "MIT",
   "dependencies": {
     "asseverate": "^0.2.0",
     "better-sqlite3": "^12.10.0",

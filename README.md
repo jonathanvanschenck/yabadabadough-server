@@ -9,7 +9,7 @@
 [![Node](https://img.shields.io/badge/Node-22.12%2B-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![React](https://img.shields.io/badge/React-frontend-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-![License](https://img.shields.io/badge/License-ISC-blue)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 [The ideas](#the-ideas) &nbsp;·&nbsp; [Running it](#running-it) &nbsp;·&nbsp; [Deploying](#deploying) &nbsp;·&nbsp; [API reference](#the-api)
 

@@ -1,5 +1,7 @@
 node_modules
 .env
 db/backup
+db/backup.bkp
 keys
 webapp/dist
+bsi.csv
