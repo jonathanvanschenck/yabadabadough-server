@@ -12,7 +12,11 @@ The React webapp lives in `webapp/` and has its own conventions file at `webapp/
 - Test pattern: Files named `test-*.js` in `test/` directory (recursive)
 
 ### Database
-- Database path configured via `.env` file: `YDD_SQLITE_PATH`
+- Database path configured via `.env` file: `YDD_SQLITE_PATH`. An ABSOLUTE path is used
+  verbatim; a RELATIVE one resolves against the app root (never `process.cwd()`), so
+  `node index.js` and `node scripts/create-user.js` open the same file regardless of the
+  directory they were invoked from. `:memory:` is passed straight through. An unset/empty
+  value is a hard error naming the variable
 - Database uses WAL mode and foreign key constraints
 - Schema version tracked via `PRAGMA user_version`
 - Fresh schema applied automatically to new databases via `db/migrations/_schema.sql`

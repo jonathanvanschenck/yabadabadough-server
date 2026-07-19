@@ -10,8 +10,15 @@ function parse_port(str, fallback) {
     return port;
 }
 
+// Unset falls back; anything else is true only when it is exactly "true", so a
+// stray value fails closed rather than silently enabling something.
+function parse_boolean(str, fallback) {
+    if ( str === undefined || str === "" ) return fallback;
+    return str === "true";
+}
+
 let log_format;
-switch ( env.YYD_LOG_VERBOSITY ) {
+switch ( env.YDD_LOG_VERBOSITY ) {
     case "simple":
         log_format = ":TYPE | :STRING";
         break;
@@ -26,6 +33,8 @@ switch ( env.YYD_LOG_VERBOSITY ) {
 
 module.exports = {
     db: {
+        // Absolute paths are honored as given; relative ones resolve against
+        // the app root (see lib/db.js create_connection).
         path: env.YDD_SQLITE_PATH,
         options: {}
     },
@@ -37,15 +46,18 @@ module.exports = {
     log: {
         namespace: "",
         log_level: env.YDD_LOG_LEVEL || 'debug',
-        colorized: env.YDD_LOG_COLORIZED ? env.YDD_LOG_COLORIZED === 'true' : true,
+        // yalls' Logger takes `no_colors`, not `colorized` -- passing the
+        // latter was silently ignored, so YDD_LOG_COLORIZED did nothing and
+        // container logs always carried ANSI escapes.
+        no_colors: !parse_boolean(env.YDD_LOG_COLORIZED, true),
         format: log_format
     },
     webserver: {
         api: {
-            dev: env.ASSEVERATE_DEV=="true",
-            disable_auth: env.YDD_DISABLE_AUTH=="true",
+            dev: parse_boolean(env.ASSEVERATE_DEV, false),
+            disable_auth: parse_boolean(env.YDD_DISABLE_AUTH, false),
             // Only set false for local plain-http development
-            secure_cookies: env.YDD_SECURE_COOKIES ? env.YDD_SECURE_COOKIES === "true" : true,
+            secure_cookies: parse_boolean(env.YDD_SECURE_COOKIES, true),
             version: require("./package.json").version,
             penalty_ms: 1000,
             swagger: {

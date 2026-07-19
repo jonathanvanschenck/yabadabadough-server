@@ -87,10 +87,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # ownership instead and must be chown'd to uid 1000 on the host -- see README.
 RUN mkdir -p /app/data /app/keys && chown -R node:node /app/data /app/keys
 
-# NOTE ON YDD_SQLITE_PATH: lib/db.js resolves it with join(__dirname, "..", path),
-# so the value is ALWAYS interpreted relative to /app -- an absolute path like
-# /data/db.sqlite would land at /app/data/db.sqlite. Keep it relative.
-ENV YDD_SQLITE_PATH=data/db.sqlite \
+ENV YDD_SQLITE_PATH=/app/data/db.sqlite \
     YDD_JWT_KEYS_DIR=/app/keys \
     YDD_SERVER_ADDRESS=0.0.0.0 \
     YDD_SERVER_PORT=8383 \

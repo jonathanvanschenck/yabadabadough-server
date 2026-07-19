@@ -261,14 +261,19 @@ stray `.env`).
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `YDD_SQLITE_PATH` | — | **Always resolved relative to the app root**, even if it looks absolute. Use `data/db.sqlite`, not `/data/db.sqlite`. |
-| `YDD_JWT_KEYS_DIR` | `./keys` | Ed25519 signing keys. Absolute paths work here. |
+| `YDD_SQLITE_PATH` | — | Required. Absolute paths are used as given; relative ones resolve against the app root, not the working directory. `:memory:` for an ephemeral database. |
+| `YDD_JWT_KEYS_DIR` | `./keys` | Ed25519 signing keys. |
 | `YDD_SERVER_ADDRESS` | `localhost` | `0.0.0.0` in a container. |
 | `YDD_SERVER_PORT` | `1234` | The Docker images default to `8383`. |
 | `YDD_SECURE_COOKIES` | `true` | Set `false` **only** for plain-http local dev. |
-| `YDD_DISABLE_AUTH` | off | Bypasses every auth gate. Development only. |
+| `YDD_DISABLE_AUTH` | `false` | Bypasses every auth gate. Development only. |
 | `YDD_LOG_LEVEL` | `debug` | `info` is a saner production choice. |
+| `YDD_LOG_COLORIZED` | `true` | Set `false` to drop ANSI escapes — worth doing wherever logs are captured to a file or a log shipper rather than a terminal. |
+| `YDD_LOG_VERBOSITY` | `full` | `full`, `short`, or `simple` — how much prefix each line carries. |
 | `YDD_PROXY_ADDRESS`/`_PORT`/`_PROTOCOL` | — | Cosmetic: the public URL in the startup log. |
+
+Booleans are read strictly: a variable counts as true only when it is exactly `true`, so a
+typo fails closed rather than quietly switching something on.
 
 ### What to back up
 

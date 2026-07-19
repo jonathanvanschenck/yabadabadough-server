@@ -9,8 +9,15 @@
 set -e
 
 KEYS_DIR="${YDD_JWT_KEYS_DIR:-/app/keys}"
-DB_PATH="/app/${YDD_SQLITE_PATH:-data/db.sqlite}"
-DB_DIR="$(dirname "$DB_PATH")"
+DB_PATH="${YDD_SQLITE_PATH:-/app/data/db.sqlite}"
+
+# Mirror lib/db.js: absolute paths verbatim, relative ones against the app
+# root, ":memory:" straight through (and needing no directory at all).
+case "$DB_PATH" in
+    ":memory:") DB_DIR="" ;;
+    /*)         DB_DIR="$(dirname "$DB_PATH")" ;;
+    *)          DB_DIR="$(dirname "/app/$DB_PATH")" ;;
+esac
 
 writable_or_die() {
     dir="$1"
@@ -22,7 +29,7 @@ writable_or_die() {
     fi
 }
 
-writable_or_die "$DB_DIR" "database directory"
+[ -n "$DB_DIR" ] && writable_or_die "$DB_DIR" "database directory"
 writable_or_die "$KEYS_DIR" "JWT keys directory"
 
 # TokenManager.from_dir treats a missing/empty keys directory as a hard startup

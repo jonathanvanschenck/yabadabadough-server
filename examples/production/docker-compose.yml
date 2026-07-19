@@ -20,9 +20,7 @@ services:
     expose:
       - "8383"
     environment:
-      # Relative to /app -- see the note in the Dockerfile about how
-      # lib/db.js resolves this path.
-      YDD_SQLITE_PATH: data/db.sqlite
+      YDD_SQLITE_PATH: /app/data/db.sqlite
       YDD_JWT_KEYS_DIR: /app/keys
       YDD_SERVER_ADDRESS: "0.0.0.0"
       YDD_SERVER_PORT: "8383"
