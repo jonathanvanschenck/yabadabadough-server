@@ -27,8 +27,10 @@ const {
 } = require("./lib/parsers.js");
 const { QK, invalidate, remove, money_moved } = require("./lib/query_keys.mjs");
 const { FUND_COLORS } = require("../lib/fund_colors.mjs");
+const { balance_on_is_provisional } = require("../lib/provisional.mjs");
 
 const Fund = require("../models/Fund.js");
+const MonthFinalization = require("../models/MonthFinalization.js");
 
 // only_*-style body parser (undefined on failure) for the palette-slug color
 const only_fund_color = (value) => FUND_COLORS.includes(value) ? value : undefined;
@@ -60,16 +62,9 @@ const FundBodyProperties = {
     color: { type: 'string', nullable: true, enum: [ ...FUND_COLORS, null ], description: "Palette color slug (see lib/fund_colors.mjs)" }
 };
 
-// Shared between the per-fund and bulk balance routes
-const FundBalanceSchema = {
-    type: 'object',
-    properties: {
-        fund_id: { type: 'integer', minimum: 1 },
-        on: { type: 'string', format: 'date', nullable: true, description: "The date the balance was calculated on; null means the current balance" },
-        balance: { type: 'number', description: "Currency as a float dollar amount" }
-    },
-    required: [ 'fund_id', 'on', 'balance' ]
-};
+// Shared between the per-fund and bulk balance routes (registered by
+// lib/openapi.js off models/Fund.js, so both routes $ref one definition)
+const FundBalanceSchema = { "$ref": '#/components/schemas/FundBalanceSchema' };
 
 // Hierarchy/pool edits can repoint allocation sources in unfinalized months
 // (Fund._rederive_allocation_sources), which moves money between funds --
@@ -296,7 +291,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "Get Fund Balance";
 
-            static openapi_Description = "Calculate the fund's balance: the current balance (every transaction to date), or -- with `on` -- the balance on that date (every transaction up to AND on it). Computed from the fund's latest cache point at-or-before the date, so it is cheap regardless of history depth. Untracked funds always report 0.";
+            static openapi_Description = "Calculate the fund's balance: the current balance (every transaction to date), or -- with `on` -- the balance on that date (every transaction up to AND on it). Computed from the fund's latest cache point at-or-before the date, so it is cheap regardless of history depth. Untracked funds always report 0. Check `provisional`: a true value means an earlier month is still unfinalized, so this balance can change without any transaction being touched.";
 
             static query_key = [ "fund-balance", "fund_id" ];
 
@@ -329,10 +324,15 @@ module.exports = class FundsCollection extends Collection {
                     translate_model_error(err);
                 }
 
+                const frontier = MonthFinalization.provisional_frontier(this.db);
+
                 return {
                     fund_id: fund.id,
                     on: on ? on.toJSON() : null,
                     balance,
+                    // balance-ON semantics: inclusive of `on`, so a balance on
+                    // the first open month's last day is already provisional
+                    provisional: balance_on_is_provisional(frontier, on ? on.toJSON() : null),
                 };
             }
 
@@ -351,7 +351,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "List Fund Balances";
 
-            static openapi_Description = "Calculate every tracked fund's balance in one response -- the bulk companion to the per-fund balance route (one round trip instead of N). Same semantics per fund: the current balance, or -- with `on` -- the balance on that date (every transaction up to AND on it). Funds whose start_date is after `on` are omitted (they had no balance yet); untracked funds are never included. Not paginated.";
+            static openapi_Description = "Calculate every tracked fund's balance in one response -- the bulk companion to the per-fund balance route (one round trip instead of N). Same semantics per fund: the current balance, or -- with `on` -- the balance on that date (every transaction up to AND on it). Funds whose start_date is after `on` are omitted (they had no balance yet); untracked funds are never included. Not paginated. `provisional` is a property of the ledger and the requested date, not of the individual fund, so it is identical across every row.";
 
             static query_key = [ "fund-balance", "all" ];
 
@@ -376,6 +376,14 @@ module.exports = class FundsCollection extends Collection {
             async respond({ on }, { res }) {
                 const funds = Fund.from_db(this.db, { tracked: true, limit: null });
 
+                // Frontier is a property of the ledger, not of any one fund:
+                // resolve it once rather than per row
+                const on_str = on ? on.toJSON() : null;
+                const provisional = balance_on_is_provisional(
+                    MonthFinalization.provisional_frontier(this.db),
+                    on_str
+                );
+
                 // A fund that had not started by `on` has no balance to
                 // report (the per-fund route 400s) -- omit it rather than
                 // failing the whole response
@@ -383,8 +391,9 @@ module.exports = class FundsCollection extends Collection {
                     .filter((fund) => !on || fund.start_date.toJSON() <= on.toJSON())
                     .map((fund) => ({
                         fund_id: fund.id,
-                        on: on ? on.toJSON() : null,
+                        on: on_str,
                         balance: on ? fund.calculate_balance_on(this.db, on) : fund.calculate_balance(this.db),
+                        provisional,
                     }));
 
                 res.setHeader("X-Total-Count", balances.length);

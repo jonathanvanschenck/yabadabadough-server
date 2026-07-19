@@ -121,6 +121,22 @@ ALL server communication lives here — pages/components never call
 
 ## Components (`src/components/`)
 
+Tinted callout blocks are `<Banner variant="warn|info|danger|success" icon dense>` — the one
+box for "this is read-only", "this month isn't finalized", modal hazard notes. Callers own
+their own spacing via `className` (the box carries no margin).
+
+Balances that an unfinalized earlier month could still move are marked with
+`<ProvisionalValue>` (a dotted warn underline + tooltip; chosen over a glyph, which would
+break `tabular-nums` alignment, and over recoloring, which fights the fund colors) and
+explained once per view by `<ProvisionalBanner>` (collapsed to one line with a "See more"
+toggle — it annotates dense data, so it must not out-shout it; its `som` is the month to NAME,
+chosen by the caller, since the month that bears on the view is not always the earliest
+unfinalized one). Never decide provisional-ness locally: read
+the `provisional` flag off the balance response, or use `useProvisionalFrontier()` with the
+shared predicates in `src/hooks/provisional.js` (the server's `lib/provisional.mjs`, re-exported
+like `queryKeys.js`/`fundColors.js`). See the server CLAUDE.md for the rule and its
+deliberate off-by-one.
+
 **Always check `src/components/` before writing new UI** — buttons, links, modals,
 menus, badges, tables, inputs, spinners, cards, and toasts exist and must be reused. New
 UI goes here as a general reusable component, not a page-local one-off. Two tiers:

@@ -13,6 +13,7 @@ import { Card, CardActionHeader, CardSection, CardAutoGrid } from '../../compone
 import { LabeledTextInput, LabeledTextArea } from '../../components/Inputs.jsx';
 import { IconButton, TightIconButton } from '../../components/Buttons.jsx';
 import { BackLink } from '../../components/Links.jsx';
+import { Banner } from '../../components/Banner.jsx';
 import { FundLabel, FinalizedBadge, Badge } from '../../components/Badges.jsx';
 import {
     EditTransactionGroupModal,
@@ -201,12 +202,12 @@ export default function TransactionGroupPage() {
             </div>
 
             { (isManaged || isFinalized) &&
-                <div className={styles.readOnlyBanner} role="note">
+                <Banner variant="warn">
                     { isManaged
                         ? `This is a managed ${managedKind} group — its details and transactions are maintained automatically and are read-only here.`
                         : `This group is in a finalized month (${finalizedMonth.som_date.slice(0, 7)}). Unfinalize that month from the Transactions page to edit or delete it.`
                     }
-                </div>
+                </Banner>
             }
 
             <Card>

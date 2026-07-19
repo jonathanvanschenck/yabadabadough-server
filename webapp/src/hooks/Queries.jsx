@@ -1,8 +1,9 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useMutation, useQueryClient, useQuery, useQueries, keepPreviousData } from '@tanstack/react-query';
 
 import { useAuthedFetchJSON, useAuthedFetchAllJSON, useAuthedFetchPageJSON, parseURL, APIError, useAuthRoles } from '../contexts/AuthContext.jsx';
 import { QK } from './queryKeys.js';
+import { first_unfinalized_som, provisional_frontier } from './provisional.js';
 
 /**
  * All server communication is localized in this one file: pages and
@@ -616,6 +617,52 @@ export function useGetLatestMonthFinalizationQuery(options={}) {
         },
         ...options
     });
+}
+
+/**
+ * The "provisional balance" frontier for the whole ledger: the eom date of
+ * the first unfinalized month, past which any balance can still move on its
+ * own (finalizing a month writes eom_cleanup transfers dated its last day).
+ *
+ * Returns `{ frontier, som, isPending }` -- `frontier` for the
+ * balance_on_is_provisional / forward_balance_is_provisional predicates, and
+ * `som` (the first unfinalized month's first day) for labelling a warning.
+ * Both are null when nothing can ever be provisional.
+ *
+ * The rule itself lives in the shared registry the SERVER computes its
+ * `provisional` response flag from (see ./provisional.js), so this is only
+ * the wiring: read the same three inputs out of the query cache and hand
+ * them over. Note `has_monthly_fund` counts DEPRECATED monthly funds too,
+ * exactly as the server's existence check does.
+ *
+ * While the underlying queries load, the frontier is null and callers render
+ * no warning -- better than flashing one that may not apply.
+ */
+export function useProvisionalFrontier() {
+    const latestQ = useGetLatestMonthFinalizationQuery();
+    const fundsQ = useGetFundsQuery();
+
+    const latestSonm = latestQ.data?.sonm_date ?? null;
+    const funds = fundsQ.data;
+    const isPending = latestQ.isPending || fundsQ.isPending;
+
+    return useMemo(() => {
+        const inputs = {
+            latest_sonm_date: latestSonm,
+            earliest_tracked_start: (funds ?? [])
+                // untracked funds have no start point and hold no money
+                .map((fund) => fund.start?.date)
+                .filter(Boolean)
+                .reduce((earliest, date) => (earliest == null || date < earliest ? date : earliest), null),
+            has_monthly_fund: (funds ?? []).some((fund) => fund.status?.monthly),
+        };
+
+        return {
+            frontier: provisional_frontier(inputs),
+            som: first_unfinalized_som(inputs),
+            isPending,
+        };
+    }, [ latestSonm, funds, isPending ]);
 }
 
 export function useGetMonthFinalizationQuery(

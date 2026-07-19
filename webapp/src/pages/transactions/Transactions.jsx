@@ -10,6 +10,7 @@ import {
     useGetFundBalancesQuery,
     useGetMonthFinalizationsQuery,
     useGetFundFinalizationsQuery,
+    useProvisionalFrontier,
 } from '../../hooks/Queries.jsx';
 import { MonthPaginator } from '../../components/MonthPaginator.jsx';
 import { IconButton } from '../../components/Buttons.jsx';
@@ -23,8 +24,9 @@ import {
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
 import { FinalizedBadge, FundLabel } from '../../components/Badges.jsx';
 import { HoverPopover } from '../../components/HoverPopover.jsx';
+import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { formatDollars } from '../../components/domain.js';
+import { formatDollars, previousMonthSom } from '../../components/domain.js';
 import { fundColorVar } from '../../hooks/fundColors.js';
 import {
     monthBoundsOf,
@@ -150,7 +152,7 @@ function OutsideBreakdown({ breakdown, total }) {
  */
 function AmountCell({
     value, className = '', fund, variant = 'main', isColHovered = false, isOmitted = false,
-    selKey = null, selCol = null, selected = null, breakdown = null
+    selKey = null, selCol = null, selected = null, breakdown = null, provisionalSom = null
 }) {
     const hasValue = selKey != null && value != null && !isOmitted;
     const hoverClass = isColHovered ? styles.colHover : '';
@@ -182,9 +184,16 @@ function AmountCell({
                 isOmitted
                     ? <span className={styles.omittedMark} title="Shown on the expanded transaction rows below">⋯</span>
                     : <>
-                        <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                            {formatDollars(value)}
-                        </span>
+                        { provisionalSom
+                            ? <ProvisionalValue som={provisionalSom}>
+                                <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
+                                    {formatDollars(value)}
+                                </span>
+                            </ProvisionalValue>
+                            : <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
+                                {formatDollars(value)}
+                            </span>
+                        }
                         { isTotalCell &&
                             <span className={styles.breakdownSlot}>
                                 { hasBreakdown &&
@@ -211,7 +220,7 @@ function AmountCell({
  * `<selPrefix>:<col>`, col aligned with the group rows' fund columns so a
  * rectangle can span both); the balance-forward row opts in.
  */
-function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = '', selPrefix = null, selectedKeys = null }) {
+function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = '', selPrefix = null, selectedKeys = null, provisionalSom = null }) {
     return (
         <tr className={`${styles.balanceRow} ${rowClassName}`}>
             <td className={`${styles.dateCell} ${styles.stickyCol1}`} />
@@ -231,6 +240,7 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
                         selKey={selKey}
                         selCol={selKey != null ? i + 1 : null}
                         selected={selKey != null && selectedKeys != null ? selectedKeys.get(selKey) ?? null : null}
+                        provisionalSom={provisionalSom}
                     />
                 );
             })}
@@ -692,6 +702,30 @@ export default function Page() {
         [fundFinalizationsQ.data]
     );
 
+    // Whether these balances can still move on their own, because an earlier
+    // month is unfinalized (see lib/provisional.mjs). Read straight off the
+    // balance responses rather than re-derived here: the server computes the
+    // flag per requested date, so the two rows can differ -- entering-the-month
+    // balances are settled while the same month's totals are not, exactly when
+    // the frontier IS this month. It is uniform across funds within a
+    // response, so it applies to the row as a whole.
+    // `som` here is only for labelling the offending month.
+    const { som: firstUnfinalizedSom } = useProvisionalFrontier();
+    const enteringProvisional = (enteringQ.data ?? []).some(b => b.provisional);
+    const eomProvisional = (eomQ.data ?? []).some(b => b.provisional);
+    // The finalized EOM row is a recorded snapshot, never provisional
+    const showProvisionalBanner = enteringProvisional || eomProvisional;
+
+    // Which month to NAME. Months finalize contiguously, so the frontier month
+    // is what must be finalized FIRST -- but it isn't what the reader is
+    // looking at: viewing September with the frontier back in July, the month
+    // that bears on these figures is August (the one that ends right before
+    // this view begins). Name that instead, clamped so it never points at an
+    // already-finalized month (viewing the frontier month itself, or earlier).
+    const provisionalSom = firstUnfinalizedSom != null && som > firstUnfinalizedSom
+        ? previousMonthSom(som)
+        : firstUnfinalizedSom;
+
     const bodyGroups = useMemo(() =>
         (groupsQ.data ?? [])
             .filter(g => !g.status.eom_cleanup)
@@ -775,6 +809,13 @@ export default function Page() {
                     <FinalizedBadge value={monthFinalization != null} />
                 </div>
             </div>
+
+            { showProvisionalBanner &&
+                <ProvisionalBanner
+                    som={provisionalSom}
+                    className={styles.provisionalBanner}
+                />
+            }
 
             { hiddenFunds.length > 0 &&
                 <div className={styles.hiddenStrip}>
@@ -959,6 +1000,7 @@ export default function Page() {
                                 rowClassName={styles.totalsRow}
                                 selPrefix="tot"
                                 selectedKeys={selectedKeys}
+                                provisionalSom={eomProvisional ? provisionalSom : null}
                             />
                             <BalanceRow
                                 label="Balance forward"
@@ -969,6 +1011,7 @@ export default function Page() {
                                 rowClassName={styles.forwardRow}
                                 selPrefix="fwd"
                                 selectedKeys={selectedKeys}
+                                provisionalSom={enteringProvisional ? provisionalSom : null}
                             />
                             { bodyGroups.length === 0 &&
                                 <tr>

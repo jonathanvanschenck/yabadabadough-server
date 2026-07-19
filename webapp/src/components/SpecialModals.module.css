@@ -11,16 +11,12 @@
     margin: 0 0 0.75rem 0;
 }
 
+/* Spacing only -- the tinted box itself is <Banner variant="warn" dense>.
+   Symmetric vertical margins: the block above (e.g. CardAutoGrid) has no
+   bottom margin, so a top margin is needed to separate from it. Adjacent
+   helper-block margins collapse in this block-flow section, keeping the
+   gap at 0.75rem when several stack. */
 .modalWarning {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--u-warn-border);
-    background: var(--u-warn-bg);
-    color: var(--u-warn-text);
-    /* Symmetric vertical margins: the block above (e.g. CardAutoGrid) has no
-       bottom margin, so a top margin is needed to separate from it. Adjacent
-       helper-block margins collapse in this block-flow section, keeping the
-       gap at 0.75rem when several stack. */
     margin: 0.75rem 0;
 }
 

@@ -11,6 +11,11 @@ const {
 } = require("../lib/db.js");
 
 const {
+    first_unfinalized_som,
+    provisional_frontier,
+} = require("../lib/provisional.mjs");
+
+const {
     stmt2datetime,
     stmt2ydate,
     ydate2stmt
@@ -63,6 +68,16 @@ module.exports = class MonthFinalization extends Base {
             SELECT MIN(start_date) AS start_date
             FROM funds
             WHERE tracked = 1
+        `,
+        // Small inline guard against funds (the sanctioned exception to SQL
+        // locality -- Fund cannot require this model back). Existence only:
+        // with no monthly fund anywhere, finalizing writes no eom_cleanup
+        // rows, so no balance is ever provisional. See lib/provisional.mjs
+        any_monthly_fund: `
+            SELECT 1
+            FROM funds
+            WHERE monthly = 1
+            LIMIT 1
         `,
         create: `
             INSERT INTO month_finalizations (
@@ -193,6 +208,60 @@ module.exports = class MonthFinalization extends Base {
         return this.from_row(stmt.get() ?? null);
     }
 
+    /**
+     * The raw inputs the shared lib/provisional.mjs helpers take, read off
+     * the db as 'YYYY-MM-DD' strings. Kept in one place so the frontier and
+     * the contiguity check below can never derive "the first unfinalized
+     * month" two different ways.
+     */
+    static _provisional_inputs(db) {
+        const latest = this.latest(db);
+        const row = latest ? null : this.get_stmt(db, "earliest_tracked_start").get();
+
+        return {
+            latest_sonm_date: latest ? ydate2stmt(latest.sonm_date) : null,
+            earliest_tracked_start: row?.start_date ?? null,
+        };
+    }
+
+    /**
+     * The first day of the first month that has NOT been finalized, as a
+     * YDate, or null when no tracked fund exists yet (nothing to finalize).
+     *
+     * This is both the month `create` will accept next (contiguity) and the
+     * start of the provisional window -- see provisional_frontier below.
+     */
+    static first_unfinalized_som(db) {
+        return stmt2ydate(first_unfinalized_som(this._provisional_inputs(db)));
+    }
+
+    /**
+     * The provisional frontier: the eom_date (as a 'YYYY-MM-DD' STRING, the
+     * shared registry's currency) of the first unfinalized month, or null
+     * when no balance can ever be provisional.
+     *
+     * Balances at or after this date may still move on their own, because
+     * finalizing the months behind it writes eom_cleanup transactions dated
+     * their last day. Pair it with balance_on_is_provisional /
+     * forward_balance_is_provisional from lib/provisional.mjs -- the two have
+     * a deliberate off-by-one, so never compare against it by hand.
+     *
+     * Cheap enough to call per request (one indexed row, plus two existence
+     * probes), but it does not vary within a request: resolve it ONCE and
+     * reuse it across a list of funds.
+     */
+    static provisional_frontier(db) {
+        // Cheapest discriminator first: no monthly funds means no cleanup
+        // will ever be written, so the date lookups are wasted work
+        const has_monthly_fund = this.get_stmt(db, "any_monthly_fund").get() != null;
+        if ( !has_monthly_fund ) return null;
+
+        return provisional_frontier({
+            ...this._provisional_inputs(db),
+            has_monthly_fund,
+        });
+    }
+
     static _from_db_wheres({
         since,  // YDate or null, filters on som_date
         until,  // YDate or null, filters on som_date
@@ -291,23 +360,19 @@ module.exports = class MonthFinalization extends Base {
         // in, when nothing has been finalized yet)
         // ------------------------------------------------------------------
         const latest = this.latest(db);
+        if ( latest && ydate2stmt(som) <= ydate2stmt(latest.som_date) ) {
+            throw new ConflictError("Month has already been finalized: " + som);
+        }
 
-        let required_som;
-        if ( latest ) {
-            if ( ydate2stmt(som) <= ydate2stmt(latest.som_date) ) {
-                throw new ConflictError("Month has already been finalized: " + som);
-            }
-            required_som = latest.sonm_date;
-        } else {
-            const row = this.get_stmt(db, "earliest_tracked_start").get();
-            const earliest = stmt2ydate(row?.start_date ?? null);
-            if ( !earliest ) {
-                throw new ConflictError("Cannot finalize a month before any tracked fund exists");
-            }
-            required_som = earliest.start_of_month();
-            if ( ydate2stmt(som) < ydate2stmt(required_som) ) {
-                throw new ConflictError("Cannot finalize a month before any tracked fund starts");
-            }
+        // Shared with provisional_frontier: "the month that must be finalized
+        // next" and "the month the provisional window opens at" are the same
+        // fact, and must never be derived two different ways
+        const required_som = this.first_unfinalized_som(db);
+        if ( !required_som ) {
+            throw new ConflictError("Cannot finalize a month before any tracked fund exists");
+        }
+        if ( !latest && ydate2stmt(som) < ydate2stmt(required_som) ) {
+            throw new ConflictError("Cannot finalize a month before any tracked fund starts");
         }
 
         if ( ydate2stmt(som) != ydate2stmt(required_som) ) {

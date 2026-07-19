@@ -53,14 +53,6 @@
     margin: 0;
 }
 
-.readOnlyBanner {
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--u-warn-border);
-    background: var(--u-warn-bg);
-    color: var(--u-warn-text);
-}
-
 .deleteButton {
     background: var(--bg-danger-color);
 }

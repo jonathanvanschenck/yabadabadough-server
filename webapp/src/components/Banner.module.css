@@ -1,0 +1,55 @@
+.banner {
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid;
+}
+
+/* Tighter block for notes stacked inside a modal body */
+.dense {
+    padding: 0.5rem 1rem;
+}
+
+/* Only applied when an icon is present: without it the children must stay in
+   normal inline flow, or prose containing <strong>/<a> would break apart into
+   separate flex items */
+.withIcon {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+}
+
+.icon {
+    /* Nudge onto the first line's baseline; the glyph box sits high */
+    margin-top: 0.15rem;
+    flex: none;
+}
+
+.body {
+    min-width: 0;
+}
+
+/* --- Variants: border/background/text from the matching --u-<role> ramp --- */
+
+.warn {
+    border-color: var(--u-warn-border);
+    background: var(--u-warn-bg);
+    color: var(--u-warn-text);
+}
+
+.info {
+    border-color: var(--u-info-border);
+    background: var(--u-info-bg);
+    color: var(--u-info-text);
+}
+
+.danger {
+    border-color: var(--u-danger-border);
+    background: var(--u-danger-bg);
+    color: var(--u-danger-text);
+}
+
+.success {
+    border-color: var(--u-success-border);
+    background: var(--u-success-bg);
+    color: var(--u-success-text);
+}

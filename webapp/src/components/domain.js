@@ -27,6 +27,36 @@ export function formatDollars(value) {
     return value == null ? "—" : dollarFormatter.format(value);
 }
 
+const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * Human label for a 'YYYY-MM-DD' date string's month ("May 2026").
+ * Deliberately not dayjs: the input is already a plain date string, and only
+ * the month and year are wanted.
+ */
+export function monthLabel(date) {
+    if ( !date ) return "";
+    const [ year, month ] = date.split('-').map(Number);
+    return `${MONTH_NAMES[month - 1]} ${year}`;
+}
+
+/**
+ * The start-of-month date string for the month before the one `som` starts
+ * ("2026-09-01" -> "2026-08-01"). Same reasoning as monthLabel: the input is
+ * already a plain date string, so this is cheaper and more predictable than
+ * routing through dayjs.
+ */
+export function previousMonthSom(som) {
+    if ( !som ) return null;
+    const [ year, month ] = som.split('-').map(Number);
+    return month === 1
+        ? `${year - 1}-12-01`
+        : `${year}-${String(month - 1).padStart(2, '0')}-01`;
+}
+
 /**
  * Build the tracked-fund hierarchy tree: one node per TRACKED fund that had
  * started by `startedBy` (a fund that did not exist yet has nothing to

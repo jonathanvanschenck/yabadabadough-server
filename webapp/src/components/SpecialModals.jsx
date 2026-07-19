@@ -20,6 +20,7 @@ import {
 } from './Inputs.jsx';
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
 import Spinner from './Spinner.jsx';
+import { Banner } from './Banner.jsx';
 import { fundIdsContainingMonthly } from './domain.js';
 import {
     useGetFundsQuery,
@@ -412,11 +413,11 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                     are refused by the server while any finalizations exist.
                 </p>
                 { historyLocked &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         This fund has finalized months, so its history-affecting
                         fields are locked. Unfinalize back to the fund's start to
                         change them.
-                    </p>
+                    </Banner>
                 }
                 <CardAutoGrid>
                     <LabeledTextInput
@@ -965,10 +966,10 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
         >
             <CardSection title="Group Details">
                 { isManaged &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         This is a managed {group?.status?.allocation ? 'allocation' : 'end-of-month cleanup'} group:
                         it cannot be edited here.
-                    </p>
+                    </Banner>
                 }
                 <CardAutoGrid>
                     <LabeledDateInput
@@ -1111,10 +1112,10 @@ export function EditTransactionGroupTransactionsModal({ isOpen, setIsOpen, group
         >
             <CardSection title={`Transactions of: ${group?.description ?? ''} (${group?.date ?? ''})`}>
                 { isManaged &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         This is a managed {group?.status?.allocation ? 'allocation' : 'end-of-month cleanup'} group:
                         its transactions cannot be edited here.
-                    </p>
+                    </Banner>
                 }
                 <p className={styles.modalHint}>
                     All adds, edits, and removals are applied in one atomic batch.
@@ -1178,11 +1179,11 @@ export function DeleteTransactionGroupModal({ isOpen, setIsOpen, group, closePop
                     and its {transactionCount} transaction{transactionCount === 1 ? '' : 's'}?
                 </div>
                 { statementCount > 0 &&
-                    <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
+                    <Banner dense style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
                         This group reconciles {statementCount} bank statement item{statementCount === 1 ? '' : 's'},
                         which will be released back to pending. Reconciling them again
                         without removing these transactions elsewhere double-counts.
-                    </div>
+                    </Banner>
                 }
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                     This action cannot be undone.
@@ -1256,10 +1257,10 @@ export function EditTransactionModal({ isOpen, setIsOpen, transaction }) {
         >
             <CardSection title="Details">
                 { isManaged &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         This is a managed {transaction?.allocation ? 'allocation' : 'end-of-month cleanup'} transaction:
                         it cannot be edited here.
-                    </p>
+                    </Banner>
                 }
                 <p className={styles.modalHint}>
                     The transaction's date belongs to its group — edit the group to change it.
@@ -1796,11 +1797,11 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                         Check that the columns landed where you expect before importing.
                     </p>
                     { badRows.length > 0 &&
-                        <p className={styles.modalWarning}>
+                        <Banner dense className={styles.modalWarning}>
                             {badRows.length} row{badRows.length === 1 ? '' : 's'} cannot be imported
                             (first problem: line {badRows[0].index + 2}, {badRows[0].problem}).
                             Check the column mappings.
-                        </p>
+                        </Banner>
                     }
                     <div className={styles.importPreviewScroll}>
                         <table className={styles.importPreviewTable}>
@@ -2003,12 +2004,12 @@ export function DeleteStatementModal({ isOpen, setIsOpen, statement, closePopout
                 <div style={{ textAlign: 'center' }}>
                     Are you <strong>absolutely sure</strong> you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)})?
                 </div>
-                <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
+                <Banner dense style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
                     Deletion is for undoing bad imports, NOT for hiding items: the
                     item reappears as pending on the next re-sync, and reconciling
                     it again double-counts. If you just want it out of the pending
                     list, close this and mark it <strong>ignored</strong> instead.
-                </div>
+                </Banner>
                 { isReconciled &&
                     <div style={{ marginTop: '1rem' }}>
                         <LabeledBooleanInput
@@ -2782,7 +2783,7 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
                     />
                 </CardAutoGrid>
                 { dataValidity.recursive &&
-                    <p className={styles.modalWarning}>{dataValidity.recursive}</p>
+                    <Banner dense className={styles.modalWarning}>{dataValidity.recursive}</Banner>
                 }
                 { affectedMonths.length > 0 &&
                     <div className={styles.affectedMonths}>
@@ -2799,10 +2800,10 @@ export function FinalizeMonthModal({ isOpen, setIsOpen, initialMonth = null }) {
                     </div>
                 }
                 { data.month != null && data.month.slice(0, 7) >= todayYDate().slice(0, 7) &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         {monthLabel(data.month)} has not ended yet — finalizing it
                         locks it against further transactions. Unfinalize to undo.
-                    </p>
+                    </Banner>
                 }
             </CardSection>
 
@@ -3245,9 +3246,9 @@ export function ChangePasswordModal({ isOpen, setIsOpen, user }) {
         >
             <CardSection title="Details">
                 { (isSelf && data.revoke_sessions) &&
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         Revoking sessions logs you out everywhere — including here.
-                    </p>
+                    </Banner>
                 }
                 <p className={styles.modalHint}>
                     API keys deliberately survive password changes: revoke them
@@ -3501,9 +3502,9 @@ export function CreateApiKeyModal({ isOpen, setIsOpen, userId }) {
 
             { mintedKey && <>
                 <CardSection title="Your new API key">
-                    <p className={styles.modalWarning}>
+                    <Banner dense className={styles.modalWarning}>
                         This secret is shown ONCE and never again — store it now.
-                    </p>
+                    </Banner>
                     <div className={styles.secretContainer}>
                         <code className={styles.secretValue}>{mintedKey.api_key}</code>
                         <TightIconButton

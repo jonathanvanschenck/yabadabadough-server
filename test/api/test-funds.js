@@ -130,7 +130,9 @@ describe("Funds API", () => {
         it("reports the current balance", async () => {
             const { status, body } = await h.request(`/api/funds/fund/${checking.id}/balance`, { token: h.tokens.reader });
             expect(status).to.equal(200);
-            expect(body).to.deep.equal({ fund_id: checking.id, on: null, balance: 900 });
+            // provisional: January is unfinalized and `groceries` is monthly,
+            // so the current balance sits after a pending eom_cleanup
+            expect(body).to.deep.equal({ fund_id: checking.id, on: null, balance: 900, provisional: true });
         });
 
         it("reports the balance on a date (inclusive)", async () => {
@@ -138,7 +140,48 @@ describe("Funds API", () => {
             expect(res.body.balance).to.equal(1000);
 
             res = await h.request(`/api/funds/fund/${checking.id}/balance?on=2026-01-10`, { token: h.tokens.reader });
-            expect(res.body).to.deep.equal({ fund_id: checking.id, on: "2026-01-10", balance: 900 });
+            // not provisional: mid-January precedes the frontier (2026-01-31),
+            // so no pending cleanup can land at or before it
+            expect(res.body).to.deep.equal({ fund_id: checking.id, on: "2026-01-10", balance: 900, provisional: false });
+        });
+
+        // The `provisional` flag: true when an earlier month is unfinalized,
+        // so a pending eom_cleanup could still move this balance. The frontier
+        // is the first unfinalized month's LAST day, and balance-on semantics
+        // are inclusive of it. See lib/provisional.mjs
+        describe("provisional", () => {
+            const balance_on = async (on) => {
+                const { body } = await h.request(
+                    `/api/funds/fund/${checking.id}/balance${on ? `?on=${on}` : ""}`,
+                    { token: h.tokens.reader }
+                );
+                return body.provisional;
+            };
+
+            it("flips exactly at the frontier day", async () => {
+                // nothing finalized + a monthly fund => frontier is 2026-01-31
+                expect(await balance_on("2026-01-30")).to.equal(false);
+                expect(await balance_on("2026-01-31")).to.equal(true);
+            });
+
+            it("clears once the months behind it are finalized", async () => {
+                expect(await balance_on("2026-01-31")).to.equal(true);
+
+                MonthFinalization.create(h.db, { month: YDate.parse("2026-01-15") });
+
+                // January is settled; the frontier has moved to 2026-02-28
+                expect(await balance_on("2026-01-31")).to.equal(false);
+                expect(await balance_on("2026-02-28")).to.equal(true);
+            });
+
+            it("is false for a ledger with no monthly funds", async () => {
+                // groceries is the only monthly fund; with nothing monthly
+                // left, finalizing writes no cleanup at all, so no balance is
+                // ever at risk -- however far past the frontier it sits
+                groceries.update(h.db, { monthly: false });
+                expect(await balance_on("2026-01-31")).to.equal(false);
+                expect(await balance_on(null)).to.equal(false);
+            });
         });
 
         it("400s on a malformed date (never a silently-wrong balance)", async () => {
@@ -174,16 +217,16 @@ describe("Funds API", () => {
             expect(status).to.equal(200);
             expect(headers.get("x-total-count")).to.equal("2");
             expect(body).to.deep.equal([
-                { fund_id: checking.id, on: null, balance: 900 },
-                { fund_id: groceries.id, on: null, balance: 100 },
+                { fund_id: checking.id, on: null, balance: 900, provisional: true },
+                { fund_id: groceries.id, on: null, balance: 100, provisional: true },
             ]);
         });
 
         it("reports balances on a date (inclusive)", async () => {
             let res = await h.request("/api/funds/balances?on=2026-01-09", { token: h.tokens.reader });
             expect(res.body).to.deep.equal([
-                { fund_id: checking.id, on: "2026-01-09", balance: 1000 },
-                { fund_id: groceries.id, on: "2026-01-09", balance: 0 },
+                { fund_id: checking.id, on: "2026-01-09", balance: 1000, provisional: false },
+                { fund_id: groceries.id, on: "2026-01-09", balance: 0, provisional: false },
             ]);
 
             res = await h.request("/api/funds/balances?on=2026-01-10", { token: h.tokens.reader });

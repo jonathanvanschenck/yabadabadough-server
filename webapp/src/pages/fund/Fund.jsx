@@ -12,7 +12,8 @@ import {
     useGetLatestMonthFinalizationQuery,
     usePatchFundMutation,
     useDeprecateFundMutation,
-    useDeleteFundMutation
+    useDeleteFundMutation,
+    useProvisionalFrontier,
 } from '../../hooks/Queries.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { LabeledNumberInput, LabeledTextInput, LabeledDateInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
@@ -23,7 +24,9 @@ import { BackLink, AnchorLink } from '../../components/Links.jsx';
 import SearchableTable from '../../components/SearchableTable.jsx';
 import { IconButton, SpinnerButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
-import { fundTypeOf, formatDollars, fundIdsContainingMonthly } from '../../components/domain.js';
+import { fundTypeOf, formatDollars, monthLabel, fundIdsContainingMonthly } from '../../components/domain.js';
+import { Banner } from '../../components/Banner.jsx';
+import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import styles from './Fund.module.css';
 
 
@@ -96,6 +99,13 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
     );
     const balance = (date != null && !balanceIsPending) ? balanceData?.balance : null;
     const needsTransfer = balance != null && balance !== 0;
+
+    // Deprecation demands a ZERO balance on the date, so a provisional figure
+    // matters more here than anywhere else: a pending end-of-month cleanup can
+    // turn today's clean zero into a remainder, and the server will refuse the
+    // whole close-out at that point
+    const { som: firstUnfinalizedSom } = useProvisionalFrontier();
+    const balanceIsProvisional = balance != null && !!balanceData?.provisional;
 
     const {
         mutate,
@@ -187,7 +197,9 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
                             label="Remaining balance on that day"
                             value={date == null ? "—"
                                 : balanceIsPending ? "..."
-                                : formatDollars(balance)}
+                                : balanceIsProvisional
+                                    ? <ProvisionalValue som={firstUnfinalizedSom}>{formatDollars(balance)}</ProvisionalValue>
+                                    : formatDollars(balance)}
                             isFrozen={true}
                         />
                         <FundSearchableSelector
@@ -200,6 +212,15 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
                             validityMessage={dataValidity.transfer_to}
                         />
                     </CardAutoGrid>
+                    { balanceIsProvisional &&
+                        <Banner variant="warn" dense icon="fa-triangle-exclamation">
+                            {monthLabel(firstUnfinalizedSom)} isn&apos;t finalized, so this
+                            balance isn&apos;t settled: finalizing it first may leave a
+                            different remainder here. Deprecating requires the fund to be
+                            empty on the chosen day, so it is worth finalizing back to that
+                            month before closing this fund out.
+                        </Banner>
+                    }
                 </CardSection>
 
                 <CardActionFooter>
@@ -508,6 +529,18 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
         error: balanceError
     } = useGetFundBalanceQuery(fundId, {}, { enabled: isTracked });
 
+    // Only the CURRENT balance can be provisional here: "last reconciled" is a
+    // finalization cache point and "tracking started" is a stored constant --
+    // both are settled by construction
+    const { som: firstUnfinalizedSom } = useProvisionalFrontier();
+    const isProvisional = !!balanceData?.provisional;
+
+    const currentBalance = balanceIsPending
+        ? "..."
+        : isProvisional
+            ? <ProvisionalValue som={firstUnfinalizedSom}>{formatDollars(balanceData?.balance)}</ProvisionalValue>
+            : formatDollars(balanceData?.balance);
+
     return (
         <Card ref={ref} style={{ marginTop: '2rem' }}>
             <CardSection title={<AnchorLink fragment={anchor} linkText="Balances" />}>
@@ -519,7 +552,7 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
                     <CardAutoGrid>
                         <LabeledTextInput
                             label="Current balance"
-                            value={balanceIsPending ? "..." : formatDollars(balanceData?.balance)}
+                            value={currentBalance}
                             isFrozen={true}
                         />
                         <LabeledTextInput
@@ -538,6 +571,9 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
                         />
                     </CardAutoGrid>
                 )}
+                { isProvisional &&
+                    <ProvisionalBanner som={firstUnfinalizedSom} className={styles.provisionalBanner} />
+                }
             </CardSection>
         </Card>
     );

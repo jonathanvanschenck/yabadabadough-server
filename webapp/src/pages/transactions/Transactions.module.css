@@ -645,3 +645,11 @@ td.colHover {
 .selectionClear:hover {
     color: var(--font-primary-color);
 }
+
+/* Sits between the top bar and the grid, above the hidden-column strip. Sized
+   down to this page's dense scale (the strip below it is 0.75rem) -- at the
+   default body size the notice read as louder than the sheet it annotates. */
+.provisionalBanner {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.8rem;
+}

@@ -218,6 +218,27 @@ all follow the same shape:
 - `Transaction.net_transfer` bounds (`since`/`until`) are both inclusive, so
   `balance_on(D) = forward_balance_entering(C) + net_transfer(since=C, until=D)`.
 - Transactions may not predate a tracked fund's `start_date` (enforced at transaction creation).
+- **Provisional balances** (`lib/provisional.mjs`): a balance is PROVISIONAL when an earlier
+  month is still unfinalized — finalizing writes eom_cleanup transactions dated that month's
+  last day, so the figure can move with no user action (a monthly fund showing 120 on Jan 31
+  reads 0 the moment January finalizes). Because months finalize contiguously the whole rule
+  collapses to one date, the **frontier** = eom of the first unfinalized month
+  (`MonthFinalization.provisional_frontier(db)`, a 'YYYY-MM-DD' string or null): a balance ON
+  D is provisional iff `frontier <= D`, a forward balance ENTERING D iff `frontier < D`. That
+  off-by-one is load-bearing — the cleanup lands ON the frontier day — so always go through
+  `balance_on_is_provisional` / `forward_balance_is_provisional` rather than comparing by
+  hand. The frontier is null (nothing is ever provisional) when no tracked fund exists OR when
+  no `monthly` fund exists at all, since finalizing then writes no cleanup; that gate means
+  creating the first monthly fund flips the flag on previously-settled balances. The registry
+  is ESM and shared with the webapp exactly like `query_keys.mjs` / `fund_colors.mjs` (webapp
+  shim: `src/hooks/provisional.js` + the `useProvisionalFrontier()` hook), so the flag the API
+  publishes and the warnings the browser renders cannot drift. Exposed as `provisional` on the
+  two balance routes ONLY (`GET /funds/fund/:id/balance`, `GET /funds/balances`) — it is a
+  property of the ledger and the requested date, not of the fund, so it is uniform across a
+  list response; `Fund.start`/`cache` and the FundFinalization balances are settled cache
+  points by construction and carry no flag. `MonthFinalization.first_unfinalized_som(db)`
+  backs both this and the contiguity check in `_create` (same fact, derived once). Tests:
+  `test/models/test-provisional.js`.
 
 ### Model Pattern (`models/Base.js`)
 

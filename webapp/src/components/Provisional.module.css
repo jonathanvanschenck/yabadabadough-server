@@ -1,0 +1,27 @@
+/* A dotted rule under the figure: visible enough to prompt a hover, quiet
+   enough to sit under every number in a column without shouting. Chosen over
+   an inserted glyph (breaks tabular-nums alignment) or a recolored figure
+   (competes with the fund colors the cell already carries). */
+.value {
+    text-decoration: underline dotted var(--u-warn);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.25em;
+    /* The figure is the affordance -- signal that hovering it does something */
+    cursor: help;
+}
+
+/* Inline with the summary line, so collapsed the whole banner is one row */
+.toggle {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.detail {
+    margin: 0.4rem 0 0 0;
+}

@@ -316,6 +316,27 @@ module.exports = class Fund extends Base {
         required: [ 'date', 'forward_balance' ]
     };
 
+    /**
+     * A CALCULATED balance, as returned by the two balance routes -- not part
+     * of to_api(). It lives here (rather than inline in collections/Funds.js)
+     * only because the schema registry scans models: both routes $ref it, so
+     * the shape is documented once.
+     */
+    static openapi_FundBalanceSchema = {
+        description: "A fund's calculated balance on a date -- includes every transaction up to AND on `on`.",
+        type: 'object',
+        properties: {
+            fund_id: { type: 'integer', minimum: 1 },
+            on: { type: 'string', format: 'date', nullable: true, description: "The date the balance was calculated on; null means the current balance" },
+            balance: { type: 'number', description: "Currency as a float dollar amount" },
+            provisional: {
+                type: 'boolean',
+                description: "True when this balance may still change on its own because an EARLIER month has not been finalized. Finalizing a month writes eom_cleanup transactions dated its last day, sweeping every monthly fund's remainder into its pool ancestor -- so a balance at or after the first unfinalized month's end is not yet settled, even though nothing about it looks unusual. False once every month before it is finalized, and always false for ledgers with no monthly funds (nothing to sweep). See lib/provisional.mjs."
+            }
+        },
+        required: [ 'fund_id', 'on', 'balance', 'provisional' ]
+    };
+
     static openapi_FundSchema = {
         type: 'object',
         properties: {

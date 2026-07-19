@@ -91,3 +91,8 @@
     max-height: 50vh; /* Set limit so that the table will start overflowing */
     min-height: 20rem; /* Ensure it doesn't shrink too much -- important when the query returns no results */
 }
+
+/* Explains the dotted-underlined figure in the balances card */
+.provisionalBanner {
+    margin-top: 1rem;
+}
