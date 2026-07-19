@@ -294,9 +294,20 @@ TransactionGroup, `finalized_months_since` in Fund).
   tracked-only, db CHECK; PATCH-only at the API layer — funds are never created deprecated).
   Setting it requires: every tracked descendant already deprecated at-or-before it (deprecate
   bottom-up, un-deprecate top-down — a fund may never out-live a deprecated ancestor), no
-  transactions after the date, zero balance ON the date, and — monthly funds only — every
+  transactions after the date, zero balance ON the date, the date's month NOT yet finalized
+  (finalizations must happen with full knowledge of deprecations — no retroactive deprecation
+  into finalized history; guards only set/change, so unrelated updates to a deprecated fund
+  still pass after its month finalizes), and — monthly funds only — every
   month before the deprecation month already finalized (else a later finalization's cleanup
-  would silently un-zero it). A deprecated fund is FROZEN: no transaction of any kind may
+  would silently un-zero it). `fund.deprecate(db, { date, transfer_to_fund_id })` /
+  `POST /api/funds/fund/:id/deprecate` is the atomic close-out on top of these rules: removes
+  the fund's allocations dated after `date` (planning artifacts, auto-removable — necessarily
+  in unfinalized months), drains the remaining balance ON `date` into `transfer_to_fund_id`
+  via an auto-described "Deprecation of <name>" group (required only when nonzero; negative
+  balances transfer the other way; no group when already zero), then sets `deprecated` —
+  which re-runs every invariant, so any OTHER transaction after the date still refuses and
+  rolls the whole thing back. Webapp: Deprecate button + consequences modal on the fund page
+  (shows the live balance on the chosen date via `?on=`). A deprecated fund is FROZEN: no transaction of any kind may
   involve it — creates, line edits, removals, group deletes and date moves all refuse
   (cosmetic group edits and statement link/unlink still work); un-deprecate to touch its
   history (re-deprecating re-runs the checks). No new funds under a deprecated parent;

@@ -367,4 +367,174 @@ describe("fund deprecation", () => {
             expect(Fund.from_db(db, { deprecated_since: D("2026-02-01") })).to.deep.equal([]);
         });
     });
+
+    describe("finalized months", () => {
+        it("rejects a new deprecation date inside a finalized month", () => {
+            MonthFinalization.create(db, { month: D("2026-01-15") });
+            expect(() => savings.update(db, { deprecated: D("2026-01-20") }))
+                .to.throw(ConflictError, "month that has been finalized");
+        });
+
+        it("allows a new deprecation date in the first unfinalized month", () => {
+            MonthFinalization.create(db, { month: D("2026-01-15") });
+            const updated = savings.update(db, { deprecated: D("2026-02-10") });
+            expect(updated.deprecated.toString()).to.equal("2026-02-10");
+        });
+
+        it("still allows unrelated updates to a deprecated fund whose month has since been finalized", () => {
+            savings.update(db, { deprecated: D("2026-01-31") });
+            MonthFinalization.create(db, { month: D("2026-01-15") });
+            const updated = Fund.for_id(db, savings.id).update(db, { name: "old savings" });
+            expect(updated.name).to.equal("old savings");
+            expect(updated.deprecated.toString()).to.equal("2026-01-31");
+        });
+    });
+
+    describe("Fund.deprecate (atomic close-out)", () => {
+
+        it("drains the remaining balance into the transfer fund and deprecates", () => {
+            transfer(pool, savings, 100, "2026-01-05");
+
+            const { fund, transfer_group, removed_allocations } = savings.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: pool.id,
+            });
+
+            expect(fund.deprecated.toString()).to.equal("2026-01-20");
+            expect(removed_allocations).to.deep.equal([]);
+
+            expect(transfer_group).to.not.equal(null);
+            expect(transfer_group.date.toString()).to.equal("2026-01-20");
+            expect(transfer_group.description).to.equal("Deprecation of savings");
+            expect(transfer_group.note).to.include("deprecated as of 2026-01-20");
+            expect(transfer_group.transactions).to.have.length(1);
+            const t = transfer_group.transactions[0];
+            expect(t.source_fund_id).to.equal(savings.id);
+            expect(t.target_fund_id).to.equal(pool.id);
+            expect(t.amount).to.equal(100);
+            expect(t.description).to.equal("Closing balance of savings");
+
+            expect(fund.calculate_balance_on(db, D("2026-01-20"))).to.equal(0);
+        });
+
+        it("transfers the other way when the balance is negative", () => {
+            transfer(savings, pool, 40, "2026-01-05");
+
+            const { transfer_group } = savings.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: pool.id,
+            });
+
+            const t = transfer_group.transactions[0];
+            expect(t.source_fund_id).to.equal(pool.id);
+            expect(t.target_fund_id).to.equal(savings.id);
+            expect(t.amount).to.equal(40);
+        });
+
+        it("skips the transfer group when the fund is already at zero", () => {
+            const { fund, transfer_group } = savings.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: pool.id,
+            });
+            expect(fund.deprecated.toString()).to.equal("2026-01-20");
+            expect(transfer_group).to.equal(null);
+        });
+
+        it("needs no transfer fund when the fund is already at zero", () => {
+            const { fund, transfer_group } = savings.deprecate(db, { date: D("2026-01-20") });
+            expect(fund.deprecated.toString()).to.equal("2026-01-20");
+            expect(transfer_group).to.equal(null);
+        });
+
+        it("rejects a nonzero balance without a transfer fund", () => {
+            transfer(pool, savings, 100, "2026-01-05");
+            expect(() => savings.deprecate(db, { date: D("2026-01-20") }))
+                .to.throw(ConflictError, "provide transfer_to_fund_id");
+        });
+
+        it("removes allocations after the date", () => {
+            Allocation.set(db, { month: D("2026-02-01"), fund_id: savings.id, amount: 100 });
+            Allocation.set(db, { month: D("2026-03-01"), fund_id: savings.id, amount: 50 });
+            Allocation.set(db, { month: D("2026-02-01"), fund_id: groceries.id, amount: 25 });
+
+            const { fund, removed_allocations } = savings.deprecate(db, { date: D("2026-01-31") });
+
+            expect(fund.deprecated.toString()).to.equal("2026-01-31");
+            expect(removed_allocations.map(a => a.month.toString()).sort())
+                .to.deep.equal([ "2026-02-01", "2026-03-01" ]);
+
+            // Other funds' allocations survive
+            expect(Allocation.for_month(db, D("2026-02-01")).map(a => a.fund_id))
+                .to.deep.equal([ groceries.id ]);
+            expect(Allocation.for_month(db, D("2026-03-01"))).to.deep.equal([]);
+        });
+
+        it("drains an allocation ON the date rather than removing it", () => {
+            Allocation.set(db, { month: D("2026-01-01"), fund_id: savings.id, amount: 100 });
+
+            const { transfer_group, removed_allocations } = savings.deprecate(db, {
+                date: D("2026-01-01"), transfer_to_fund_id: pool.id,
+            });
+
+            expect(removed_allocations).to.deep.equal([]);
+            expect(transfer_group.transactions[0].amount).to.equal(100);
+            expect(Allocation.for_month(db, D("2026-01-01")).map(a => a.fund_id))
+                .to.deep.equal([ savings.id ]);
+        });
+
+        it("rejects an already-deprecated fund", () => {
+            savings.update(db, { deprecated: D("2026-01-20") });
+            expect(() => Fund.for_id(db, savings.id).deprecate(db, { date: D("2026-01-25") }))
+                .to.throw(ConflictError, "already deprecated");
+        });
+
+        it("rejects transferring to itself", () => {
+            transfer(pool, savings, 100, "2026-01-05");
+            expect(() => savings.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: savings.id,
+            })).to.throw(Error, "itself");
+        });
+
+        it("rejects a missing transfer fund", () => {
+            transfer(pool, savings, 100, "2026-01-05");
+            expect(() => savings.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: 9999,
+            })).to.throw(Error, "does not exist");
+        });
+
+        it("rejects a date inside a finalized month", () => {
+            MonthFinalization.create(db, { month: D("2026-01-15") });
+            expect(() => savings.deprecate(db, { date: D("2026-01-20") }))
+                .to.throw(ConflictError, "month that has been finalized");
+        });
+
+        it("rolls the whole operation back when a check fails after mutations", () => {
+            // A future allocation (would be removed) plus a plain transaction
+            // after the date (refuses): the allocation must survive the abort
+            Allocation.set(db, { month: D("2026-02-01"), fund_id: savings.id, amount: 100 });
+            transfer(pool, savings, 10, "2026-03-05");
+            transfer(savings, pool, 10, "2026-03-06");
+
+            expect(() => savings.deprecate(db, {
+                date: D("2026-01-31"), transfer_to_fund_id: pool.id,
+            })).to.throw(ConflictError, "transactions after the deprecation date");
+
+            expect(Fund.for_id(db, savings.id).deprecated).to.equal(null);
+            expect(Allocation.for_month(db, D("2026-02-01")).map(a => a.fund_id))
+                .to.deep.equal([ savings.id ]);
+        });
+
+        it("rolls the drain back when the descendant check fails", () => {
+            const outside = Fund.create(db, {
+                name: "outside", tracked: true,
+                start_date: D("2026-01-01"), start_balance: 0,
+            });
+            const before = Transaction.count(db, {});
+
+            // pool still has active descendants: refused AFTER the drain
+            expect(() => pool.deprecate(db, {
+                date: D("2026-01-20"), transfer_to_fund_id: outside.id,
+            })).to.throw(ConflictError, "before its tracked descendants");
+
+            expect(Transaction.count(db, {})).to.equal(before);
+            expect(Fund.for_id(db, pool.id).deprecated).to.equal(null);
+        });
+    });
 });

@@ -10,16 +10,17 @@ import {
     useGetFundBalanceQuery,
     useGetFundFinalizationsQuery,
     usePatchFundMutation,
+    useDeprecateFundMutation,
     useDeleteFundMutation
 } from '../../hooks/Queries.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { LabeledNumberInput, LabeledTextInput, LabeledDateInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, LabeledFundColorPicker } from '../../components/SpecialInputs.jsx';
-import { Card, CardActionHeader, CardSection, CardAutoGrid, CollapsibleCardSection, CardErrorSection } from '../../components/Card.jsx';
-import { ConfirmationModal } from '../../components/Modal.jsx';
+import { Card, CardActionHeader, CardSection, CardAutoGrid, CardActionFooter, CollapsibleCardSection, CardErrorSection } from '../../components/Card.jsx';
+import { ConfirmationModal, CardModal } from '../../components/Modal.jsx';
 import { BackLink, AnchorLink } from '../../components/Links.jsx';
 import SearchableTable from '../../components/SearchableTable.jsx';
-import { IconButton } from '../../components/Buttons.jsx';
+import { IconButton, SpinnerButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
 import { fundTypeOf, formatDollars, fundIdsContainingMonthly } from '../../components/domain.js';
 import styles from './Fund.module.css';
@@ -65,6 +66,142 @@ function DeleteFund({ fundIdStr }) {
                 confirmText="Delete"
                 confirmButtonClassName={styles.deleteButton}
             />
+        </>
+    );
+}
+
+function DeprecateFund({ fundIdStr, fundDetail }) {
+
+    const [ isModalOpen, setIsModalOpen ] = useState(false);
+    const [ date, setDate ] = useState(null);
+    const [ transferToId, setTransferToId ] = useState(null);
+    const [ submitError, setSubmitError ] = useState(null);
+
+    const reset = () => {
+        setDate(dayjs().format('YYYY-MM-DD'));
+        setTransferToId(null);
+        setSubmitError(null);
+    };
+
+    // The remaining balance ON the chosen date decides whether a close-out
+    // transfer (and its destination fund) is needed at all
+    const {
+        data: balanceData,
+        isPending: balanceIsPending,
+    } = useGetFundBalanceQuery(
+        fundIdStr,
+        { on: date ?? undefined },
+        { enabled: isModalOpen && date != null }
+    );
+    const balance = (date != null && !balanceIsPending) ? balanceData?.balance : null;
+    const needsTransfer = balance != null && balance !== 0;
+
+    const {
+        mutate,
+        isPending: deprecateIsPending
+    } = useDeprecateFundMutation();
+
+    // Client-side mirrors of the server's checks (the server is the real
+    // authority -- these just make the modal self-explanatory)
+    const dataValidity = useMemo(() => ({
+        date: (date == null) ? 'A last active day is required.' : null,
+        transfer_to: (needsTransfer && transferToId == null)
+            ? 'The remaining balance needs a destination fund.' : null,
+    }), [date, needsTransfer, transferToId]);
+
+    const handleSubmit = useCallback(() => {
+        mutate(
+            {
+                formData: {
+                    id: parseInt(fundIdStr),
+                    date,
+                    transfer_to_fund_id: transferToId
+                }
+            },
+            {
+                onSuccess: () => setIsModalOpen(false),
+                onError: (err) => setSubmitError({
+                    message: err.message,
+                    details: err.details?.message
+                })
+            }
+        );
+    }, [mutate, fundIdStr, date, transferToId, setIsModalOpen, setSubmitError]);
+
+    return (
+        <>
+            <IconButton
+                text="Deprecate"
+                icon="fa-box-archive"
+                onClick={() => {
+                    setIsModalOpen(true);
+                    reset();
+                }}
+            />
+            <CardModal
+                title={`Deprecate ${fundDetail?.name ?? 'fund'}`}
+                isOpen={isModalOpen}
+                setIsOpen={setIsModalOpen}
+                size="md"
+            >
+                <p className={styles.deprecateNote}>
+                    Deprecating closes this fund out as of its <strong>last active
+                    day</strong>, in one atomic step:
+                </p>
+                <ul className={styles.deprecateList}>
+                    <li>Any remaining balance on that day is transferred into the destination fund below (dated that day).</li>
+                    <li>Any of this fund's allocations in later months are removed.</li>
+                    <li>The fund is then <strong>frozen</strong>: no transaction of any kind may involve it, and it is hidden from months after the date (and from the funds list by default).</li>
+                </ul>
+                <p className={styles.deprecateNote}>
+                    It requires: every sub-fund already deprecated, no other
+                    transactions after the date, and the date's month not yet
+                    finalized. To undo, clear the fund's Deprecated field.
+                </p>
+
+                <CardSection title="Close out">
+                    <CardAutoGrid>
+                        <LabeledDateInput
+                            label="Last active day"
+                            isFrozen={false}
+                            isRequired={true}
+                            value={date}
+                            onChange={(value) => { setDate(value || null); setSubmitError(null); }}
+                            validityMessage={dataValidity.date}
+                        />
+                        <LabeledTextInput
+                            label="Remaining balance on that day"
+                            value={date == null ? "—"
+                                : balanceIsPending ? "..."
+                                : formatDollars(balance)}
+                            isFrozen={true}
+                        />
+                        <FundSearchableSelector
+                            label="Transfer remainder to"
+                            isFrozen={!needsTransfer}
+                            value={transferToId}
+                            onChange={(value) => { setTransferToId(value); setSubmitError(null); }}
+                            excludeIds={[parseInt(fundIdStr)]}
+                            allowNull={true}
+                            validityMessage={dataValidity.transfer_to}
+                        />
+                    </CardAutoGrid>
+                </CardSection>
+
+                <CardActionFooter>
+                    <SpinnerButton
+                        isPending={deprecateIsPending}
+                        disabled={Object.values(dataValidity).some(v => v != null) || submitError != null}
+                        text="Deprecate"
+                        ariaLabel="Deprecate fund"
+                        onClick={handleSubmit}
+                    />
+                </CardActionFooter>
+
+                { submitError &&
+                    <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
+                }
+            </CardModal>
         </>
     );
 }
@@ -196,6 +333,9 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
             >
                 {!isEditing ? (<>
                     <DeleteFund fundIdStr={fundIdStr} />
+                    { isTracked && fundDetail?.deprecated == null &&
+                        <DeprecateFund fundIdStr={fundIdStr} fundDetail={fundDetail} />
+                    }
                     <IconButton
                         text="Edit"
                         icon="fa-pen-to-square"

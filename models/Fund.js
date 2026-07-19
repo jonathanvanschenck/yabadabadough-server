@@ -229,6 +229,15 @@ module.exports = class Fund extends Base {
             WHERE som_date > @date
             LIMIT 1
         `,
+        // Whether the month containing @date is already finalized -- new
+        // deprecation dates may not land inside finalized history. Inline for
+        // the same circular-require reason
+        month_finalized_containing: `
+            SELECT 1
+            FROM month_finalizations
+            WHERE som_date <= @date AND eom_date >= @date
+            LIMIT 1
+        `,
         // Whether finalization has reached @sonm_date (months finalize
         // contiguously, so one row at-or-past it means everything before is
         // locked in). Inline for the same circular-require reason
@@ -930,6 +939,18 @@ module.exports = class Fund extends Base {
             throw new ConflictError("Months after the fund's deprecation date have been finalized; unfinalize back before changing its deprecation");
         }
 
+        // ...and a NEW deprecation date may not land inside a finalized
+        // month: finalizations must always happen with full knowledge of the
+        // deprecations up to that month (a fund deprecated retroactively
+        // would leave finalized history that treated it as active). Unfinalize
+        // back to the target month first. Only guards CHANGES -- unrelated
+        // updates to an already-deprecated fund (whose month has since been
+        // finalized) still pass
+        if ( deprecated_changed && next.deprecated != null
+            && this.get_stmt(db, "month_finalized_containing").get({ date: ydate2stmt(next.deprecated) }) ) {
+            throw new ConflictError("Cannot deprecate a fund in a month that has been finalized; unfinalize back first");
+        }
+
         // History-affecting changes require the fund to be fully unfinalized
         const history_affected =
             next.tracked !== fund.tracked
@@ -1100,6 +1121,106 @@ module.exports = class Fund extends Base {
             color,
             deprecated,
         });
+    }
+
+    static _deprecate(db, fund, { date, transfer_to_fund_id }) {
+        // Lazy requires: both modules require Fund back (same circular-require
+        // pressure the inline month_finalizations queries avoid)
+        const Allocation = require("./Allocation.js");
+        const TransactionGroup = require("./TransactionGroup.js");
+
+        if ( fund.deprecated != null ) {
+            throw new ConflictError("Fund is already deprecated: " + fund.name);
+        }
+        // Fail fast with honest errors before touching any data (the _update
+        // invariants would catch all of these, but only after work is done)
+        if ( !fund.tracked ) {
+            throw new Error("Cannot deprecate an untracked fund");
+        }
+        if ( ydate2stmt(date) < ydate2stmt(fund.start_date) ) {
+            throw new ConflictError("A fund cannot be deprecated before its start_date");
+        }
+        if ( this.get_stmt(db, "month_finalized_containing").get({ date: ydate2stmt(date) }) ) {
+            throw new ConflictError("Cannot deprecate a fund in a month that has been finalized; unfinalize back first");
+        }
+
+        let transfer_to = null;
+        if ( transfer_to_fund_id != null ) {
+            transfer_to = this.for_id(db, transfer_to_fund_id);
+            if ( !transfer_to ) {
+                throw new ForeignKeyError("Transfer fund does not exist: " + transfer_to_fund_id);
+            }
+            if ( transfer_to.id === fund.id ) {
+                throw new Error("Cannot transfer a fund's remaining balance to itself");
+            }
+        }
+
+        // Allocations after the deprecation date are removed automatically:
+        // they are planning artifacts, not records of money that actually
+        // moved (and by the month-finalized guard above they can only live in
+        // unfinalized months). Any OTHER transaction after the date still
+        // refuses via _update's transactions-after check
+        const removed_allocations = [];
+        for ( const allocation of Allocation.for_fund(db, fund.id, {
+            since: date.offset_days(1),
+            limit: null,
+        }) ) {
+            Allocation._remove(db, { month: allocation.month, fund_id: fund.id });
+            removed_allocations.push(allocation);
+        }
+
+        // Drain whatever is left with a closing transfer ON the last active
+        // day (transactions on the date itself are allowed); _update then
+        // re-verifies the post-drain balance is exactly zero
+        const remaining = currency2stmt(fund.calculate_balance_on(db, date));
+        let transfer_group = null;
+        if ( remaining !== 0 ) {
+            if ( !transfer_to ) {
+                throw new ConflictError("Fund has a nonzero balance on the deprecation date; provide transfer_to_fund_id to receive the remaining balance");
+            }
+            const amount = stmt2currency(Math.abs(remaining));
+            const outgoing = remaining > 0;
+            transfer_group = TransactionGroup.create(db, {
+                date,
+                description: "Deprecation of " + fund.name,
+                note: "Closing transfer of the remaining balance of \"" + fund.name
+                    + "\" " + (outgoing ? "into" : "from") + " \"" + transfer_to.name
+                    + "\", made when the fund was deprecated as of " + ydate2stmt(date) + ".",
+                transactions: [{
+                    source_fund_id: outgoing ? fund.id : transfer_to.id,
+                    target_fund_id: outgoing ? transfer_to.id : fund.id,
+                    amount,
+                    description: "Closing balance of " + fund.name,
+                    note: null,
+                }],
+            });
+        }
+
+        const updated = this._update(db, fund, { deprecated: date });
+        return { fund: updated, transfer_group, removed_allocations };
+    }
+
+    /**
+     * Close out this fund as of `date` (its LAST ACTIVE day), atomically:
+     * remove any of its allocations dated after `date`, transfer its
+     * remaining balance on `date` into `transfer_to_fund_id` (required only
+     * when that balance is nonzero; a negative balance transfers the other
+     * way), then set `deprecated = date` -- which re-runs every deprecation
+     * invariant (no other transactions after the date, tracked descendants
+     * deprecated first, monthly finalized-through rule, ...).
+     *
+     * Returns `{ fund, transfer_group, removed_allocations }`, where
+     * `transfer_group` is the closing TransactionGroup (null when the fund
+     * was already at zero).
+     */
+    deprecate(db, {
+        date,                       // YDate: the fund's last active day
+        transfer_to_fund_id = null, // id of the fund receiving the remainder
+    }={}) {
+        if ( !date ) throw new Error("Missing date");
+        const transaction = this.constructor.build_transaction(
+            db, "deprecate", this.constructor._deprecate.bind(this.constructor));
+        return transaction(db, this, { date, transfer_to_fund_id });
     }
 
     delete(db) {

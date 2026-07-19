@@ -159,4 +159,101 @@ describe("api fund deprecation", () => {
             expect(body.message).to.include("deprecated");
         });
     });
+
+    describe("POST /api/funds/fund/:fund_id/deprecate", () => {
+
+        it("drains the balance, removes future allocations, and deprecates", async () => {
+            TransactionGroup.create_single(h.db, {
+                date: D("2026-01-05"), description: "seed",
+                source_fund_id: pool.id, target_fund_id: savings.id, amount: 250,
+            });
+            const Allocation = require("../../models/Allocation.js");
+            Allocation.set(h.db, { month: D("2026-02-01"), fund_id: savings.id, amount: 100 });
+
+            const { status, body } = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor,
+                body: { date: "2026-01-20", transfer_to_fund_id: pool.id },
+            });
+
+            expect(status).to.equal(200);
+            expect(body.data.fund.deprecated).to.equal("2026-01-20");
+            expect(body.data.removed_allocation_months).to.deep.equal([ "2026-02-01" ]);
+
+            expect(body.data.transfer_group).to.not.equal(null);
+            expect(body.data.transfer_group.date).to.equal("2026-01-20");
+            expect(body.data.transfer_group.description).to.equal("Deprecation of savings");
+            expect(body.data.transfer_group.transactions).to.have.length(1);
+            expect(body.data.transfer_group.transactions[0].amount).to.equal(250);
+            expect(body.data.transfer_group.transactions[0].source_fund_id).to.equal(savings.id);
+            expect(body.data.transfer_group.transactions[0].target_fund_id).to.equal(pool.id);
+
+            for ( const key of [ [ "funds" ], [ "fund", `${savings.id}` ],
+                [ "allocations" ], [ "transactions" ], [ "fund-balance" ] ] ) {
+                expect(body.invalidations).to.deep.include({ type: "invalidate", key });
+            }
+
+            expect(Fund.for_id(h.db, savings.id).deprecated.toString()).to.equal("2026-01-20");
+        });
+
+        it("deprecates a zero-balance fund without a transfer group", async () => {
+            const { status, body } = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor,
+                body: { date: "2026-01-20" },
+            });
+            expect(status).to.equal(200);
+            expect(body.data.fund.deprecated).to.equal("2026-01-20");
+            expect(body.data.transfer_group).to.equal(null);
+            expect(body.data.removed_allocation_months).to.deep.equal([]);
+        });
+
+        it("409s a nonzero balance without a transfer fund", async () => {
+            const { status, body } = await h.request(`/api/funds/fund/${pool.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor,
+                body: { date: "2026-01-20" },
+            });
+            expect(status).to.equal(409);
+            expect(body.message).to.include("transfer_to_fund_id");
+        });
+
+        it("400s a missing or malformed date", async () => {
+            let res = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor, body: {},
+            });
+            expect(res.status).to.equal(400);
+            expect(res.body.message).to.include("date");
+
+            res = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor, body: { date: "not-a-date" },
+            });
+            expect(res.status).to.equal(400);
+        });
+
+        it("400s a bad transfer fund reference", async () => {
+            TransactionGroup.create_single(h.db, {
+                date: D("2026-01-05"), description: "seed",
+                source_fund_id: pool.id, target_fund_id: savings.id, amount: 10,
+            });
+            const { status } = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.editor,
+                body: { date: "2026-01-20", transfer_to_fund_id: 9999 },
+            });
+            expect(status).to.equal(400);
+        });
+
+        it("404s an unknown fund", async () => {
+            const { status } = await h.request("/api/funds/fund/9999/deprecate", {
+                method: "POST", token: h.tokens.editor,
+                body: { date: "2026-01-20" },
+            });
+            expect(status).to.equal(404);
+        });
+
+        it("403s a reader", async () => {
+            const { status } = await h.request(`/api/funds/fund/${savings.id}/deprecate`, {
+                method: "POST", token: h.tokens.reader,
+                body: { date: "2026-01-20" },
+            });
+            expect(status).to.equal(403);
+        });
+    });
 });

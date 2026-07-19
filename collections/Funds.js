@@ -538,6 +538,97 @@ module.exports = class FundsCollection extends Collection {
             ]
         },
 
+        class PostDeprecateFund extends Controller {
+            static path = "/fund/:fund_id/deprecate";
+
+            static method = "POST";
+
+            static editor = true;
+
+            static openapi_Summary = "Deprecate Fund";
+
+            static openapi_Description = "Close out a fund as of `date` (its LAST ACTIVE day), atomically: any of the fund's allocations dated after `date` are removed, its remaining balance on `date` is transferred into `transfer_to_fund_id` via a closing transaction group dated `date` (required only when that balance is nonzero -- a negative balance transfers the other way; omitted or ignored when the fund is already at zero), and the fund's `deprecated` field is set. Every deprecation invariant applies (409 on failure): the date's month must not be finalized, no non-allocation transactions after the date, tracked descendants deprecated first, and monthly funds need every prior month finalized. Once deprecated the fund is frozen -- see PATCH `/fund/:fund_id` for un-deprecation.";
+
+            static openapi_Parameters = [
+                this.FundIDParam
+            ]
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    date: { type: 'string', format: 'date', description: "The fund's last active day" },
+                    transfer_to_fund_id: { type: 'integer', nullable: true, description: "Fund receiving the remaining balance; required when that balance is nonzero" }
+                },
+                required: [ 'date' ]
+            }
+
+            async parse_request(req) {
+                const body = parse_body_fields(req.body, [
+                    [ "date", only_ydate, "YYYY-MM-DD string", { required: true } ],
+                    [ "transfer_to_fund_id", nullable(only_id), "positive integer or null" ],
+                ]);
+
+                return { fund: this.get_fund(req), body };
+            }
+
+            async respond({ fund, body }) {
+                let result;
+                try {
+                    result = fund.deprecate(this.db, {
+                        date: body.date,
+                        transfer_to_fund_id: body.transfer_to_fund_id ?? null,
+                    });
+                } catch (err) {
+                    translate_model_error(err);
+                }
+
+                const invalidation_actions = [
+                    invalidate(QK.funds),
+                    invalidate(QK.fund(fund.id)),
+                    // The closing transfer and/or removed future allocations
+                    invalidate(QK.allocations),
+                    ...money_moved(),
+                ];
+
+                this.broadcast_invalidations(invalidation_actions, { fund_id: fund.id });
+
+                return {
+                    data: {
+                        fund: result.fund.to_api(),
+                        transfer_group: result.transfer_group ? result.transfer_group.to_api() : null,
+                        removed_allocation_months: result.removed_allocations.map(a => a.month.toJSON()),
+                    },
+                    invalidations: invalidation_actions
+                };
+            }
+
+            static openapi_ResponseSchema = data_invalidations_response({
+                type: 'object',
+                properties: {
+                    fund: { "$ref": '#/components/schemas/FundSchema' },
+                    transfer_group: {
+                        oneOf: [
+                            { "$ref": '#/components/schemas/TransactionGroupSchema' },
+                            { "$ref": '#/components/schemas/NullSchema' }
+                        ],
+                        description: "The closing transfer group, or null when the fund was already at zero"
+                    },
+                    removed_allocation_months: {
+                        type: 'array',
+                        items: { type: 'string', format: 'date' },
+                        description: "First-of-month dates whose allocations for this fund were removed"
+                    }
+                },
+                required: [ 'fund', 'transfer_group', 'removed_allocation_months' ]
+            });
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                { code: 404, description: "Not found", schema: { "$ref": '#/components/schemas/NotFoundResponseSchema' } },
+                { code: 409, description: "Conflict", schema: { "$ref": '#/components/schemas/ConflictResponseSchema' } }
+            ]
+        },
+
         class DeleteFund extends Controller {
             static path = "/fund/:fund_id";
 

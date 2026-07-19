@@ -972,6 +972,33 @@ export function usePatchFundMutation() {
 }
 
 /**
+ * Deprecate a Fund atomically: remove its allocations dated after `date`,
+ * transfer its remaining balance on `date` into `transfer_to_fund_id`
+ * (required only when that balance is nonzero), then set `deprecated`.
+ * Responds `{ fund, transfer_group, removed_allocation_months }`.
+ *
+ * @typedef {object} DeprecateFundMutationData
+ * @property {object} formData - The payload (snake_case, matching the API)
+ * @property {number} formData.id - The fund ID
+ * @property {string} formData.date - YYYY-MM-DD; the fund's last active day
+ * @property {number|null} [formData.transfer_to_fund_id] - Fund receiving the remaining balance
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult}
+ */
+export function useDeprecateFundMutation() {
+    const fetch = useAuthedFetchJSON();
+    const roles = useAuthRoles();
+    return useInvalidatingMutation(async ({ formData }) => {
+        if ( !roles.editor ) throwLocal403EditorError();
+        const { id, ...body } = formData;
+        return await fetch("/api/funds/fund/" + encodeURIComponent(id) + "/deprecate", {
+            method: 'POST',
+            body
+        });
+    });
+}
+
+/**
  * Delete a Fund (409 while any finalizations exist for it)
  *
  * @typedef {object} DeleteFundMutationData

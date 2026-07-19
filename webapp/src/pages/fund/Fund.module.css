@@ -72,6 +72,21 @@
     margin: 0 0 1rem 0;
 }
 
+.deprecateNote {
+    color: var(--font-primary-color);
+    margin: 0 0 0.5rem 0;
+}
+
+.deprecateList {
+    margin: 0 0 1rem 0;
+    padding-left: 1.5rem;
+    color: var(--font-primary-color);
+}
+
+.deprecateList li {
+    margin-bottom: 0.25rem;
+}
+
 .subFundsTable {
     max-height: 50vh; /* Set limit so that the table will start overflowing */
     min-height: 20rem; /* Ensure it doesn't shrink too much -- important when the query returns no results */
