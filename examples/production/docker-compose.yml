@@ -1,0 +1,99 @@
+# Production stack: app + nginx TLS terminator + Let's Encrypt renewal.
+#
+#   cp .env.example .env      # edit DOMAIN / LETSENCRYPT_EMAIL
+#   ./init-letsencrypt.sh     # one-time: issue the first certificate
+#   docker compose up -d
+#
+# Only nginx publishes ports. The app is reachable solely over the internal
+# compose network, so it never sees a plaintext request from the internet and
+# never needs its own TLS config.
+
+services:
+  server:
+    # Build from the repo root (two levels up). For a registry-based deploy,
+    # replace this whole block with `image: your-registry/yabadabadough:1.0.0`.
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: yabadabadough:latest
+    restart: unless-stopped
+    expose:
+      - "8383"
+    environment:
+      # Relative to /app -- see the note in the Dockerfile about how
+      # lib/db.js resolves this path.
+      YDD_SQLITE_PATH: data/db.sqlite
+      YDD_JWT_KEYS_DIR: /app/keys
+      YDD_SERVER_ADDRESS: "0.0.0.0"
+      YDD_SERVER_PORT: "8383"
+      # nginx terminates TLS, so the browser's connection IS https and the
+      # Secure cookie flag is correct. Keep this true in production.
+      YDD_SECURE_COOKIES: "true"
+      YDD_LOG_LEVEL: info
+      YDD_LOG_COLORIZED: "false"
+      # Used only for the startup log line announcing the public URL.
+      YDD_PROXY_ADDRESS: ${DOMAIN}
+      YDD_PROXY_PORT: "443"
+      YDD_PROXY_PROTOCOL: https
+    volumes:
+      # The database. This is the whole application state -- back it up.
+      - ydd-data:/app/data
+      # JWT signing keys. Losing these logs everybody out (and is otherwise
+      # harmless); leaking them lets an attacker mint tokens. Back up
+      # separately, with tighter access than the database.
+      - ydd-keys:/app/keys
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8383/api/auth/mode').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      # Templates in this directory are rendered with envsubst at container
+      # start (an nginx:alpine feature), so ${DOMAIN} comes from the env above
+      # and the config is not duplicated per deployment.
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    # Two jobs: render the templates, then reload every 6h so certificates the
+    # certbot service renewed are picked up without a restart.
+    #
+    # The envsubst call is explicit and must stay that way: the nginx image's
+    # entrypoint only runs its /docker-entrypoint.d/ init scripts when the
+    # command starts with `nginx`. Overriding the command (as we do here for
+    # the reload loop) silently skips templating, and nginx then serves its
+    # stock default.conf -- a 404 for every request, with no error anywhere.
+    command: >-
+      /bin/sh -c "/docker-entrypoint.d/20-envsubst-on-templates.sh &&
+                  { while :; do sleep 6h; nginx -s reload; done & }
+                  exec nginx -g 'daemon off;'"
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    # Attempt renewal twice a day, as Let's Encrypt recommends; a no-op until
+    # the certificate is within 30 days of expiry.
+    entrypoint: >-
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot;
+                  sleep 12h & wait $${!}; done"
+
+volumes:
+  ydd-data:
+  ydd-keys:
+  certbot-conf:
+  certbot-webroot:

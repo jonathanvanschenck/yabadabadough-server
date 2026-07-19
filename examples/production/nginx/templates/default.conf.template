@@ -1,0 +1,65 @@
+# Rendered by nginx:alpine at container start: every ${VAR} below is
+# substituted from the container environment (DOMAIN, set in docker-compose.yml)
+# and the result is written to /etc/nginx/conf.d/default.conf.
+
+# --- http: ACME challenges only, everything else redirected -------------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # Must stay on plain http and must NOT be redirected -- this is how certbot
+    # proves domain control, at issuance and at every renewal.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# --- https: the application ---------------------------------------------------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    include /etc/nginx/snippets/ssl.conf;
+
+    # This is a personal-finance app: tell browsers never to try http again.
+    # Note the commitment -- browsers honour this for a year and you cannot
+    # retract it early. Drop the line if you are still testing the domain.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    # Bank-statement imports post batches of rows; the default 1m is tight.
+    client_max_body_size 10m;
+
+    # socket.io is the read-only cache-invalidation transport. It needs the
+    # Upgrade dance and a long read timeout, so it gets its own location block
+    # ahead of the catch-all.
+    location /socket.io/ {
+        proxy_pass http://server:8383;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_read_timeout 7d;
+        proxy_send_timeout 7d;
+    }
+
+    # Everything else: the JSON API, /api-docs, and the static webapp (the
+    # server serves webapp/dist itself and falls back to index.html for
+    # client-side routes).
+    location / {
+        proxy_pass http://server:8383;
+        proxy_http_version 1.1;
+        include /etc/nginx/snippets/proxy.conf;
+    }
+}

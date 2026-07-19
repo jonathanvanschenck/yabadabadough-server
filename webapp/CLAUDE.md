@@ -21,6 +21,23 @@ by string name like `icon="fa-trash"`). ESLint flat config: unused vars are erro
   (one shared version). `<VersionGate>` polls `GET /api/utils/versions` and replaces the
   app with a full-screen reload prompt on mismatch.
 - Static files in `public/` use dashes, not underscores, in filenames.
+- **The build reaches UP out of `webapp/`.** Three shims in `src/hooks/` import the server's
+  ESM registries by relative path, and `vite.config.js` imports the server `package.json`:
+
+  | Importer | Reaches |
+  | --- | --- |
+  | `src/hooks/fundColors.js` | `../../../lib/fund_colors.mjs` |
+  | `src/hooks/provisional.js` | `../../../lib/provisional.mjs` |
+  | `src/hooks/queryKeys.js` | `../../../collections/lib/query_keys.mjs` |
+  | `vite.config.js` | `../package.json` (for `__APP_VERSION__`) |
+
+  That is deliberate — it is what makes drift between the keys the server invalidates and
+  the keys the webapp caches under impossible. But it means `webapp/` is NOT a
+  self-contained build: anything that builds it in isolation (a Docker stage, CI that
+  checks out a subdirectory, a copied-out frontend) must stage `package.json`, `lib/`, and
+  `collections/lib/` alongside it or rollup fails with `Could not resolve`. The
+  `Dockerfile`'s `webapp` stage copies exactly those and has a comment pointing back here;
+  keep the two in sync when adding a new shim.
 
 ## Browser debugging (Chrome DevTools MCP)
 

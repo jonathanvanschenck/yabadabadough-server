@@ -150,7 +150,13 @@ all follow the same shape:
   inline key literals. The registry is deliberately ESM (.mjs) and runtime-agnostic (no node
   builtins): the CJS server `require()`s it (Node ≥ 22.12 require(esm)) and the webapp imports
   the SAME file (via its `src/hooks/queryKeys.js` shim), so the keys the webapp caches under
-  and the keys the server invalidates can never drift.
+  and the keys the server invalidates can never drift. BUILD CONSEQUENCE of that sharing (it
+  applies to all three shared registries — `collections/lib/query_keys.mjs`,
+  `lib/fund_colors.mjs`, `lib/provisional.mjs`): the webapp build reaches OUT of `webapp/`
+  by relative path, so `webapp/` is not independently buildable. Anything building it in
+  isolation must stage `package.json` (vite reads it for `__APP_VERSION__`), `lib/`, and
+  `collections/lib/` beside it — see the `webapp` stage in the `Dockerfile` and the table in
+  `webapp/CLAUDE.md`.
   Invalidations cross collections constantly (allocation writes touch
   transaction/balance keys; finalizations touch nearly everything). Key conventions: plural
   list keys (`["funds"]`), singular + STRINGIFIED id singles (`["fund", "3"]`), computed

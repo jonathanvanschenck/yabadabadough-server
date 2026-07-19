@@ -1,0 +1,31 @@
+# Never bake secrets or local state into an image
+.env
+keys/
+db/backup/
+db/backup*/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Dependencies and build output are produced inside the build
+node_modules/
+webapp/node_modules/
+webapp/dist/
+
+# Repo / editor / agent cruft
+.git/
+.gitignore
+.github/
+.claude/
+.mcp.json
+.mocharc.yaml
+test/
+notes.md
+*.csv
+*.log
+
+# Docker's own files
+Dockerfile
+.dockerignore
+docker-compose*.yml
+examples/

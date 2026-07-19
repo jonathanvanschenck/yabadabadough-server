@@ -1,0 +1,61 @@
+# Development stack.
+#
+#   docker compose up --build
+#   -> http://localhost:8383
+#
+# This is the DEV compose file: it bind-mounts the source tree so edits on the
+# host are live in the container, serves over plain http, and keeps state in
+# ./db/backup and ./keys where a non-container `node index.js` also looks.
+#
+# For a real deployment use examples/production/ instead (nginx + TLS, no
+# source mounts, named volumes).
+
+services:
+  server:
+    build:
+      context: .
+      # The webapp stage is still built here; `npm run build:dev:watch` on the
+      # host overwrites webapp/dist through the bind mount below when you want
+      # the fast frontend loop.
+      target: runtime
+    image: yabadabadough:dev
+    # uid 1000 matches the `node` user in the image AND, typically, your host
+    # user -- so files the container writes into the bind mounts stay editable.
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:8383:8383"
+    environment:
+      YDD_SQLITE_PATH: db/backup/db.sqlite
+      YDD_JWT_KEYS_DIR: /app/keys
+      YDD_SERVER_ADDRESS: "0.0.0.0"
+      YDD_SERVER_PORT: "8383"
+      # Plain http in dev, so cookies must NOT carry the Secure flag or the
+      # browser will drop them and login will appear to silently fail.
+      YDD_SECURE_COOKIES: "false"
+      YDD_LOG_LEVEL: debug
+      YDD_LOG_COLORIZED: "true"
+      # Asseverate dev mode: verbose route errors.
+      ASSEVERATE_DEV: "true"
+      # Uncomment to skip the whole login workflow while debugging the webapp.
+      # YDD_DISABLE_AUTH: "true"
+    volumes:
+      # Source, live-mounted. index.js is not watched -- restart the container
+      # (`docker compose restart server`) after backend edits.
+      - ./index.js:/app/index.js:ro
+      - ./env.js:/app/env.js:ro
+      - ./lib:/app/lib:ro
+      - ./models:/app/models:ro
+      - ./collections:/app/collections:ro
+      - ./scripts:/app/scripts:ro
+      - ./db/migrations:/app/db/migrations:ro
+      # Built frontend. COMMENTED OUT by default so a fresh clone boots with
+      # the dist the image built. Uncomment for the frontend dev loop -- but
+      # run `cd webapp && npm run build:dev:watch` FIRST: if ./webapp/dist does
+      # not exist, Docker creates it empty (and root-owned) and every page
+      # serves a 404 instead of the app.
+      # - ./webapp/dist:/app/webapp/dist:ro
+      # Persistent state, on the host so it survives `down -v` and is readable
+      # by host-side tooling (sqlite3, backups).
+      - ./db/backup:/app/db/backup
+      - ./keys:/app/keys
+    restart: unless-stopped
