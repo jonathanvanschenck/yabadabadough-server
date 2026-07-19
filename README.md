@@ -1,4 +1,21 @@
+<div align="center">
+
+<img src="webapp/public/svg/logo-badge.svg" alt="Yabadaba Dough" width="120" height="120">
+
 # Yabadaba Dough
+
+**Self-hosted personal finance, envelope budgeting generalized —<br>your funds, your ledger, your SQLite file.**
+
+[![Node](https://img.shields.io/badge/Node-22.12%2B-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![React](https://img.shields.io/badge/React-frontend-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+![License](https://img.shields.io/badge/License-ISC-blue)
+
+[The ideas](#the-ideas) &nbsp;·&nbsp; [Running it](#running-it) &nbsp;·&nbsp; [Deploying](#deploying) &nbsp;·&nbsp; [API reference](#the-api)
+
+</div>
+
+---
 
 A self-hosted personal finance server: a hierarchy of **funds**, a ledger of
 **transactions** that move money between them, monthly **allocations** that
@@ -9,9 +26,8 @@ Node.js + SQLite on the backend, React on the frontend, both served from one
 process. There is no cloud service, no third-party bank aggregator, and no
 telemetry — you run it, and the SQLite file is yours.
 
-- **Quick start:** [Running it](#running-it)
-- **Deploying for real:** [`examples/production/`](examples/production/)
-- **API reference:** Swagger UI at `/api-docs`, raw spec at `/api-docs.json`
+<a name="the-api"></a>The API is documented as you run it: Swagger UI at
+`/api-docs`, the raw OpenAPI spec at `/api-docs.json`.
 
 ---
 
