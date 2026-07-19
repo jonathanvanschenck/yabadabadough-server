@@ -22,8 +22,15 @@ The React webapp lives in `webapp/` and has its own conventions file at `webapp/
 - Fresh schema applied automatically to new databases via `db/migrations/_schema.sql`
 
 ### Scripts
-- Create a user (bootstrap; day-to-day user management lives in the API/webapp): `node scripts/create-user.js <email> <password> [--admin] [--editor]`
-- Reset a password: `node scripts/create-user.js <email> <new-password> --set-password`
+- Create a user (headless/recovery bootstrap — the normal first-run path is the webapp's
+  setup form, and day-to-day user management lives in the API/webapp):
+  `node scripts/create-user.js <email> [password] [--admin] [--editor]`
+- Reset a password: `node scripts/create-user.js <email> [new-password] --set-password`
+- Omitting the password PROMPTS for it twice on the TTY with the echo suppressed (keeping it
+  out of shell history and the process table). Implemented by reading raw-mode stdin
+  directly, NOT via readline: readline only masks input through a private API, and closing a
+  terminal interface pauses stdin so the second prompt of a password/confirm pair would hang
+  forever. Non-TTY stdin is a hard error rather than a silent read of the pipe
 - Generate/rotate a JWT signing key pair: `node scripts/generate-jwt-key.js [dir]`
 
 ## Architecture
@@ -77,9 +84,22 @@ Express app built from asseverate Collections/Controllers (local wrappers in
   (exchanges a plaintext API key for a ~20m SESSIONLESS access token — `sid: null`, roles =
   owner's effective roles ∩ the key's flags, `admin` always false; no cookies, programmatic
   clients just re-exchange on expiry), the
-  `check`/`check-admin`/`check-editor`/`check-reader` role probes, and `mode` (GET,
-  unauthenticated: reports `{ disable_auth }` so the webapp can skip the login workflow
-  entirely when the server runs with `YDD_DISABLE_AUTH`)
+  `check`/`check-admin`/`check-editor`/`check-reader` role probes, `mode` (GET,
+  unauthenticated: reports `{ disable_auth, setup_required }` so the webapp can skip the login
+  workflow entirely when the server runs with `YDD_DISABLE_AUTH`, and can offer first-run
+  setup when the db holds no users), and `setup` (next bullet)
+- **First-run setup** (`POST /api/auth/setup`, unauthenticated): creates the very first user —
+  always an admin — on a database with none, and logs them straight in (same
+  `{ user, session, tokens }` response and cookies as `login`). This is what makes install
+  "start the container, open a browser": no CLI step. It is safe only because it is
+  SELF-CLOSING, and that hinges on `User.create_first_admin` putting the emptiness check and
+  the insert in ONE sqlite transaction — a check-then-create at the API layer would let
+  requests racing against a fresh db each create an admin. Every call after the first is a 409
+  whatever the credentials. Deliberately broadcasts no invalidations (no user existed yet to
+  hold a socket). Webapp: `SetupModal` in `contexts/AuthContext.jsx` stands in for
+  `LoginModal` on the `setup_required` auth state, which the mount-time `/mode` check
+  dispatches (and which skips `/authenticate` — with no users, no cookie could authenticate
+  as anyone)
 - Cookies: `access_token` (maxAge = 20m TTL, rides on every request) and `auth_token`
   (path-scoped to `/api/auth`, expires with the session); both httpOnly + SameSite Strict;
   `Secure` from `secure_cookies` (`YDD_SECURE_COOKIES`, default true — set false for plain-http
@@ -544,7 +564,11 @@ allocations.
   `User.from_token_payload(payload)` is the db-free inverse for access payloads (unsaved
   instance, `admin` may be ~20m stale — use `for_id` when freshness matters). NOTHING may assume
   `sid` is non-null: API-key-minted access tokens have no session behind them
-- Bootstrap via `scripts/create-user.js` (also the forgotten-password recovery path)
+- `User.create_first_admin(db, { email, password })` is the one-shot bootstrap behind
+  `POST /api/auth/setup`: admin, and ONLY on an empty users table, with the count check and
+  the insert inside a single transaction (`ConflictError` once any user exists). Atomicity is
+  the point — see the Auth section
+- Bootstrap otherwise via `scripts/create-user.js` (also the forgotten-password recovery path)
 
 **Sessions** (`user_sessions` table, `models/Session.js`):
 - A session row IS the right to refresh: refreshable iff the row exists and `expires_at` is in

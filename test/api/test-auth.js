@@ -80,7 +80,7 @@ describe("Auth API", () => {
         it("reports disable_auth false without any credentials", async () => {
             const { res, body } = await get("/api/auth/mode");
             expect(res.status).to.equal(200);
-            expect(body).to.deep.equal({ disable_auth: false });
+            expect(body).to.deep.equal({ disable_auth: false, setup_required: false });
         });
 
         it("reports disable_auth true when the server disables auth", async () => {
@@ -92,10 +92,116 @@ describe("Auth API", () => {
             try {
                 const res = await fetch(`http://127.0.0.1:${ws2.server.address().port}/api/auth/mode`);
                 expect(res.status).to.equal(200);
-                expect(await res.json()).to.deep.equal({ disable_auth: true });
+                expect(await res.json()).to.deep.equal({ disable_auth: true, setup_required: false });
             } finally {
                 await ws2.stop();
             }
+        });
+    });
+
+    // The first-run path needs a database with NO users, so it stands up its
+    // own server rather than using the outer harness (which seeds alice/bob)
+    describe("POST /api/auth/setup", () => {
+        let empty_db, empty_ws, empty_base;
+
+        beforeEach(async () => {
+            empty_db = create_connection({ path: ":memory:" });
+            initialize_db(empty_db);
+            empty_ws = new Webserver(CONFIG, { db: empty_db, token_manager: tm });
+            await empty_ws.start();
+            empty_base = `http://127.0.0.1:${empty_ws.server.address().port}`;
+        });
+
+        afterEach(async () => {
+            await empty_ws.stop();
+            empty_db.close();
+        });
+
+        async function setup(body) {
+            const res = await fetch(empty_base + "/api/auth/setup", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            return { res, body: await res.json() };
+        }
+
+        it("reports setup_required until the first user exists", async () => {
+            const before = await fetch(empty_base + "/api/auth/mode");
+            expect(await before.json()).to.deep.equal({ disable_auth: false, setup_required: true });
+
+            await setup({ email: "root@example.com", password: "hunter22hunter22" });
+
+            const after = await fetch(empty_base + "/api/auth/mode");
+            expect(await after.json()).to.deep.equal({ disable_auth: false, setup_required: false });
+        });
+
+        it("creates an admin and logs them straight in", async () => {
+            const { res, body } = await setup({ email: "Root@Example.com ", password: "hunter22hunter22" });
+
+            expect(res.status).to.equal(200);
+            // Email normalized exactly as everywhere else
+            expect(body.user.email).to.equal("root@example.com");
+            expect(body.user.roles).to.deep.equal({ admin: true, reader: true, editor: true });
+            expect(body.session.id).to.be.a("number");
+            expect(body.tokens.access).to.be.a("string");
+            expect(body.tokens.auth).to.be.a("string");
+
+            // The returned access token really works, admin included
+            const payload = tm.verify(body.tokens.access);
+            expect(payload.typ).to.equal("access");
+            expect(payload.admin).to.equal(true);
+
+            const check = await fetch(empty_base + "/api/auth/check-admin", {
+                headers: { authorization: `Bearer ${body.tokens.access}`, "x-sudo-mode": "true" }
+            });
+            expect(check.status).to.equal(200);
+        });
+
+        it("sets the access and auth cookies, like login", async () => {
+            const { res } = await setup({ email: "root@example.com", password: "hunter22hunter22" });
+            const cookies = res.headers.getSetCookie();
+            expect(cookies.some(c => c.startsWith("access_token="))).to.equal(true);
+            expect(cookies.some(c => c.startsWith("auth_token="))).to.equal(true);
+        });
+
+        it("closes permanently after the first success", async () => {
+            expect((await setup({ email: "root@example.com", password: "hunter22hunter22" })).res.status).to.equal(200);
+
+            const { res, body } = await setup({ email: "second@example.com", password: "hunter22hunter22" });
+            expect(res.status).to.equal(409);
+            expect(body.message).to.match(/already been completed/i);
+
+            // And nothing was created
+            expect(User.count(empty_db)).to.equal(1);
+        });
+
+        it("is closed on a database that already has users", async () => {
+            // The OUTER server, whose db holds alice and bob
+            const { res } = await post("/api/auth/setup", { email: "root@example.com", password: "hunter22hunter22" });
+            expect(res.status).to.equal(409);
+        });
+
+        it("refuses a short password or a bad email", async () => {
+            expect((await setup({ email: "root@example.com", password: "short" })).res.status).to.equal(400);
+            expect((await setup({ email: "not-an-email", password: "hunter22hunter22" })).res.status).to.equal(400);
+            expect((await setup({ password: "hunter22hunter22" })).res.status).to.equal(400);
+            expect((await setup({ email: "root@example.com" })).res.status).to.equal(400);
+
+            // Every one of those left the route open
+            expect(User.count(empty_db)).to.equal(0);
+        });
+
+        it("survives concurrent requests -- exactly one wins", async () => {
+            const results = await Promise.all([
+                setup({ email: "a@example.com", password: "hunter22hunter22" }),
+                setup({ email: "b@example.com", password: "hunter22hunter22" }),
+                setup({ email: "c@example.com", password: "hunter22hunter22" }),
+            ]);
+
+            expect(results.filter(r => r.res.status === 200)).to.have.lengthOf(1);
+            expect(results.filter(r => r.res.status === 409)).to.have.lengthOf(2);
+            expect(User.count(empty_db)).to.equal(1);
         });
     });
 

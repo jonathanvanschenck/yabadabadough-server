@@ -173,6 +173,7 @@ const InitialAuthState = {
     neverQueried: true,
     isAuthed: false,
     disableAuth: false,
+    setupRequired: false,
     identifier: null,
     userId: null,
     sessionId: null,
@@ -188,6 +189,7 @@ const Unauthed = {
     neverQueried: false,
     isAuthed: false,
     disableAuth: false,
+    setupRequired: false,
     identifier: null,
     userId: null,
     sessionId: null,
@@ -266,6 +268,7 @@ function authReducer(auth, { action, authRef, log }) {
                 neverQueried: false,
                 isAuthed: true,
                 disableAuth: false,
+                setupRequired: false,
                 identifier: action.identifier,
                 userId: action.userId,
                 sessionId: action.sessionId ?? null,
@@ -291,6 +294,7 @@ function authReducer(auth, { action, authRef, log }) {
                 neverQueried: false,
                 isAuthed: true,
                 disableAuth: true,
+                setupRequired: false,
                 identifier: "auth-disabled",
                 userId: null,
                 sessionId: null,
@@ -305,14 +309,24 @@ function authReducer(auth, { action, authRef, log }) {
             authRef.current = newAuth;
             return newAuth;
         }
+        case "setup_required": {
+            // Nobody has an account yet (fresh database): show the first-run
+            // setup form instead of a login form nothing could satisfy. Still
+            // unauthed in every other respect -- SetupModal swaps in for
+            // LoginModal and dispatches a normal "login" once it succeeds.
+            const newAuth = { ...Unauthed, setupRequired: true };
+            authRef.current = newAuth;
+            return newAuth;
+        }
         case "logout":
         case "expired":
         case "first_login_failed":
         case "refresh_failed": {
             // Return current auth if already matches Unauthed state
             if (auth.neverQueried === Unauthed.neverQueried &&
-                auth.isAuthed === Unauthed.isAuthed && 
-                auth.identifier === Unauthed.identifier && 
+                auth.isAuthed === Unauthed.isAuthed &&
+                auth.setupRequired === Unauthed.setupRequired &&
+                auth.identifier === Unauthed.identifier &&
                 auth.expiration === Unauthed.expiration ) {
                 return auth;
             }
@@ -630,13 +644,24 @@ export function AuthContextProvider({ children }) {
                 const modeResp = await fetch("/api/auth/mode");
                 if ( ignore ) return;
                 if ( modeResp.ok ) {
-                    const { disable_auth } = await modeResp.json();
+                    const { disable_auth, setup_required } = await modeResp.json();
                     if ( ignore ) return;
                     if ( disable_auth ) {
                         return delayedDispatch({
                             type: "auth_disabled",
                             msg: "Server reports auth is disabled; skipping the login workflow",
                             msgLevel: "warn"
+                        });
+                    }
+                    // Fresh database, no accounts: go straight to the
+                    // first-run setup form. Skipping /authenticate is the
+                    // point -- with no users there is nothing any cookie we
+                    // might still hold could authenticate as.
+                    if ( setup_required ) {
+                        return delayedDispatch({
+                            type: "setup_required",
+                            msg: "Server reports no users exist; offering first-run setup",
+                            msgLevel: "info"
                         });
                     }
                 }
@@ -762,7 +787,9 @@ export function AuthContextProvider({ children }) {
                         { auth.neverQueried
                             ? <LoadingPlaceholder description="Verifying user" animateDelay={MIN_DISPLAY_TIME}/>
                             : !auth.isAuthed
-                                ? <LoginModal ref={ dialogRef } dispatchAuthUpdate={dispatch} /> 
+                                ? auth.setupRequired
+                                    ? <SetupModal ref={ dialogRef } dispatchAuthUpdate={dispatch} />
+                                    : <LoginModal ref={ dialogRef } dispatchAuthUpdate={dispatch} />
                                 : !isReader
                                     ? <NotReaderFallback logout={logoutCallback} auth={auth}/>
                                     : children
@@ -866,6 +893,108 @@ function LoginModal({ ref, dispatchAuthUpdate }) {
                             </button>
                         </div>
                         { errorMsg && 
+                            <div>
+                                <p className={ styles.loginErrorMsg }>{ errorMsg }</p>
+                            </div>
+                        }
+                    </form>
+                </div>
+            </div>
+        </dialog>
+    );
+}
+
+/**
+ * First-run bootstrap, shown instead of LoginModal when GET /api/auth/mode
+ * reports setup_required (a database with no accounts at all). Creates the
+ * initial admin via POST /api/auth/setup, which logs them straight in -- the
+ * response is shaped exactly like /login's, so success dispatches an ordinary
+ * "login" and the app carries on as if they had just signed in.
+ *
+ * Deliberately reuses the login modal's styles: it stands in the same place
+ * in the same flow, and should not read as a different application.
+ */
+function SetupModal({ ref, dispatchAuthUpdate }) {
+
+    const [ email, setEmail ] = useState("");
+    const [ password, setPassword ] = useState("");
+    const [ confirm, setConfirm ] = useState("");
+    const [ isPending, setIsPending ] = useState(false);
+    const [ errorMsg, setErrorMsg ] = useState(null);
+
+    async function onSetupAttempt(e) {
+        e.preventDefault();
+
+        if ( isPending ) return;
+
+        // Checked here purely for a fast, specific message; the server
+        // enforces both independently
+        if ( password !== confirm ) return setErrorMsg("Passwords do not match");
+        if ( password.length < 8 ) return setErrorMsg("Password must be at least 8 characters");
+
+        setIsPending(true);
+        setErrorMsg(null);
+
+        try {
+            const resp = await fetch("/api/auth/setup", {
+                body: JSON.stringify({ email, password }),
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                method: "POST"
+            });
+
+            if ( resp.ok ) {
+                const data = await resp.json();
+                return dispatchAuthUpdate({
+                    type: "login",
+                    ...extractAuthFields(data),
+                    msg: "Initial admin account created; logged in"
+                });
+            }
+
+            const { message } = await resp.json();
+            // A 409 means someone else completed setup between our /mode
+            // check and this submit -- the form can never succeed now, so
+            // say so rather than inviting a retry
+            setErrorMsg(resp.status === 409
+                ? "Setup has already been completed. Reload the page to sign in."
+                : message);
+        } finally {
+            setIsPending(false);
+        }
+    };
+
+    return (
+        <dialog ref={ ref } className={styles.loginModal}>
+            <div className={styles.loginContainer}>
+                <div className={styles.iconContainer}>
+                    <img src={ logoBadge }/>
+                </div>
+                <div className={styles.spacer}></div>
+                <div className={ styles.formContainer }>
+                    <form className={ styles.loginForm } onSubmit={ onSetupAttempt }>
+                        <h3>Welcome to Yabadaba Dough</h3>
+                        <p>This server has no accounts yet. Create the first one &mdash; it will be an administrator.</p>
+                        <div className={styles.row }>
+                            <label htmlFor="setup-email-input">Email:</label>
+                            <input type="email" name="email" autoComplete="username" id="setup-email-input" placeholder="Email" onChange={ (e) => setEmail(e.target.value) } value={ email } required/>
+                        </div>
+                        <div className={ styles.row }>
+                            <label htmlFor="setup-password-input">Password:</label>
+                            <input type="password" name="password" autoComplete="new-password" id="setup-password-input" placeholder="At least 8 characters" minLength={8} onChange={ (e) => setPassword(e.target.value) } value={ password } required/>
+                        </div>
+                        <div className={ styles.row }>
+                            <label htmlFor="setup-confirm-input">Confirm:</label>
+                            <input type="password" name="confirm" autoComplete="new-password" id="setup-confirm-input" placeholder="Repeat password" onChange={ (e) => setConfirm(e.target.value) } value={ confirm } required/>
+                        </div>
+                        <div>
+                            <button className={styles.loginButton + " flex-center"} disabled={ isPending }>
+                                <span>Create Account</span>
+                                { isPending && <Spinner marginLeft="0.5rem"/> }
+                            </button>
+                        </div>
+                        { errorMsg &&
                             <div>
                                 <p className={ styles.loginErrorMsg }>{ errorMsg }</p>
                             </div>

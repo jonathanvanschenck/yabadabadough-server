@@ -116,6 +116,66 @@ describe("User Model", () => {
         });
     });
 
+    describe("create_first_admin()", () => {
+        it("should create an admin on an empty table", async () => {
+            const user = await User.create_first_admin(db, {
+                email: "  Root@Example.com ",
+                password: "hunter22hunter22"
+            });
+
+            expect(user.email).to.equal("root@example.com");
+            expect(user.admin).to.equal(true);
+            // Stored flags are what was explicitly granted; admin implies
+            // the rest effectively
+            expect(user.reader).to.equal(true);
+            expect(user.editor).to.equal(false);
+            expect(user.roles).to.deep.equal({ admin: true, reader: true, editor: true });
+        });
+
+        it("should set a password that actually verifies", async () => {
+            await User.create_first_admin(db, { email: "root@example.com", password: "hunter22hunter22" });
+            expect(await User.authenticate(db, { email: "root@example.com", password: "hunter22hunter22" })).to.not.equal(null);
+            expect(await User.authenticate(db, { email: "root@example.com", password: "wrong-password" })).to.equal(null);
+        });
+
+        it("should refuse once ANY user exists, whoever they are", async () => {
+            // A plain non-admin reader is still enough to close the route
+            await User.create(db, { email: "bob@example.com", password: "hunter22hunter22" });
+
+            const err = await rejects(User.create_first_admin(db, {
+                email: "root@example.com",
+                password: "hunter22hunter22"
+            }));
+            expect(err).to.be.instanceOf(ConflictError);
+            expect(err.message).to.include("already been completed");
+            expect(User.count(db)).to.equal(1);
+        });
+
+        it("should validate email and password like create()", async () => {
+            expect((await rejects(User.create_first_admin(db, { email: "nope", password: "hunter22hunter22" }))).message)
+                .to.include("Invalid email");
+            expect((await rejects(User.create_first_admin(db, { email: "root@example.com", password: "short12" }))).message)
+                .to.include("at least 8 characters");
+
+            // Neither failure consumed the one-shot
+            expect(User.count(db)).to.equal(0);
+        });
+
+        it("should be atomic: only one of many concurrent calls wins", async () => {
+            // The check and the insert share one transaction, so racing
+            // callers cannot both pass a check-then-create
+            const results = await Promise.allSettled([
+                User.create_first_admin(db, { email: "a@example.com", password: "hunter22hunter22" }),
+                User.create_first_admin(db, { email: "b@example.com", password: "hunter22hunter22" }),
+                User.create_first_admin(db, { email: "c@example.com", password: "hunter22hunter22" }),
+            ]);
+
+            expect(results.filter(r => r.status === "fulfilled")).to.have.lengthOf(1);
+            expect(results.filter(r => r.status === "rejected")).to.have.lengthOf(2);
+            expect(User.count(db)).to.equal(1);
+        });
+    });
+
     describe("passwords", () => {
         it("should verify the correct password and reject others", async () => {
             const user = await User.create(db, {

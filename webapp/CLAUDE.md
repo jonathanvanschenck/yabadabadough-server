@@ -101,7 +101,10 @@ Provider stack in `AppLayout`, outermost first: `LogContextProvider` →
 - Split contexts by change-rate; persist user choices to `localStorage` in the provider.
 - `useLogger(namespace)` (LogContext) instead of bare `console.*` in components.
 - **AuthContext** owns all auth and the fetch wrappers everyone uses: cookie-based JWT,
-  `POST /api/auth/authenticate` on mount, renders `LoginModal` itself. Roles
+  `POST /api/auth/authenticate` on mount, renders `LoginModal` itself — or `SetupModal`
+  when the mount-time `GET /api/auth/mode` reports `setup_required` (a server whose database
+  has no accounts at all; the form POSTs `/api/auth/setup`, which creates the first admin AND
+  logs them in, so success dispatches an ordinary `login`). Roles
   `reader`/`editor`/`adminable`/`admin`; `adminable` users toggle sudo mode, sent
   per-request as `x-sudo-mode`. Refresh is single-flight + proactive timer +
   refresh-on-focus. Fetch hooks: `useAuthedFetch()` (401 → refresh → retry once),

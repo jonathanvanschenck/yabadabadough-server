@@ -1,4 +1,4 @@
-const { Collection, Controller, HTTPCodeError } = require("./lib/asseverate.js");
+const { Collection, Controller, HTTPCodeError, parse_body_fields, translate_model_error } = require("./lib/asseverate.js");
 const { only_non_empty_string } = require("./lib/parsers.js");
 
 const { ConflictError, ForeignKeyError } = require("../lib/db.js");
@@ -153,19 +153,103 @@ module.exports = class AuthCollection extends Collection {
 
             static openapi_Summary = "Get the Auth Mode";
 
-            static openapi_Description = "Report whether the server enforces authentication. When the server runs with YDD_DISABLE_AUTH (development only), every role gate is bypassed and this reports disable_auth: true -- the webapp uses it to skip the login workflow entirely. Unauthenticated by necessity: clients call it before they could have any token.";
+            static openapi_Description = "Report how the server wants to be authenticated against. When the server runs with YDD_DISABLE_AUTH (development only), every role gate is bypassed and this reports disable_auth: true -- the webapp uses it to skip the login workflow entirely. When the database holds no users at all it reports setup_required: true, and the webapp offers first-run admin creation (POST /api/auth/setup) instead of a login form. Unauthenticated by necessity: clients call it before they could have any token.";
 
             async respond() {
-                return { disable_auth: !!this.disable_auth };
+                return {
+                    disable_auth: !!this.disable_auth,
+                    // Cheap COUNT on a table that holds a handful of rows;
+                    // this route is hit once per page load
+                    setup_required: User.count(this.db) === 0,
+                };
             }
 
             static openapi_ResponseSchema = {
                 type: 'object',
                 properties: {
-                    disable_auth: { type: 'boolean', description: "True when the server bypasses all auth gates (YDD_DISABLE_AUTH development mode)" }
+                    disable_auth: { type: 'boolean', description: "True when the server bypasses all auth gates (YDD_DISABLE_AUTH development mode)" },
+                    setup_required: { type: 'boolean', description: "True when no user accounts exist yet, so POST /api/auth/setup is open for first-run bootstrap" }
                 },
-                required: [ 'disable_auth' ]
+                required: [ 'disable_auth', 'setup_required' ]
             };
+        },
+
+        class Setup extends Controller {
+            static path = "/setup";
+
+            static method = "POST";
+
+            static access = false;
+
+            static reader = false;
+
+            static openapi_Summary = "First-Run Setup (Create the Initial Admin)";
+
+            static openapi_Description = "Create the very first user -- always an admin -- on a database that has none, and log them straight in (same response and cookies as /login). This is the whole first-run story: start the container and point a browser at it, no CLI step required. UNAUTHENTICATED, and safe only because it is self-closing: the emptiness check and the insert are one atomic transaction, so it can succeed at most once and every later call is a 409, whatever the credentials. Once it has closed, further accounts come from POST /api/users/users (admin) or scripts/create-user.js.";
+
+            init({ secure_cookies, ...args }={}) {
+                super.init(args);
+                this.secure_cookies = secure_cookies !== false;
+            }
+
+            static openapi_RequestBodySchema = {
+                type: 'object',
+                properties: {
+                    email: { type: 'string', format: 'email' },
+                    password: { type: 'string', format: 'password', description: "Min 8 chars" }
+                },
+                required: [ 'email', 'password' ]
+            }
+
+            async parse_request(req) {
+                const data = parse_body_fields(req.body, [
+                    [ "email", only_non_empty_string, "non-empty string", { required: true } ],
+                    [ "password", only_non_empty_string, "non-empty string", { required: true } ],
+                ]);
+
+                // Device/client label, exactly as /login records it
+                data.note = only_non_empty_string(req.headers?.['user-agent'], null);
+
+                return data;
+            }
+
+            async respond({ email, password, note }, { res }={}) {
+                let user;
+                try {
+                    user = await User.create_first_admin(this.db, { email, password });
+                } catch (err) {
+                    // ConflictError -> 409 ("setup already done", and also the
+                    // unreachable-here duplicate-email case); the model's
+                    // email/password validation Errors -> 400
+                    translate_model_error(err);
+                }
+
+                const session = Session.create(this.db, { user_id: user.id, note });
+                const tokens = mint_tokens(this.token_manager, user, session);
+
+                set_access_cookie(res, tokens.access, this);
+                set_auth_cookie(res, tokens.auth, session, this);
+
+                // The users list went from empty to one, and /mode's answer
+                // flipped -- but nothing can be listening yet (no user existed
+                // to hold a socket), so there is deliberately no broadcast
+                return {
+                    user: user.to_api(),
+                    session: session.to_api(),
+                    tokens,
+                };
+            }
+
+            static openapi_ResponseSchema = InfoResponseSchema;
+
+            static openapi_ErrorResponses = [
+                { code: 400, description: "Bad parameter (including bad email / short password)", schema: { "$ref": '#/components/schemas/BadParameterResponseSchema' } },
+                {
+                    code: 409,
+                    description: "Setup has already been completed (a user exists) -- this route is permanently closed",
+                    schema: { "$ref": '#/components/schemas/ConflictResponseSchema' }
+                }
+            ];
         },
 
         class CheckAuth extends Controller {

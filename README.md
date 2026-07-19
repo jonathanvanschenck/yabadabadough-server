@@ -194,13 +194,14 @@ mkdir -p db/backup keys        # bind-mount targets, owned by you
 docker compose up --build
 ```
 
-Then open <http://localhost:8383> — and create yourself a user, since a fresh
-database has none:
+Then open <http://localhost:8383>. A database with no accounts greets you with a
+first-run setup form instead of a login form: fill it in and you have an
+administrator and an active session. That's the whole install — no CLI step.
 
-```bash
-docker compose exec server node scripts/create-user.js \
-    you@example.com 'a-long-password' --admin --editor
-```
+(The setup route closes itself the moment it succeeds. It only exists while the
+database holds zero users, and every later call is a 409 whatever the
+credentials, so it can hand out exactly one account. Later users come from the
+Users page, or from `scripts/create-user.js` below.)
 
 If you already run `node index.js` on the host, stop it first or change the
 published port — both default to 8383 and the container will fail to bind.
@@ -228,9 +229,20 @@ cd webapp && npm install && npm run build && cd ..
 
 cp template.env .env            # then edit
 node scripts/generate-jwt-key.js
-node scripts/create-user.js you@example.com 'a-long-password' --admin --editor
 
 node index.js
+```
+
+Then open the server and use the first-run setup form, exactly as with Docker.
+
+To create accounts from the command line instead — the headless and
+forgotten-password path — use `scripts/create-user.js`. Omitting the password
+prompts for it (twice, with the echo off), which keeps it out of your shell
+history:
+
+```bash
+node scripts/create-user.js you@example.com --admin --editor
+node scripts/create-user.js you@example.com --set-password   # reset a password
 ```
 
 Tests: `npm test` (Mocha + an in-memory database per test).

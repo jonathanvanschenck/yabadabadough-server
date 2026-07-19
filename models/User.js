@@ -402,6 +402,45 @@ module.exports = class User extends Base {
         return transaction(db, { email: _email, password_hash, admin, reader, editor });
     }
 
+    /**
+     * The one-time bootstrap: create the FIRST user -- always an admin --
+     * when, and only when, the users table is empty. This backs the
+     * UNAUTHENTICATED POST /api/auth/setup route, which is the whole reason
+     * the emptiness check and the insert must be one atomic step: a
+     * check-then-create at the API layer would let two requests racing
+     * against a fresh database both win and hand out two admin accounts.
+     * Hashing stays outside the transaction (as in `create`); only the count
+     * check and the insert are inside it.
+     *
+     * Throws ConflictError the moment any user exists -- the route closes
+     * forever after the first success, and later accounts go through the
+     * admin-gated POST /api/users/users (or scripts/create-user.js).
+     */
+    static async create_first_admin(db, { email, password }={}) {
+        const _email = this._normalize_email(email);
+        this._assert_valid_email(_email);
+        this._assert_valid_password(password);
+
+        const password_hash = await hash_password(password);
+
+        const transaction = this.build_transaction(db, "create_first_admin", (db, args) => {
+            if ( this.count(db) > 0 ) {
+                throw new ConflictError("Setup has already been completed");
+            }
+            return this._create(db, args);
+        });
+
+        return transaction(db, {
+            email: _email,
+            password_hash,
+            // Stored flags say what was explicitly granted; admin implies
+            // the rest effectively (see the `roles` getter)
+            admin: true,
+            reader: true,
+            editor: false,
+        });
+    }
+
     static _update(db, user, changes={}) {
         const fresh = this.for_id(db, user.id);
         if ( !fresh ) {
