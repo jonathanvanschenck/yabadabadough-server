@@ -522,12 +522,21 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
 
     const isTracked = !!fundDetail?.status?.tracked;
 
+    // The date is named explicitly rather than left to the server: an
+    // all-transactions sum would include allocations dated later this month
+    // and read high, so the endpoint requires `on`. Clamped forward for a fund
+    // whose tracking has not begun yet -- asking for a balance before
+    // start_date is a 400, and its first day is the only date it has.
+    const today = dayjs().format('YYYY-MM-DD');
+    const startDate = fundDetail?.start?.date ?? null;
+    const on = ( startDate && startDate > today ) ? startDate : today;
+
     const {
         data: balanceData,
         isPending: balanceIsPending,
         isError: balanceIsError,
         error: balanceError
-    } = useGetFundBalanceQuery(fundId, {}, { enabled: isTracked });
+    } = useGetFundBalanceQuery(fundId, { on }, { enabled: isTracked });
 
     // Only the CURRENT balance can be provisional here: "last reconciled" is a
     // finalization cache point and "tracking started" is a stored constant --
@@ -551,7 +560,9 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
                 ) : (
                     <CardAutoGrid>
                         <LabeledTextInput
-                            label="Current balance"
+                            label={ on === today
+                                ? "Balance today"
+                                : `Balance on ${dayjs(on).format('MMM D, YYYY')}` }
                             value={currentBalance}
                             isFrozen={true}
                         />

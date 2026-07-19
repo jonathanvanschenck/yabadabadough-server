@@ -152,9 +152,10 @@ export function useGetFundQuery(
 }
 
 /**
- * A fund's calculated balance: the current one, or -- with `on` (YYYY-MM-DD)
- * -- the balance on that date. Every transaction write invalidates the
- * ["fund-balance"] prefix, so these refetch on any money movement.
+ * A fund's calculated balance ON `on` (YYYY-MM-DD, REQUIRED -- see
+ * useGetFundBalancesQuery for why there is no all-transactions mode). Every
+ * transaction write invalidates the ["fund-balance"] prefix, so these refetch
+ * on any money movement.
  */
 export function useGetFundBalanceQuery(
     id,
@@ -178,7 +179,9 @@ export function useGetFundBalanceQuery(
             });
             return await fetch(url, { method: 'GET' });
         },
-        enabled: enabled && !!idStr,
+        // No date, no query: the endpoint requires `on`, and firing without
+        // it would be a certain 400
+        enabled: enabled && !!idStr && !!on,
         ...options
     });
 }

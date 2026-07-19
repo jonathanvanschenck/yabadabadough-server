@@ -291,7 +291,7 @@ module.exports = class FundsCollection extends Collection {
 
             static openapi_Summary = "Get Fund Balance";
 
-            static openapi_Description = "Calculate the fund's balance: the current balance (every transaction to date), or -- with `on` -- the balance on that date (every transaction up to AND on it). Computed from the fund's latest cache point at-or-before the date, so it is cheap regardless of history depth. Untracked funds always report 0. Check `provisional`: a true value means an earlier month is still unfinalized, so this balance can change without any transaction being touched.";
+            static openapi_Description = "Calculate the fund's balance on `on` (every transaction up to AND on that date). `on` is REQUIRED: the server has no clock of its own (the same timezone caution the finalization rules take), and \"every transaction\" is NOT a synonym for \"today\" -- allocations are dated the first of their month, so an unfiltered sum silently includes future money. Computed from the fund's latest cache point at-or-before the date, so it is cheap regardless of history depth. Untracked funds always report 0. Check `provisional`: a true value means an earlier month is still unfinalized, so this balance can change without any transaction being touched.";
 
             static query_key = [ "fund-balance", "fund_id" ];
 
@@ -300,8 +300,8 @@ module.exports = class FundsCollection extends Collection {
                 {
                     name: 'on',
                     in: 'query',
-                    description: 'The date to calculate the balance on (default: today, i.e. all transactions). May not predate the fund\'s start_date.',
-                    required: false,
+                    description: 'The date to calculate the balance on (REQUIRED -- the server never assumes "today", and an unfiltered all-transactions sum would include future-dated allocations). May not predate the fund\'s start_date.',
+                    required: true,
                     schema: { type: 'string', format: 'date' }
                 }
             ]
@@ -309,9 +309,11 @@ module.exports = class FundsCollection extends Collection {
             async parse_request(req) {
                 const fund = this.get_fund(req);
 
-                // Strict: a lenient fallback would silently return the WRONG
-                // balance (the current one instead of the requested date's)
-                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string") ?? null;
+                // Required, and strict -- see the bulk /balances route: there
+                // is deliberately no all-transactions mode, because callers
+                // read that figure as "current" and it is not
+                const on = parse_strict_query_param(req.query, "on", only_ydate, "YYYY-MM-DD string");
+                if ( on === undefined ) throw new HTTPCodeError(400, "Missing parameter: on");
 
                 return { fund, on };
             }
@@ -319,7 +321,7 @@ module.exports = class FundsCollection extends Collection {
             async respond({ fund, on }) {
                 let balance;
                 try {
-                    balance = on ? fund.calculate_balance_on(this.db, on) : fund.calculate_balance(this.db);
+                    balance = fund.calculate_balance_on(this.db, on);
                 } catch (err) {
                     translate_model_error(err);
                 }
@@ -328,11 +330,11 @@ module.exports = class FundsCollection extends Collection {
 
                 return {
                     fund_id: fund.id,
-                    on: on ? on.toJSON() : null,
+                    on: on.toJSON(),
                     balance,
                     // balance-ON semantics: inclusive of `on`, so a balance on
                     // the first open month's last day is already provisional
-                    provisional: balance_on_is_provisional(frontier, on ? on.toJSON() : null),
+                    provisional: balance_on_is_provisional(frontier, on.toJSON()),
                 };
             }
 

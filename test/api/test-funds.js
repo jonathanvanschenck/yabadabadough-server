@@ -127,12 +127,10 @@ describe("Funds API", () => {
             });
         });
 
-        it("reports the current balance", async () => {
+        it("400s when `on` is omitted (the server never assumes today)", async () => {
             const { status, body } = await h.request(`/api/funds/fund/${checking.id}/balance`, { token: h.tokens.reader });
-            expect(status).to.equal(200);
-            // provisional: January is unfinalized and `groceries` is monthly,
-            // so the current balance sits after a pending eom_cleanup
-            expect(body).to.deep.equal({ fund_id: checking.id, on: null, balance: 900, provisional: true });
+            expect(status).to.equal(400);
+            expect(body.message).to.include("Missing parameter: on");
         });
 
         it("reports the balance on a date (inclusive)", async () => {
@@ -152,7 +150,7 @@ describe("Funds API", () => {
         describe("provisional", () => {
             const balance_on = async (on) => {
                 const { body } = await h.request(
-                    `/api/funds/fund/${checking.id}/balance${on ? `?on=${on}` : ""}`,
+                    `/api/funds/fund/${checking.id}/balance?on=${on}`,
                     { token: h.tokens.reader }
                 );
                 return body.provisional;
@@ -180,7 +178,7 @@ describe("Funds API", () => {
                 // ever at risk -- however far past the frontier it sits
                 groceries.update(h.db, { monthly: false });
                 expect(await balance_on("2026-01-31")).to.equal(false);
-                expect(await balance_on(null)).to.equal(false);
+                expect(await balance_on("2026-12-31")).to.equal(false);
             });
         });
 

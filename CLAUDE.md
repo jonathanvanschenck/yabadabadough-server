@@ -221,11 +221,12 @@ all follow the same shape:
 - **"All transactions" is NOT "today"**: allocations are dated the first of their month and are
   created as real transactions the moment they are budgeted, so the ledger routinely holds
   future-dated money. An unbounded sum therefore answers a question nobody asks. `GET
-  /funds/balances` accordingly REQUIRES `on` (400 `Missing parameter: on` without it) — the
-  server has no clock of its own (the same timezone caution behind not restricting finalization
-  of the current month), so the caller must name its date. The per-fund `GET
-  /funds/fund/:id/balance` still allows `on` to be omitted, which means all-transactions and
-  carries exactly this hazard; prefer passing `on` there too.
+  /funds/balances` and `GET /funds/fund/:id/balance` accordingly both REQUIRE `on` (400
+  `Missing parameter: on` without it) — the server has no clock of its own (the same timezone
+  caution behind not restricting finalization of the current month), so the caller must name
+  its date. There is deliberately no all-transactions mode on either route;
+  `fund.calculate_balance(db)` survives as a model-layer convenience (tests, internal sums)
+  but is no longer reachable from the API.
 - **Provisional balances** (`lib/provisional.mjs`): a balance is PROVISIONAL when an earlier
   month is still unfinalized — finalizing writes eom_cleanup transactions dated that month's
   last day, so the figure can move with no user action (a monthly fund showing 120 on Jan 31
