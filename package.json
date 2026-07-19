@@ -1,6 +1,6 @@
 {
   "name": "yabadabadough-server",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "A personal finanace server",
   "main": "index.js",
   "scripts": {
