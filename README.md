@@ -11,7 +11,7 @@
 [![React](https://img.shields.io/badge/React-frontend-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-[The ideas](#the-ideas) &nbsp;·&nbsp; [Running it](#running-it) &nbsp;·&nbsp; [Deploying](#deploying) &nbsp;·&nbsp; [API reference](#the-api)
+[The ideas](#the-ideas) &nbsp;·&nbsp; [Running it](#running-it) &nbsp;·&nbsp; [Deploying](#deploying) &nbsp;·&nbsp; [Releases](#releases) &nbsp;·&nbsp; [API reference](#the-api)
 
 </div>
 
@@ -342,9 +342,65 @@ git pull
 docker compose up -d --build
 ```
 
+If you deploy the published image instead of building from source, bump the
+pinned tag in your compose file and pull:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
 The webapp polls `/api/utils/versions` and prompts users to reload when the
 server version changes, so a deploy does not leave stale frontends running
 against a new API.
+
+---
+
+## Releases
+
+Container images are published to the GitHub Container Registry at
+[`ghcr.io/jonathanvanschenck/yabadabadough-server`](https://github.com/jonathanvanschenck/yabadabadough-server/pkgs/container/yabadabadough-server),
+built and pushed by GitHub Actions whenever a version tag is pushed.
+
+```bash
+docker pull ghcr.io/jonathanvanschenck/yabadabadough-server:1.0.0
+```
+
+Each release publishes three tags: the exact version (`1.2.0`), the
+major.minor line (`1.2`, which advances with patch releases), and `latest`
+(the newest non-prerelease). Pin the exact version in production — see
+[`examples/production/`](examples/production/) — so upgrades are deliberate.
+Images are multi-arch (`linux/amd64` and `linux/arm64`).
+
+### Cutting a release (maintainers)
+
+The root `package.json` `version` is the single source of truth: the server
+reports it at `/api/utils/versions`, the webapp bakes it in at build time, and
+the release workflow **refuses to publish if the git tag disagrees with it**,
+so the image tag and the version the running app reports can never drift. A
+release is therefore just: bump that version, tag it, push the tag.
+
+```bash
+# on a branch
+npm version minor          # 1.0.0 -> 1.1.0: edits package.json, commits, tags v1.1.0
+git push origin HEAD        # open a PR; CI (tests + image build) must pass
+# merge the PR into master, then:
+git push origin v1.1.0      # the tag push triggers the release workflow
+```
+
+`npm version {patch|minor|major}` picks the bump. Two workflows back this:
+
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — on every pull
+  request and push to master: runs the test suite and builds the image without
+  pushing. Mark its jobs **required** in the master branch protection rule so
+  nothing merges red.
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) — on a `v*`
+  tag: re-runs the tests, verifies the tag matches `package.json`, then builds
+  and pushes the multi-arch image to GHCR.
+
+> The published package starts **private** — make it public in the repo's
+> *Packages* settings, or give your deploy host a read token, before pulling
+> from another machine. Actions pushes with the built-in `GITHUB_TOKEN`, so
+> there is no registry secret to configure.
 
 ---
 

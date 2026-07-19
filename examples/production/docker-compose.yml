@@ -10,12 +10,14 @@
 
 services:
   server:
-    # Build from the repo root (two levels up). For a registry-based deploy,
-    # replace this whole block with `image: your-registry/yabadabadough:1.0.0`.
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    image: yabadabadough:latest
+    # Pull the published image. Pin a real version (not `latest`) so
+    # `docker compose up -d` is a deliberate upgrade, not a surprise one.
+    # To build from the repo instead (e.g. local changes), comment `image:`
+    # out and uncomment the `build:` block below.
+    image: ghcr.io/jonathanvanschenck/yabadabadough-server:1.0.0
+    # build:
+    #   context: ../..
+    #   dockerfile: Dockerfile
     restart: unless-stopped
     expose:
       - "8383"
