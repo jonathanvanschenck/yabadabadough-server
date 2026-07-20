@@ -22,6 +22,7 @@ import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
 import Spinner from './Spinner.jsx';
 import { Banner } from './Banner.jsx';
 import { fundIdsContainingMonthly } from './domain.js';
+import { STATEMENT_PROFILES, GENERIC_PROFILE } from './statementProfiles.js';
 import {
     useGetFundsQuery,
     useGetTransactionGroupsQuery,
@@ -1455,8 +1456,16 @@ export function TransactionNoteModal({ isOpen, setIsOpen, group = null, transact
  * `transformers` entries: { key, displayName?, renderer?, autoMatch?,
  * autoMatcher? }. `requiredKeys` lists the keys that must be mapped before
  * processing is allowed.
+ *
+ * `profile` (a statement profile from statementProfiles.js) adapts one KIND of
+ * bank export to this mapper: it owns raw-file parsing (preamble skipping),
+ * synthesizes derived columns (e.g. a signed amount from split debit/credit),
+ * and can pin column→field mappings. Defaults to GENERIC_PROFILE, which
+ * reproduces the original behavior (first line is the header). A profile that
+ * recognizes the file may report a `suggestedSource`, surfaced via
+ * `onSuggestedSource`.
  */
-function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], file: extFile, setFile: setExtFile, autoFocusFile = false }) {
+function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], file: extFile, setFile: setExtFile, autoFocusFile = false, profile = GENERIC_PROFILE, onSuggestedSource }) {
 
     const {
         optionKeys,
@@ -1504,42 +1513,46 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
         const reader = new FileReader();
         reader.readAsText(file, `UTF-8`);
         reader.onload = function({ target }) {
-            const text = target.result.trim();
-            const lines = text.split(/\r\n|\n/);
-            const headers = lines[0].split(',').map(h => h.trim());
-            const data = [];
-
-            // Helper function to clean Excel string-forcing characters
-            const cleanExcelStringValue = (value) => {
-                if (typeof value === 'string' && value.startsWith('="') && value.endsWith('"')) {
-                    // Strip the Excel string-forcing wrapper: ="value" -> value
-                    return value.slice(2, -1);
-                }
-                return value;
-            };
-
-            for ( let i = 1; i < lines.length; i++ ) {
-                const values = lines[i].split(',');
-                if ( values.length !== headers.length ) {
-                    setCSVParserError({ message: `CSV parsing error on line ${i + 1}: Expected ${headers.length} values, but got ${values.length}. Do your strings have commas in them?` });
-                    console.error("Error parsing CSV: ", { line_number: i + 1, expected: headers.length, got: values.length, line: lines[i], parsed_values: values });
-                    return;
-                }
-                const row = {};
-                for ( let j = 0; j < headers.length; j++ ) {
-                    row[headers[j]] = cleanExcelStringValue(values[j]);
-                }
-                data.push(row);
+            // The profile owns raw-file parsing (preamble skipping, etc.) and
+            // throws CSVParseError with a { message, details } on a bad shape.
+            let headers, rows, suggestedSource;
+            try {
+                ({ headers, rows, suggestedSource } = profile.parse(target.result));
+            } catch ( err ) {
+                setCSVParserError({ message: err.message, details: err.details });
+                setParsedCSVData(null);
+                setCSVToJsonMap(null);
+                return;
             }
-            setParsedCSVData({ headers, rows: data });
+
+            // Append any profile-derived columns (e.g. a signed amount coalesced
+            // from split debit/credit) so they become mappable like real columns.
+            const derived = profile.derivedColumns ?? [];
+            if ( derived.length ) {
+                headers = [ ...headers, ...derived.map(d => d.name) ];
+                rows = rows.map(row => {
+                    const enriched = { ...row };
+                    for ( const d of derived ) enriched[d.name] = d.compute(row);
+                    return enriched;
+                });
+            }
+
+            if ( suggestedSource && onSuggestedSource ) onSuggestedSource(suggestedSource);
+
+            setParsedCSVData({ headers, rows });
+            const defaultMapping = profile.defaultMapping ?? {};
             setCSVToJsonMap(headers.map((h,i) => {
                 if ( !h.trim() ) return null;
                 let key = null;
-                // Auto-match
-                for ( const [ matcherKey, matcherFunc ] of Object.entries( autoMatchersByKey ) ) {
-                    if ( matcherFunc(h) ) {
-                        key = matcherKey;
-                        break;
+                // A profile-pinned mapping wins over header auto-matching.
+                if ( defaultMapping[h] != null && optionKeys.includes(defaultMapping[h]) ) {
+                    key = defaultMapping[h];
+                } else {
+                    for ( const [ matcherKey, matcherFunc ] of Object.entries( autoMatchersByKey ) ) {
+                        if ( matcherFunc(h) ) {
+                            key = matcherKey;
+                            break;
+                        }
                     }
                 }
                 return {
@@ -1555,7 +1568,7 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
             setParsedCSVData(null);
             setCSVToJsonMap(null);
         }
-    }, [ autoMatchersByKey, onProcessedData, setFile ]);
+    }, [ autoMatchersByKey, optionKeys, onProcessedData, setFile, profile, onSuggestedSource ]);
 
     const readyToRender = !!parsedCSVData && !!csvToJsonMap
         && requiredKeys.every(rk => csvToJsonMap.some(m => m.key === rk));
@@ -1690,18 +1703,31 @@ const IMPORT_PREVIEW_ROWS = 8;
 export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = null }) {
 
     const [ source, setSource ] = useState(initialSource);
+    const [ profileId, setProfileId ] = useState(GENERIC_PROFILE.id);
     const [ file, setFile ] = useState(null);
     const [ processedData, setProcessedData ] = useState(null);
     const [ importResult, setImportResult ] = useState(null);
     const [ submitError, setSubmitError ] = useState(null);
 
+    const profile = useMemo(
+        () => STATEMENT_PROFILES.find(p => p.id === profileId) ?? GENERIC_PROFILE,
+        [profileId]
+    );
+
     const reset = useCallback(() => {
         setSource(initialSource);
+        setProfileId(GENERIC_PROFILE.id);
         setFile(null);
         setProcessedData(null);
         setImportResult(null);
         setSubmitError(null);
     }, [initialSource]);
+
+    // A recognized file prefills the source, but never clobbers a name the user
+    // already chose (e.g. one carried in via initialSource).
+    const onSuggestedSource = useCallback((suggested) => {
+        setSource(prev => (prev && prev.trim() ? prev : suggested));
+    }, []);
 
     useEffect(() => {
         if (isOpen) reset();
@@ -1779,13 +1805,36 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
             </CardSection>
 
             <CardSection title="CSV">
+                <LabeledSelector
+                    label="Statement format"
+                    value={profileId}
+                    onChange={(value) => {
+                        // Re-parsing needs a clean slate: drop the picked file and
+                        // any preview (the key= remount clears CSVImporter internals).
+                        setProfileId(value ?? GENERIC_PROFILE.id);
+                        setFile(null);
+                        onProcessedData(null);
+                    }}
+                    optionKeys={STATEMENT_PROFILES.map(p => p.id)}
+                    optionDisplayNames={STATEMENT_PROFILES.map(p => p.label)}
+                    isFrozen={false}
+                    allowNull={false}
+                />
+                <p className={styles.modalHint}>
+                    Pick your bank to skip its export's header preamble and map
+                    columns automatically. <strong>Generic CSV</strong> treats the
+                    first row as the header and maps columns yourself.
+                </p>
                 <CSVImporter
+                    key={profileId}
                     onProcessedData={onProcessedData}
                     transformers={CSVStatementTransformers}
                     requiredKeys={[ 'key', 'date', 'amount' ]}
                     file={file}
                     setFile={setFile}
                     autoFocusFile={true}
+                    profile={profile}
+                    onSuggestedSource={onSuggestedSource}
                 />
             </CardSection>
 
