@@ -250,7 +250,7 @@ const SHORTCUT_GROUPS = [
         title: 'Selected pending card',
         shortcuts: [
             { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
-            { keys: [ '1', '2', '3' ], description: 'Jump into the From / To / Description fields — 1 and 2 open the fund search (type, then Enter to pick), 3 selects the description text; Esc returns to the card' },
+            { keys: [ 'S', 'T', 'D' ], description: 'Jump into the Source / Target / Description fields — S and T open the fund search (type, then Enter to pick), D selects the description text; Esc returns to the card' },
             { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
             { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
             { keys: [ 'I' ], description: 'Ignore the item (I again on an ignored card un-ignores)' },
@@ -267,7 +267,7 @@ const SHORTCUT_GROUPS = [
         title: 'Any selected card',
         shortcuts: [
             { keys: [ 'E' ], description: "Edit the item's note" },
-            { keys: [ 'D' ], description: 'Delete the item (opens the confirmation)' },
+            { keys: [ 'Del' ], description: 'Delete the item (opens the confirmation)' },
         ],
     },
 ];
@@ -415,7 +415,7 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
 
     const amount = Math.abs(statement.amount);
 
-    // Field-jump hotkey targets (1/2/3 on the selected card). The fund
+    // Field-jump hotkey targets (S/T/D on the selected card). The fund
     // selectors open on trigger click -- and opening autofocuses their search
     // input -- so a synthetic click is the whole "jump into fund search"
     // gesture.
@@ -463,9 +463,9 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
     }, [ canSubmit, description, statement.id, sourceId, targetId, amount, postMutate ]);
 
     // The card-selection hotkeys for this (the selected) card's form: Enter
-    // confirms when submittable; 1/2/3 jump into the From/To/Description
-    // fields (so a no-prefill card is still keyboard-only: 1, type, Enter,
-    // 2, type, Enter, Enter).
+    // confirms when submittable; S/T/D jump into the Source/Target/Description
+    // fields (so a no-prefill card is still keyboard-only: s, type, Enter,
+    // t, type, Enter, Enter).
     useEffect(() => {
         if ( !hotkeysActive ) return;
         const onKeyDown = (e) => {
@@ -476,15 +476,15 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
                     e.preventDefault();
                     handleSubmit();
                     break;
-                case '1':
+                case 's':
                     e.preventDefault();
                     sourceWrapRef.current?.querySelector('[role="combobox"]')?.click();
                     break;
-                case '2':
+                case 't':
                     e.preventDefault();
                     targetWrapRef.current?.querySelector('[role="combobox"]')?.click();
                     break;
-                case '3': {
+                case 'd': {
                     e.preventDefault();
                     const input = descriptionWrapRef.current?.querySelector('input');
                     input?.focus();
@@ -897,7 +897,7 @@ export default function Page() {
                 case 'e':
                     if ( selected && isEditor ) handleAction('edit', selected);
                     break;
-                case 'd':
+                case 'Delete':
                     if ( selected && isEditor ) handleAction('delete', selected);
                     break;
             }
