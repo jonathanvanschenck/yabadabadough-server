@@ -97,6 +97,13 @@
     gap: 0.6rem;
 }
 
+/* Keyboard-selected card (J/K navigation): a ring, not a recolor, so the
+ * state badges and amount tones stay legible. */
+.cardSelected {
+    border-color: var(--u-info-border);
+    box-shadow: 0 0 0 1px var(--u-info-border);
+}
+
 .cardHeader {
     display: flex;
     align-items: baseline;
@@ -240,6 +247,11 @@
 
 .inlineReconcileAmount {
     color: var(--font-secondary-color);
+}
+
+.prefillHint {
+    color: var(--font-muted);
+    font-size: 0.85rem;
 }
 
 @media (max-width: 40rem) {

@@ -47,7 +47,8 @@ import {
     faBookOpen,
     faKey,
     faEye,
-    faBoxArchive
+    faBoxArchive,
+    faKeyboard
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -103,6 +104,7 @@ library.add(
     faKey,
     faEye,
     faBoxArchive,
+    faKeyboard,
 
     faCircle,
     faCircleDot

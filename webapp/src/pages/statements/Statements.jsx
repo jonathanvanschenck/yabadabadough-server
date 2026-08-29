@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import dayjs from 'dayjs';
 
@@ -27,6 +27,7 @@ import {
     amountsMatch,
     transactionGroupTotal
 } from '../../components/domain.js';
+import { FloatingKeyboardHelp } from '../../components/KeyboardHelp.jsx';
 import {
     ImportStatementsCSVModal,
     ReconcileStatementsModal,
@@ -120,6 +121,156 @@ function useLinkSuggestions(pendingItems, enabled) {
     }, [groupsQ.data, pendingItems]);
 }
 
+// Inline-reconcile PREFILL from reconciliation history: most bank lines are
+// recurring ("COSTCO WHSE #0912 ..." week after week), so the funds -- and the
+// human-friendly description -- the user chose LAST time are almost always
+// right this time. Matching is on the leading tokens of the normalized bank
+// note (uppercased, digits/punctuation stripped -- store numbers, dates and
+// card suffixes vary per line), requiring at least PREFILL_MIN_TOKENS in
+// common (or a full match, for one-word vendors) plus the same amount sign
+// (a refund should not prefill like a charge). Only single-routing history
+// groups qualify: a group whose lines fan out to several fund pairs has no
+// single answer to prefill.
+const PREFILL_HISTORY_DAYS = 365;
+const PREFILL_MIN_TOKENS = 2;
+
+function normalizeNoteTokens(text) {
+    return (text ?? '')
+        .toUpperCase()
+        .replace(/[^A-Z]+/g, ' ')
+        .split(' ')
+        .filter(Boolean);
+}
+
+function commonPrefixLength(a, b) {
+    let n = 0;
+    while ( n < a.length && n < b.length && a[n] === b[n] ) n++;
+    return n;
+}
+
+/**
+ * Prefills for every pending item on the page, as a Map of item id ->
+ * { sourceId, targetId, description, date, score }, built from one query over
+ * the last year's reconciling groups (their hydrated `statements` carry the
+ * bank notes to match against). Best match = longest token-prefix score,
+ * ties broken by most recent statement date.
+ */
+function useReconcilePrefills(pendingItems, enabled) {
+    // The since-bound is a coarse cache-friendly cutoff, not a semantic date,
+    // so a day-granular "now" is fine (and stable across renders).
+    const since = useMemo(
+        () => dayjs().subtract(PREFILL_HISTORY_DAYS, 'day').format('YYYY-MM-DD'),
+        []
+    );
+    const groupsQ = useGetTransactionGroupsQuery(
+        {
+            since,
+            allocation: false,
+            eomCleanup: false,
+            hasStatements: true,
+        },
+        { enabled: enabled && pendingItems.length > 0 }
+    );
+
+    return useMemo(() => {
+        const map = new Map();
+        const history = [];
+        for ( const g of groupsQ.data ?? [] ) {
+            const pairs = new Set(g.transactions.map(t => `${t.source_fund_id}:${t.target_fund_id}`));
+            if ( pairs.size !== 1 ) continue;
+            const { source_fund_id, target_fund_id } = g.transactions[0];
+            for ( const s of g.statements ) {
+                const tokens = normalizeNoteTokens(s.note ?? s.key);
+                if ( tokens.length === 0 ) continue;
+                history.push({
+                    tokens,
+                    sign: Math.sign(s.amount),
+                    date: s.date,
+                    sourceId: source_fund_id,
+                    targetId: target_fund_id,
+                    description: g.description,
+                });
+            }
+        }
+        if ( history.length === 0 ) return map;
+        for ( const item of pendingItems ) {
+            const tokens = normalizeNoteTokens(item.note ?? item.key);
+            if ( tokens.length === 0 ) continue;
+            const sign = Math.sign(item.amount);
+            let best = null;
+            for ( const h of history ) {
+                if ( h.sign !== sign ) continue;
+                const score = commonPrefixLength(tokens, h.tokens);
+                const fullMatch = score === tokens.length && score === h.tokens.length;
+                if ( score < PREFILL_MIN_TOKENS && !fullMatch ) continue;
+                if ( !best || score > best.score
+                    || (score === best.score && h.date > best.date) ) {
+                    best = { ...h, score };
+                }
+            }
+            if ( best ) map.set(item.id, best);
+        }
+        return map;
+    }, [groupsQ.data, pendingItems]);
+}
+
+// --- Keyboard queue triage ------------------------------------------------
+// The page is a burn-down queue, so it gets vi-style keys: J/K (or arrows)
+// walk the cards, and single letters act on the selected card. Handlers
+// always bail when focus sits in a form control (typing must never trigger
+// actions) or while any modal is open. Enter and L need the selected card's
+// own state, so those two listeners live in the card's children, gated by
+// the same hotkeysActive flag.
+
+function isTypingTarget(el) {
+    if ( el == null || !(el instanceof HTMLElement) ) return false;
+    return el.tagName === 'INPUT'
+        || el.tagName === 'TEXTAREA'
+        || el.tagName === 'SELECT'
+        || el.isContentEditable;
+}
+
+function plainKey(e) {
+    if ( e.ctrlKey || e.metaKey || e.altKey ) return null;
+    return e.key.length === 1 ? e.key.toLowerCase() : e.key;
+}
+
+const SHORTCUT_GROUPS = [
+    {
+        title: 'Navigation',
+        shortcuts: [
+            { keys: [ 'J', '↓' ], description: 'Select the next card' },
+            { keys: [ 'K', '↑' ], description: 'Select the previous card' },
+            { keys: [ 'Esc' ], description: 'Clear the selection' },
+            { keys: [ '/' ], description: 'Jump to the search box' },
+            { keys: [ '?' ], description: 'Show this help' },
+        ],
+    },
+    {
+        title: 'Selected pending card',
+        shortcuts: [
+            { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
+            { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
+            { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
+            { keys: [ 'I' ], description: 'Ignore the item (I again on an ignored card un-ignores)' },
+        ],
+    },
+    {
+        title: 'Selected reconciled card',
+        shortcuts: [
+            { keys: [ 'V' ], description: 'View the linked transaction group' },
+            { keys: [ 'U' ], description: 'Unlink from the transaction group' },
+        ],
+    },
+    {
+        title: 'Any selected card',
+        shortcuts: [
+            { keys: [ 'E' ], description: "Edit the item's note" },
+            { keys: [ 'D' ], description: 'Delete the item (opens the confirmation)' },
+        ],
+    },
+];
+
 /**
  * One suggested group on a pending card: the group's facts plus a one-click
  * Link button (the same POST /statement/:id/link as the modal -- no
@@ -127,7 +278,7 @@ function useLinkSuggestions(pendingItems, enabled) {
  * needs no handler: the broadcast invalidation re-renders the card as
  * reconciled.
  */
-function SuggestedLink({ statement, suggestion }) {
+function SuggestedLink({ statement, suggestion, hotkeyLink = false }) {
     const navigate = useNavigate();
     const [ submitError, setSubmitError ] = useState(null);
     const { group, total, dateDistance } = suggestion;
@@ -148,6 +299,20 @@ function SuggestedLink({ statement, suggestion }) {
             }
         );
     }, [linkMutate, statement.id, group.id]);
+
+    // The card-selection "L" hotkey -- only the FIRST suggestion of the
+    // selected card gets hotkeyLink, so L is never ambiguous.
+    useEffect(() => {
+        if ( !hotkeyLink ) return;
+        const onKeyDown = (e) => {
+            if ( plainKey(e) !== 'l' || isTypingTarget(e.target) ) return;
+            if ( linkIsPending || submitError != null ) return;
+            e.preventDefault();
+            handleLink();
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [hotkeyLink, linkIsPending, submitError, handleLink]);
 
     return (
         <div className={styles.suggestionRow}>
@@ -193,15 +358,20 @@ function SuggestedLink({ statement, suggestion }) {
  * The "very likely match" block on a pending card: renders only when the
  * strict heuristic found something, so most cards carry no extra noise.
  */
-function SuggestedLinks({ statement, suggestions }) {
+function SuggestedLinks({ statement, suggestions, hotkeysActive = false }) {
     if ( !suggestions?.length ) return null;
     return (
         <div className={styles.suggestions}>
             <div className={styles.suggestionsLabel}>
                 Likely match{suggestions.length === 1 ? '' : 'es'} — link without creating transactions:
             </div>
-            { suggestions.map(s => (
-                <SuggestedLink key={s.group.id} statement={statement} suggestion={s} />
+            { suggestions.map((s, i) => (
+                <SuggestedLink
+                    key={s.group.id}
+                    statement={statement}
+                    suggestion={s}
+                    hotkeyLink={hotkeysActive && i === 0}
+                />
             ))}
         </div>
     );
@@ -216,13 +386,31 @@ function SuggestedLinks({ statement, suggestions }) {
  * never needs the modal. Split/transfer/custom-date reconciles stay in
  * ReconcileStatementsModal, reachable from the card's secondary actions.
  */
-function InlinePendingReconcile({ statement }) {
+function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = false }) {
     const [ sourceId, setSourceId ] = useState(null);
     const [ targetId, setTargetId ] = useState(null);
     // Seed the description from the item's note (its key as a fallback), mirroring
     // the modal's group-description default.
     const [ description, setDescription ] = useState(statement.note ?? statement.key ?? '');
     const [ submitError, setSubmitError ] = useState(null);
+    const [ prefillUsed, setPrefillUsed ] = useState(false);
+
+    // Apply the history prefill ONCE when it arrives (the history query
+    // resolves after the card mounts), and only onto an untouched form:
+    // never clobber funds the user already picked, and only replace the
+    // description while it still holds its seeded default.
+    useEffect(() => {
+        if ( prefill == null || prefillUsed ) return;
+        if ( sourceId != null || targetId != null ) return;
+        setSourceId(prefill.sourceId);
+        setTargetId(prefill.targetId);
+        setDescription(prev =>
+            prev === (statement.note ?? statement.key ?? '') && prefill.description
+                ? prefill.description
+                : prev
+        );
+        setPrefillUsed(true);
+    }, [prefill, prefillUsed, sourceId, targetId, statement.note, statement.key]);
 
     const amount = Math.abs(statement.amount);
 
@@ -265,6 +453,20 @@ function InlinePendingReconcile({ statement }) {
         );
     }, [ canSubmit, description, statement.id, sourceId, targetId, amount, postMutate ]);
 
+    // The card-selection Enter hotkey: confirm this (the selected) card's
+    // reconcile when it is submittable and focus is not in a form control.
+    useEffect(() => {
+        if ( !hotkeysActive ) return;
+        const onKeyDown = (e) => {
+            if ( plainKey(e) !== 'Enter' || isTypingTarget(e.target) ) return;
+            if ( !canSubmit || postIsPending || submitError != null ) return;
+            e.preventDefault();
+            handleSubmit();
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [hotkeysActive, canSubmit, postIsPending, submitError, handleSubmit]);
+
     return (
         <div className={styles.inlineReconcile}>
             <div className={styles.inlineFundRow}>
@@ -296,7 +498,19 @@ function InlinePendingReconcile({ statement }) {
                 isRequired={true}
                 emptyStringPlaceholder="Enter description"
                 onChange={(v) => { setDescription(v); setSubmitError(null); }}
+                onKeyDown={(e) => {
+                    // Plain form behavior, independent of card selection:
+                    // Enter in the description field submits when ready.
+                    if ( e.key !== 'Enter' || !canSubmit || postIsPending || submitError != null ) return;
+                    e.preventDefault();
+                    handleSubmit();
+                }}
             />
+            { prefillUsed && prefill &&
+                <div className={styles.prefillHint}>
+                    Funds prefilled from &ldquo;{prefill.description}&rdquo; ({prefill.date}) — a past reconcile with a matching note.
+                </div>
+            }
             <div className={styles.inlineReconcileFooter}>
                 <span className={styles.inlineReconcileAmount}>
                     Reconciles <strong className="tabular-nums">{formatDollars(amount)}</strong>
@@ -405,11 +619,25 @@ function CardActions({ statement, isEditor, togglingId, onToggleIgnored, onActio
     );
 }
 
-function StatementCard({ statement, suggestions, isEditor, togglingId, onToggleIgnored, onAction }) {
+function StatementCard({
+    statement, suggestions, prefill, isEditor, togglingId,
+    isSelected, hotkeysActive, onSelect, onToggleIgnored, onAction
+}) {
     const state = statementStateOf(statement);
 
+    // Keep a keyboard-selected card in view as J/K walk the list.
+    const cardRef = useRef(null);
+    useEffect(() => {
+        if ( isSelected ) cardRef.current?.scrollIntoView({ block: 'nearest' });
+    }, [isSelected]);
+
     return (
-        <div className={styles.card} data-state={state}>
+        <div
+            ref={cardRef}
+            className={`${styles.card} ${isSelected ? styles.cardSelected : ''}`}
+            data-state={state}
+            onClick={() => onSelect(statement.id)}
+        >
             <div className={styles.cardHeader}>
                 <div className={styles.cardMeta}>
                     <StatementStateBadge statement={statement} />
@@ -428,8 +656,16 @@ function StatementCard({ statement, suggestions, isEditor, togglingId, onToggleI
             }
 
             { state === 'pending' && isEditor && <>
-                <SuggestedLinks statement={statement} suggestions={suggestions} />
-                <InlinePendingReconcile statement={statement} />
+                <SuggestedLinks
+                    statement={statement}
+                    suggestions={suggestions}
+                    hotkeysActive={isSelected && hotkeysActive}
+                />
+                <InlinePendingReconcile
+                    statement={statement}
+                    prefill={prefill}
+                    hotkeysActive={isSelected && hotkeysActive}
+                />
             </>}
 
             <CardActions
@@ -494,6 +730,7 @@ export default function Page() {
         [items]
     );
     const suggestionsByItemId = useLinkSuggestions(pendingItems, isEditor);
+    const prefillsByItemId = useReconcilePrefills(pendingItems, isEditor);
 
     const {
         mutate: patchMutate
@@ -541,6 +778,93 @@ export default function Page() {
     const targetKind = actionTarget?.kind ?? null;
     const targetStatement = actionTarget?.statement ?? null;
 
+    // --- Keyboard queue triage (see the helpers above the components) ----
+    const [ isShortcutsOpen, setIsShortcutsOpen ] = useState(false);
+    const [ selectedId, setSelectedId ] = useState(null);
+    const searchWrapRef = useRef(null);
+
+    const anyModalOpen = isImportOpen || actionTarget != null || isShortcutsOpen;
+    const hotkeysActive = !anyModalOpen;
+
+    const selectedIndex = useMemo(
+        () => items.findIndex(s => s.id === selectedId),
+        [items, selectedId]
+    );
+
+    // When the selected card leaves the list (confirmed/ignored away, or the
+    // filters changed), move the selection to the card now in its place --
+    // that's what keeps a confirm-J-confirm rhythm going with no mouse.
+    const lastIndexRef = useRef(0);
+    useEffect(() => {
+        if ( selectedIndex >= 0 ) lastIndexRef.current = selectedIndex;
+    }, [selectedIndex]);
+    useEffect(() => {
+        if ( selectedId == null || items.some(s => s.id === selectedId) ) return;
+        const idx = Math.min(lastIndexRef.current, items.length - 1);
+        setSelectedId(idx >= 0 ? items[idx].id : null);
+    }, [items, selectedId]);
+
+    const handleSelect = useCallback((id) => setSelectedId(id), []);
+
+    useEffect(() => {
+        if ( !hotkeysActive ) return;
+        const onKeyDown = (e) => {
+            const key = plainKey(e);
+            if ( key == null ) return;
+            if ( isTypingTarget(e.target) ) return;
+            const selected = items.find(s => s.id === selectedId) ?? null;
+            const state = selected ? statementStateOf(selected) : null;
+            switch ( key ) {
+                case 'j': case 'ArrowDown': {
+                    e.preventDefault();
+                    if ( items.length === 0 ) break;
+                    const idx = selectedIndex < 0 ? 0 : Math.min(selectedIndex + 1, items.length - 1);
+                    setSelectedId(items[idx].id);
+                    break;
+                }
+                case 'k': case 'ArrowUp': {
+                    e.preventDefault();
+                    if ( items.length === 0 ) break;
+                    const idx = selectedIndex < 0 ? items.length - 1 : Math.max(selectedIndex - 1, 0);
+                    setSelectedId(items[idx].id);
+                    break;
+                }
+                case 'Escape':
+                    setSelectedId(null);
+                    break;
+                case '/':
+                    e.preventDefault();
+                    searchWrapRef.current?.querySelector('input')?.focus();
+                    break;
+                case '?':
+                    setIsShortcutsOpen(true);
+                    break;
+                case 'i':
+                    if ( selected && isEditor && (state === 'pending' || state === 'ignored') ) {
+                        handleToggleIgnored(selected);
+                    }
+                    break;
+                case 'r':
+                    if ( selected && isEditor && state === 'pending' ) handleAction('reconcile', selected);
+                    break;
+                case 'v':
+                    if ( selected && state === 'reconciled' ) handleAction('viewGroup', selected);
+                    break;
+                case 'u':
+                    if ( selected && isEditor && state === 'reconciled' ) handleAction('unlink', selected);
+                    break;
+                case 'e':
+                    if ( selected && isEditor ) handleAction('edit', selected);
+                    break;
+                case 'd':
+                    if ( selected && isEditor ) handleAction('delete', selected);
+                    break;
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [hotkeysActive, items, selectedId, selectedIndex, isEditor, handleToggleIgnored, handleAction]);
+
     return (
         <div className={styles.page}>
             <div className={styles.topBar}>
@@ -579,14 +903,16 @@ export default function Page() {
                     onChange={setDateRange}
                     isFrozen={false}
                 />
-                <LabeledTextInput
-                    label="Search"
-                    value={searchTerm}
-                    isFrozen={false}
-                    allowNull={false}
-                    emptyStringPlaceholder="Search source, key, or note..."
-                    onChange={(value) => setSearchTerm(value ?? '')}
-                />
+                <div ref={searchWrapRef}>
+                    <LabeledTextInput
+                        label="Search"
+                        value={searchTerm}
+                        isFrozen={false}
+                        allowNull={false}
+                        emptyStringPlaceholder="Search source, key, or note..."
+                        onChange={(value) => setSearchTerm(value ?? '')}
+                    />
+                </div>
                 <div className={styles.filterBarCount}>
                     { statementsQ.data != null &&
                         `${totalItems} item${totalItems === 1 ? '' : 's'}`
@@ -629,8 +955,12 @@ export default function Page() {
                                             key={s.id}
                                             statement={s}
                                             suggestions={suggestionsByItemId.get(s.id)}
+                                            prefill={prefillsByItemId.get(s.id)}
                                             isEditor={isEditor}
                                             togglingId={togglingId}
+                                            isSelected={s.id === selectedId}
+                                            hotkeysActive={hotkeysActive}
+                                            onSelect={handleSelect}
                                             onToggleIgnored={handleToggleIgnored}
                                             onAction={handleAction}
                                         />
@@ -648,6 +978,13 @@ export default function Page() {
                         }
                     </div>
             }
+
+            <FloatingKeyboardHelp
+                isOpen={isShortcutsOpen}
+                setIsOpen={setIsShortcutsOpen}
+                intro="Click a card (or press J) to select it, then act on it without touching the mouse. Shortcuts are disabled while typing in a field or while a modal is open."
+                groups={SHORTCUT_GROUPS}
+            />
 
             <ImportStatementsCSVModal
                 isOpen={isImportOpen}
