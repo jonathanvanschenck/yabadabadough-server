@@ -21,7 +21,7 @@ import {
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
 import Spinner from './Spinner.jsx';
 import { Banner } from './Banner.jsx';
-import { fundIdsContainingMonthly } from './domain.js';
+import { fundIdsContainingMonthly, amountsMatch, transactionGroupTotal } from './domain.js';
 import { STATEMENT_PROFILES, GENERIC_PROFILE } from './statementProfiles.js';
 import {
     useGetFundsQuery,
@@ -2269,11 +2269,6 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
 }
 
 
-/** Amount comparisons over float dollars: within half a cent counts as equal. */
-function amountsMatch(a, b) {
-    return a != null && b != null && Math.abs(a - b) < 0.005;
-}
-
 const LINK_WINDOW_OPTIONS = [ 7, 14, 30, 90 ];
 const LINK_MAX_CANDIDATES = 30;
 
@@ -2320,7 +2315,7 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
         return (groupsQ.data ?? [])
             .filter(g => !term || g.description?.toLowerCase().includes(term))
             .map(g => {
-                const total = g.transactions.reduce((sum, t) => sum + t.amount, 0);
+                const total = transactionGroupTotal(g);
                 const amountMatch = amountsMatch(total, absAmount)
                     || g.transactions.some(t => amountsMatch(t.amount, absAmount));
                 return {

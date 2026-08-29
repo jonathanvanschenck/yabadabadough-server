@@ -152,6 +152,66 @@
     flex-wrap: wrap;
 }
 
+/* --- Inline link suggestions (pending cards) -------------------------- */
+
+.suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--u-success-border);
+    background: var(--u-success-bg);
+}
+
+.suggestionsLabel {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--u-success-text);
+}
+
+.suggestionRow {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.suggestionDate {
+    color: var(--font-secondary-color);
+    white-space: nowrap;
+}
+
+.suggestionDateDistance {
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.suggestionDescription {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggestionMeta {
+    color: var(--font-secondary-color);
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.suggestionActions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.suggestionError {
+    flex-basis: 100%;
+}
+
 /* --- Inline "easy path" reconcile (pending cards) -------------------- */
 
 .inlineReconcile {

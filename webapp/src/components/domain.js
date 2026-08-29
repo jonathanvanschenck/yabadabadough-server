@@ -148,6 +148,24 @@ export function fundIdsContainingMonthly(funds) {
 }
 
 /**
+ * Amount comparisons over float dollars: within half a cent counts as equal.
+ * Shared by the statement-linking surfaces (the fuzzy modal and the inline
+ * suggestions), so "matches the item's amount" means the same thing in both.
+ */
+export function amountsMatch(a, b) {
+    return a != null && b != null && Math.abs(a - b) < 0.005;
+}
+
+/**
+ * The sum of a transaction group's line amounts -- what a bank statement
+ * line for the whole group would show (up to sign; statement amounts are
+ * signed, group lines are magnitudes).
+ */
+export function transactionGroupTotal(group) {
+    return group.transactions.reduce((sum, t) => sum + t.amount, 0);
+}
+
+/**
  * A bank statement item's state: prefer the API's canonical `state` field,
  * deriving it from the raw flags only as a fallback (every item is in
  * exactly one of these).

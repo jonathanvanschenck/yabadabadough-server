@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
+import dayjs from 'dayjs';
 
 import {
     useGetStatementsPageQuery,
+    useGetTransactionGroupsQuery,
     usePatchStatementMutation,
+    usePostStatementLinkMutation,
     usePostTransactionGroupFromStatementsMutation
 } from '../../hooks/Queries.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
@@ -18,7 +21,12 @@ import {
 } from '../../components/Inputs.jsx';
 import { FundSearchableSelector } from '../../components/SpecialInputs.jsx';
 import { StatementStateBadge } from '../../components/Badges.jsx';
-import { formatDollars, statementStateOf } from '../../components/domain.js';
+import {
+    formatDollars,
+    statementStateOf,
+    amountsMatch,
+    transactionGroupTotal
+} from '../../components/domain.js';
 import {
     ImportStatementsCSVModal,
     ReconcileStatementsModal,
@@ -44,6 +52,160 @@ const SORT_NAMES = [
     'Amount (high → low)', 'Amount (low → high)',
     'Source (A → Z)', 'State'
 ];
+
+// Inline link suggestions are deliberately STRICT -- they only surface when a
+// group is very likely THE match, unlike the fuzzy ranking in
+// LinkStatementModal (which stays reachable from the card's link action):
+//  - the group's date is within ±SUGGEST_WINDOW_DAYS of the item's date
+//  - the group's TOTAL equals the item's magnitude (per-line matches are the
+//    modal's job -- a coincidental line match is not "very likely")
+//  - the group does not already reconcile an item from the SAME source (one
+//    group never explains two lines of one bank account; a transfer's second
+//    side -- already reconciling the OTHER account's line -- still suggests)
+// Ranked closest-date first, then fewest already-linked statements, and capped
+// so a generic amount ($20.00 on payday) can't flood a card.
+const SUGGEST_WINDOW_DAYS = 2;
+const SUGGEST_MAX = 2;
+
+/**
+ * Suggestions for every pending item on the page, as a Map of item id ->
+ * [{ group, total, dateDistance }], built from ONE groups query spanning the
+ * page (allocation/eom_cleanup groups are excluded server-side -- linking
+ * them is refused anyway).
+ */
+function useLinkSuggestions(pendingItems, enabled) {
+    const span = useMemo(() => {
+        if ( pendingItems.length === 0 ) return null;
+        const dates = pendingItems.map(s => s.date).toSorted();
+        return {
+            since: dayjs(dates[0]).subtract(SUGGEST_WINDOW_DAYS, 'day').format('YYYY-MM-DD'),
+            until: dayjs(dates[dates.length - 1]).add(SUGGEST_WINDOW_DAYS, 'day').format('YYYY-MM-DD'),
+        };
+    }, [pendingItems]);
+
+    const groupsQ = useGetTransactionGroupsQuery(
+        {
+            since: span?.since,
+            until: span?.until,
+            allocation: false,
+            eomCleanup: false,
+        },
+        { enabled: enabled && span != null }
+    );
+
+    return useMemo(() => {
+        const map = new Map();
+        const groups = groupsQ.data ?? [];
+        if ( groups.length === 0 ) return map;
+        for ( const item of pendingItems ) {
+            const absAmount = Math.abs(item.amount);
+            const matches = groups
+                .filter(g => amountsMatch(transactionGroupTotal(g), absAmount))
+                .map(g => ({
+                    group: g,
+                    total: transactionGroupTotal(g),
+                    dateDistance: Math.abs(dayjs(g.date).diff(dayjs(item.date), 'day')),
+                }))
+                .filter(c => c.dateDistance <= SUGGEST_WINDOW_DAYS)
+                .filter(c => !c.group.statements.some(s => s.source === item.source))
+                .toSorted((a, b) =>
+                    a.dateDistance !== b.dateDistance ? a.dateDistance - b.dateDistance
+                    : a.group.statements.length !== b.group.statements.length
+                        ? a.group.statements.length - b.group.statements.length
+                    : b.group.id - a.group.id
+                );
+            if ( matches.length > 0 ) map.set(item.id, matches.slice(0, SUGGEST_MAX));
+        }
+        return map;
+    }, [groupsQ.data, pendingItems]);
+}
+
+/**
+ * One suggested group on a pending card: the group's facts plus a one-click
+ * Link button (the same POST /statement/:id/link as the modal -- no
+ * transactions are created, the group just absorbs the bank line). Success
+ * needs no handler: the broadcast invalidation re-renders the card as
+ * reconciled.
+ */
+function SuggestedLink({ statement, suggestion }) {
+    const navigate = useNavigate();
+    const [ submitError, setSubmitError ] = useState(null);
+    const { group, total, dateDistance } = suggestion;
+
+    const {
+        mutate: linkMutate,
+        isPending: linkIsPending
+    } = usePostStatementLinkMutation();
+
+    const handleLink = useCallback(() => {
+        linkMutate(
+            { formData: { id: statement.id, group_id: group.id } },
+            {
+                onError: (err) => setSubmitError({
+                    message: err.message,
+                    details: err.details?.message
+                })
+            }
+        );
+    }, [linkMutate, statement.id, group.id]);
+
+    return (
+        <div className={styles.suggestionRow}>
+            <span className={`tabular-nums ${styles.suggestionDate}`}>
+                {group.date}
+                { dateDistance > 0 &&
+                    <span className={styles.suggestionDateDistance}> (±{dateDistance}d)</span>
+                }
+            </span>
+            <span className={styles.suggestionDescription} title={group.description}>
+                {group.description}
+            </span>
+            <span className="tabular-nums">{formatDollars(total)}</span>
+            <span className={styles.suggestionMeta}>
+                {group.transactions.length} txn{group.transactions.length === 1 ? '' : 's'}
+                { group.statements.length > 0 && ` · reconciles ${group.statements.length}` }
+            </span>
+            <span className={styles.suggestionActions}>
+                <TightIconButton
+                    icon="fa-arrow-up-right-from-square"
+                    ariaLabel="View this transaction group"
+                    title="View this transaction group"
+                    onClick={() => navigate(`/transaction-group/${group.id}`)}
+                />
+                <SpinnerButton
+                    isPending={linkIsPending}
+                    disabled={submitError != null}
+                    text="Link"
+                    ariaLabel={`Link to "${group.description}"`}
+                    onClick={handleLink}
+                />
+            </span>
+            { submitError &&
+                <div className={`${styles.inlineError} ${styles.suggestionError}`} role="alert">
+                    {submitError.message}{submitError.details ? `: ${submitError.details}` : ''}
+                </div>
+            }
+        </div>
+    );
+}
+
+/**
+ * The "very likely match" block on a pending card: renders only when the
+ * strict heuristic found something, so most cards carry no extra noise.
+ */
+function SuggestedLinks({ statement, suggestions }) {
+    if ( !suggestions?.length ) return null;
+    return (
+        <div className={styles.suggestions}>
+            <div className={styles.suggestionsLabel}>
+                Likely match{suggestions.length === 1 ? '' : 'es'} — link without creating transactions:
+            </div>
+            { suggestions.map(s => (
+                <SuggestedLink key={s.group.id} statement={statement} suggestion={s} />
+            ))}
+        </div>
+    );
+}
 
 /**
  * The inline "easy path" reconcile shown on a PENDING card for editors: pick a
@@ -243,7 +405,7 @@ function CardActions({ statement, isEditor, togglingId, onToggleIgnored, onActio
     );
 }
 
-function StatementCard({ statement, isEditor, togglingId, onToggleIgnored, onAction }) {
+function StatementCard({ statement, suggestions, isEditor, togglingId, onToggleIgnored, onAction }) {
     const state = statementStateOf(statement);
 
     return (
@@ -265,9 +427,10 @@ function StatementCard({ statement, isEditor, togglingId, onToggleIgnored, onAct
                 </div>
             }
 
-            { state === 'pending' && isEditor &&
+            { state === 'pending' && isEditor && <>
+                <SuggestedLinks statement={statement} suggestions={suggestions} />
                 <InlinePendingReconcile statement={statement} />
-            }
+            </>}
 
             <CardActions
                 statement={statement}
@@ -318,9 +481,19 @@ export default function Page() {
         offset: (page - 1) * pageSize,
     });
 
-    const items = statementsQ.data?.data ?? [];
+    const rawItems = statementsQ.data?.data;
+    const items = useMemo(() => rawItems ?? [], [rawItems]);
     const totalItems = statementsQ.data?.total ?? 0;
     const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    // Inline link suggestions for the pending cards on this page (see
+    // useLinkSuggestions for the strict heuristic). Editors only -- the Link
+    // button is the whole point of a suggestion.
+    const pendingItems = useMemo(
+        () => items.filter(s => statementStateOf(s) === 'pending'),
+        [items]
+    );
+    const suggestionsByItemId = useLinkSuggestions(pendingItems, isEditor);
 
     const {
         mutate: patchMutate
@@ -455,6 +628,7 @@ export default function Page() {
                                         <StatementCard
                                             key={s.id}
                                             statement={s}
+                                            suggestions={suggestionsByItemId.get(s.id)}
                                             isEditor={isEditor}
                                             togglingId={togglingId}
                                             onToggleIgnored={handleToggleIgnored}
