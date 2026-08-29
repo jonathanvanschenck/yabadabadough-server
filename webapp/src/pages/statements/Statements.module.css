@@ -159,6 +159,13 @@
     flex-wrap: wrap;
 }
 
+/* Keep the bottom-right corner clear of the floating keyboard-help button
+ * (2.5rem wide at right: 1.25rem), so it never occludes the next-page
+ * control. */
+.paginationRow {
+    padding-right: 4rem;
+}
+
 /* --- Inline link suggestions (pending cards) -------------------------- */
 
 .suggestions {

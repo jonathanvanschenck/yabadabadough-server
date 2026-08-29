@@ -250,6 +250,7 @@ const SHORTCUT_GROUPS = [
         title: 'Selected pending card',
         shortcuts: [
             { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
+            { keys: [ '1', '2', '3' ], description: 'Jump into the From / To / Description fields — 1 and 2 open the fund search (type, then Enter to pick), 3 selects the description text; Esc returns to the card' },
             { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
             { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
             { keys: [ 'I' ], description: 'Ignore the item (I again on an ignored card un-ignores)' },
@@ -414,6 +415,14 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
 
     const amount = Math.abs(statement.amount);
 
+    // Field-jump hotkey targets (1/2/3 on the selected card). The fund
+    // selectors open on trigger click -- and opening autofocuses their search
+    // input -- so a synthetic click is the whole "jump into fund search"
+    // gesture.
+    const sourceWrapRef = useRef(null);
+    const targetWrapRef = useRef(null);
+    const descriptionWrapRef = useRef(null);
+
     const descOk = !!description?.trim();
     const fundsOk = sourceId != null && targetId != null && sourceId !== targetId;
     const canSubmit = descOk && fundsOk;
@@ -453,15 +462,36 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
         );
     }, [ canSubmit, description, statement.id, sourceId, targetId, amount, postMutate ]);
 
-    // The card-selection Enter hotkey: confirm this (the selected) card's
-    // reconcile when it is submittable and focus is not in a form control.
+    // The card-selection hotkeys for this (the selected) card's form: Enter
+    // confirms when submittable; 1/2/3 jump into the From/To/Description
+    // fields (so a no-prefill card is still keyboard-only: 1, type, Enter,
+    // 2, type, Enter, Enter).
     useEffect(() => {
         if ( !hotkeysActive ) return;
         const onKeyDown = (e) => {
-            if ( plainKey(e) !== 'Enter' || isTypingTarget(e.target) ) return;
-            if ( !canSubmit || postIsPending || submitError != null ) return;
-            e.preventDefault();
-            handleSubmit();
+            if ( isTypingTarget(e.target) ) return;
+            switch ( plainKey(e) ) {
+                case 'Enter':
+                    if ( !canSubmit || postIsPending || submitError != null ) return;
+                    e.preventDefault();
+                    handleSubmit();
+                    break;
+                case '1':
+                    e.preventDefault();
+                    sourceWrapRef.current?.querySelector('[role="combobox"]')?.click();
+                    break;
+                case '2':
+                    e.preventDefault();
+                    targetWrapRef.current?.querySelector('[role="combobox"]')?.click();
+                    break;
+                case '3': {
+                    e.preventDefault();
+                    const input = descriptionWrapRef.current?.querySelector('input');
+                    input?.focus();
+                    input?.select();
+                    break;
+                }
+            }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
@@ -470,42 +500,53 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
     return (
         <div className={styles.inlineReconcile}>
             <div className={styles.inlineFundRow}>
-                <FundSearchableSelector
-                    label="From (source)"
-                    value={sourceId}
-                    onChange={(v) => { setSourceId(v); setSubmitError(null); }}
+                <div ref={sourceWrapRef}>
+                    <FundSearchableSelector
+                        label="From (source)"
+                        value={sourceId}
+                        onChange={(v) => { setSourceId(v); setSubmitError(null); }}
+                        isFrozen={false}
+                        isRequired={true}
+                        allowNull={false}
+                        validityMessage={
+                            fundsOk || sourceId == null ? undefined
+                            : (sourceId === targetId ? 'Source and target must differ.' : undefined)
+                        }
+                    />
+                </div>
+                <div ref={targetWrapRef}>
+                    <FundSearchableSelector
+                        label="To (target)"
+                        value={targetId}
+                        onChange={(v) => { setTargetId(v); setSubmitError(null); }}
+                        isFrozen={false}
+                        isRequired={true}
+                        allowNull={false}
+                    />
+                </div>
+            </div>
+            <div ref={descriptionWrapRef}>
+                <LabeledTextInput
+                    label="Description"
+                    value={description}
                     isFrozen={false}
                     isRequired={true}
-                    allowNull={false}
-                    validityMessage={
-                        fundsOk || sourceId == null ? undefined
-                        : (sourceId === targetId ? 'Source and target must differ.' : undefined)
-                    }
-                />
-                <FundSearchableSelector
-                    label="To (target)"
-                    value={targetId}
-                    onChange={(v) => { setTargetId(v); setSubmitError(null); }}
-                    isFrozen={false}
-                    isRequired={true}
-                    allowNull={false}
+                    emptyStringPlaceholder="Enter description"
+                    onChange={(v) => { setDescription(v); setSubmitError(null); }}
+                    onKeyDown={(e) => {
+                        // Plain form behavior, independent of card selection:
+                        // Enter submits when ready; Escape hands focus back to
+                        // the page so J/K navigation resumes.
+                        if ( e.key === 'Escape' ) {
+                            e.currentTarget.blur();
+                            return;
+                        }
+                        if ( e.key !== 'Enter' || !canSubmit || postIsPending || submitError != null ) return;
+                        e.preventDefault();
+                        handleSubmit();
+                    }}
                 />
             </div>
-            <LabeledTextInput
-                label="Description"
-                value={description}
-                isFrozen={false}
-                isRequired={true}
-                emptyStringPlaceholder="Enter description"
-                onChange={(v) => { setDescription(v); setSubmitError(null); }}
-                onKeyDown={(e) => {
-                    // Plain form behavior, independent of card selection:
-                    // Enter in the description field submits when ready.
-                    if ( e.key !== 'Enter' || !canSubmit || postIsPending || submitError != null ) return;
-                    e.preventDefault();
-                    handleSubmit();
-                }}
-            />
             { prefillUsed && prefill &&
                 <div className={styles.prefillHint}>
                     Funds prefilled from &ldquo;{prefill.description}&rdquo; ({prefill.date}) — a past reconcile with a matching note.
@@ -966,14 +1007,16 @@ export default function Page() {
                                         />
                                     ))}
                                 </div>
-                                <Pagination
-                                    page={page}
-                                    pageSize={pageSize}
-                                    totalItems={totalItems}
-                                    onPageChange={setPage}
-                                    onPageSizeChange={setPageSize}
-                                    itemLabel="item"
-                                />
+                                <div className={styles.paginationRow}>
+                                    <Pagination
+                                        page={page}
+                                        pageSize={pageSize}
+                                        totalItems={totalItems}
+                                        onPageChange={setPage}
+                                        onPageSizeChange={setPageSize}
+                                        itemLabel="item"
+                                    />
+                                </div>
                             </>
                         }
                     </div>
