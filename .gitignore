@@ -5,3 +5,6 @@ db/backup.bkp
 keys
 webapp/dist
 bsi.csv
+
+# Scratch dev server state (scripts/scratch-server.sh)
+scratch
