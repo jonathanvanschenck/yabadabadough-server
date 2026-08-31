@@ -77,6 +77,10 @@ CREATE TABLE funds (
     id                INTEGER PRIMARY KEY,
     name              TEXT NOT NULL UNIQUE,
 
+    -- Free-form prose: what the fund is for and the intentions behind it
+    -- (NULL = none). Added in migration 0001-0002.
+    description       TEXT,
+
     parent_id         INTEGER REFERENCES funds(id)
                         ON DELETE RESTRICT
                         ON UPDATE CASCADE, -- NULL for roots
@@ -401,4 +405,4 @@ ALTER TABLE funds
 CREATE INDEX idx_funds_finalization_id ON funds(finalization_id);
 
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;

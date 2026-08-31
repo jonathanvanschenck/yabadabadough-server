@@ -151,6 +151,7 @@ export function CreateFundModal({
 
     const defaultData = () => ({
         name: initialName,
+        description: null,
         parent_id: initialParentId,
         tracked: initialTracked,
         monthly: false,
@@ -301,6 +302,15 @@ export function CreateFundModal({
                         allowNull={true}
                     />
                 </CardAutoGrid>
+                <LabeledTextArea
+                    label="Description"
+                    value={data.description}
+                    isFrozen={false}
+                    minHeight="4rem"
+                    nullPlaceholder="(none) — what is this fund for, and what are the intentions behind it?"
+                    onChange={(value) => handleChange('description', value || null)}
+                    allowNull={true}
+                />
             </CardSection>
 
             <CardActionFooter>
@@ -324,6 +334,7 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
 
     const initialData = useCallback(() => ({
         name: fund?.name ?? null,
+        description: fund?.description ?? null,
         parent_id: fund?.parent_id ?? null,
         tracked: fund?.status?.tracked ?? false,
         monthly: fund?.status?.monthly ?? false,
@@ -351,7 +362,7 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
     };
 
     const patch = changedFields(initialData(), data, [
-        'name', 'parent_id', 'tracked', 'monthly', 'pool', 'start_date', 'start_balance', 'color'
+        'name', 'description', 'parent_id', 'tracked', 'monthly', 'pool', 'start_date', 'start_balance', 'color'
     ]);
 
     // History-affecting fields are immutable once ANY finalization exists for
@@ -494,6 +505,16 @@ export function EditFundModal({ isOpen, setIsOpen, fund }) {
                         allowNull={true}
                     />
                 </CardAutoGrid>
+                <LabeledTextArea
+                    label="Description"
+                    value={data.description}
+                    isFrozen={false}
+                    isChanged={'description' in patch}
+                    minHeight="4rem"
+                    nullPlaceholder="(none) — what is this fund for, and what are the intentions behind it?"
+                    onChange={(value) => handleChange('description', value || null)}
+                    allowNull={true}
+                />
             </CardSection>
 
             <CardActionFooter>

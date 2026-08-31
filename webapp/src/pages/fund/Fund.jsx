@@ -16,7 +16,7 @@ import {
     useProvisionalFrontier,
 } from '../../hooks/Queries.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { LabeledNumberInput, LabeledTextInput, LabeledDateInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
+import { LabeledNumberInput, LabeledTextInput, LabeledTextArea, LabeledDateInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, LabeledFundColorPicker } from '../../components/SpecialInputs.jsx';
 import { Card, CardActionHeader, CardSection, CardAutoGrid, CardActionFooter, CollapsibleCardSection, CardErrorSection } from '../../components/Card.jsx';
 import { ConfirmationModal, CardModal } from '../../components/Modal.jsx';
@@ -243,6 +243,7 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
 
 const EMPTY_FORM = {
     name: null,
+    description: null,
     parent_id: null,
     tracked: false,
     start_date: null,
@@ -256,6 +257,7 @@ const EMPTY_FORM = {
 function formFromFund(fundDetail) {
     return {
         name: fundDetail.name,
+        description: fundDetail.description ?? null,
         parent_id: fundDetail.parent_id,
         tracked: fundDetail.status.tracked,
         start_date: fundDetail.start?.date ?? null,
@@ -460,6 +462,20 @@ const InfoCard = forwardRef(({ fundIdStr, fundDetail, anchor }, ref) => {
                         inputTitle={historyLocked ? lockedTitle : "Monthly funds reset into their nearest pool ancestor at end of month"}
                     />
                 </CardAutoGrid>
+            </CardSection>
+
+            <CardSection title="Description">
+                <LabeledTextArea
+                    label=""
+                    value={formData.description}
+                    // Empty string means "cleared": store null, matching the API
+                    onChange={(value) => handleInputChange('description', value || null)}
+                    isFrozen={!isEditing}
+                    isChanged={formData.description !== originalData.description}
+                    minHeight="4rem"
+                    allowNull={true}
+                    nullPlaceholder="(none) — what is this fund for, and what are the intentions behind it?"
+                />
             </CardSection>
 
             { (formData.tracked || fundDetail?.status?.tracked) &&

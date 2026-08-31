@@ -979,6 +979,7 @@ function useInvalidatingMutation(mutationFn) {
  * @typedef {object} PostFundMutationData
  * @property {object} formData - The payload (snake_case, matching the API)
  * @property {string} formData.name
+ * @property {string|null} [formData.description] - What the fund is for and its intentions
  * @property {boolean} formData.tracked
  * @property {boolean} [formData.monthly] - Requires tracked, a parent, and a pool ancestor
  * @property {boolean} [formData.pool] - Requires tracked; excludes monthly
@@ -1009,6 +1010,7 @@ export function usePostFundMutation() {
  * @property {object} formData - The payload (snake_case, matching the API)
  * @property {number} formData.id - The fund ID
  * @property {string} [formData.name]
+ * @property {string|null} [formData.description] - What the fund is for; null clears it
  * @property {boolean} [formData.tracked]
  * @property {boolean} [formData.monthly]
  * @property {boolean} [formData.pool]

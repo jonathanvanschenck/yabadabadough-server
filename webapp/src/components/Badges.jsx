@@ -52,10 +52,16 @@ export function FundTypeBadge({ status, label, color, ...rest }) {
 export function FundLabel({ fund, dot = true, showType = false, size, className, style, ...rest }) {
     if ( !fund ) return null;
     const isDeprecated = fund.deprecated != null;
+    // Hover reveals the fund's story: deprecation status first (it changes how
+    // the fund behaves), then the free-form description when one is set
+    const title = [
+        isDeprecated ? `Deprecated — last active ${fund.deprecated}` : null,
+        fund.description || null,
+    ].filter(Boolean).join('\n') || undefined;
     return <span
         className={className}
         style={style}
-        title={isDeprecated ? `Deprecated — last active ${fund.deprecated}` : undefined}
+        title={title}
         {...rest}
     >
         {dot && <FundColorDot color={fund.color} size={size} marginRight="0.5rem" />}

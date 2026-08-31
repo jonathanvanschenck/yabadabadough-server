@@ -38,6 +38,7 @@ const only_fund_color = (value) => FUND_COLORS.includes(value) ? value : undefin
 // Shared between POST (with required flags) and PATCH (all optional)
 const FUND_BODY_FIELDS = {
     name: [ "name", only_non_empty_string, "non-empty string" ],
+    description: [ "description", nullable(only_non_empty_string), "non-empty string or null" ],
     tracked: [ "tracked", only_boolean, "boolean" ],
     monthly: [ "monthly", only_boolean, "boolean" ],
     pool: [ "pool", only_boolean, "boolean" ],
@@ -53,6 +54,7 @@ const FUND_BODY_FIELDS = {
 // added where the PATCH schema is declared
 const FundBodyProperties = {
     name: { type: 'string' },
+    description: { type: 'string', nullable: true, description: "Free-form prose: what the fund is for and the intentions behind it (null clears it)" },
     tracked: { type: 'boolean' },
     monthly: { type: 'boolean', description: "Resets into its nearest pool ancestor at end of month; requires tracked and a parent with a pool ancestor" },
     pool: { type: 'boolean', description: "Source/sink of money for its descendants; requires tracked, excludes monthly" },
@@ -460,6 +462,7 @@ module.exports = class FundsCollection extends Collection {
             async parse_request(req) {
                 return parse_body_fields(req.body, [
                     [ ...FUND_BODY_FIELDS.name, { required: true } ],
+                    FUND_BODY_FIELDS.description,
                     [ ...FUND_BODY_FIELDS.tracked, { required: true } ],
                     FUND_BODY_FIELDS.monthly,
                     FUND_BODY_FIELDS.pool,
@@ -526,6 +529,7 @@ module.exports = class FundsCollection extends Collection {
             async parse_request(req) {
                 const patch = parse_body_fields(req.body, [
                     FUND_BODY_FIELDS.name,
+                    FUND_BODY_FIELDS.description,
                     FUND_BODY_FIELDS.tracked,
                     FUND_BODY_FIELDS.monthly,
                     FUND_BODY_FIELDS.pool,
