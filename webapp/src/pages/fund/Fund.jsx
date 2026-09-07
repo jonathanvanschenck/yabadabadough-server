@@ -25,6 +25,7 @@ import SearchableTable from '../../components/SearchableTable.jsx';
 import { IconButton, SpinnerButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
 import { fundTypeOf, formatDollars, monthLabel, fundIdsContainingMonthly } from '../../components/domain.js';
+import { Money } from '../../components/Money.jsx';
 import { Banner } from '../../components/Banner.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import styles from './Fund.module.css';
@@ -198,8 +199,8 @@ function DeprecateFund({ fundIdStr, fundDetail }) {
                             value={date == null ? "—"
                                 : balanceIsPending ? "..."
                                 : balanceIsProvisional
-                                    ? <ProvisionalValue som={firstUnfinalizedSom}>{formatDollars(balance)}</ProvisionalValue>
-                                    : formatDollars(balance)}
+                                    ? <ProvisionalValue som={firstUnfinalizedSom}><Money value={balance} /></ProvisionalValue>
+                                    : <Money value={balance} />}
                             isFrozen={true}
                         />
                         <FundSearchableSelector
@@ -563,8 +564,8 @@ const BalancesCard = forwardRef(({ fundId, fundDetail, anchor }, ref) => {
     const currentBalance = balanceIsPending
         ? "..."
         : isProvisional
-            ? <ProvisionalValue som={firstUnfinalizedSom}>{formatDollars(balanceData?.balance)}</ProvisionalValue>
-            : formatDollars(balanceData?.balance);
+            ? <ProvisionalValue som={firstUnfinalizedSom}><Money value={balanceData?.balance} /></ProvisionalValue>
+            : <Money value={balanceData?.balance} />;
 
     return (
         <Card ref={ref} style={{ marginTop: '2rem' }}>

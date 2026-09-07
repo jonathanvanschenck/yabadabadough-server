@@ -512,12 +512,11 @@ td.colHover {
     color: var(--font-faint);
 }
 
-.negative {
-    color: var(--u-danger-text);
-}
-
-.zero {
-    color: var(--font-faint);
+/* The icon-only outstanding mark sits between the description and the row's
+ * ghost buttons, so it needs its own left gap -- the icon carries none of its
+ * own without a label beside it */
+.outstandingMark {
+    margin-left: 0.5rem;
 }
 
 /* Sub-rows of an expanded group */

@@ -389,6 +389,10 @@ export function DateInput({
             style={{ top: position.top, left: position.left }}
             role="dialog"
             aria-label="Choose date"
+            // Portaled to document.body, so it sits OUTSIDE any modal that
+            // opened it -- this marks it as still "inside" for focus purposes
+            // (see hooks/ModalFocus.jsx)
+            data-focus-overlay=""
         >
             <div className={styles.dpHeader}>
                 <button
@@ -1174,9 +1178,11 @@ export function SearchableSelector({
         if (!isOpen || isPending) return null;
 
         return (
-            <div 
+            <div
                 ref={dropdownRef}
                 className={`${styles.searchableSelectorDropdownPortal} ${dropdownPosition.flipped ? styles.flipped : ''}`}
+                // Portaled to document.body: see hooks/ModalFocus.jsx
+                data-focus-overlay=""
                 style={{
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,

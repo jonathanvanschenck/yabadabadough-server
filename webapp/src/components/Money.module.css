@@ -1,0 +1,16 @@
+/* The one place the money tones are defined. Page stylesheets must not
+   redefine these -- that is exactly the drift this component exists to stop. */
+
+.negative {
+    color: var(--u-danger-text);
+}
+
+/* An exact zero is almost never the thing being looked for, so it recedes
+   rather than competing with the real figures around it */
+.zero {
+    color: var(--font-faint);
+}
+
+.missing {
+    color: var(--font-faint);
+}

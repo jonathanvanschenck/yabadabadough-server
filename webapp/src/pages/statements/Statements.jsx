@@ -21,8 +21,8 @@ import {
 } from '../../components/Inputs.jsx';
 import { FundSearchableSelector } from '../../components/SpecialInputs.jsx';
 import { StatementStateBadge } from '../../components/Badges.jsx';
+import { Money } from '../../components/Money.jsx';
 import {
-    formatDollars,
     statementStateOf,
     amountsMatch,
     transactionGroupTotal
@@ -252,6 +252,7 @@ const SHORTCUT_GROUPS = [
             { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
             { keys: [ 'S', 'T', 'D' ], description: 'Jump into the Source / Target / Description fields — S and T open the fund search (type, then Enter to pick), D selects the description text; Esc returns to the card' },
             { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
+            { keys: [ 'Shift', 'L' ], description: 'Open the full link picker — search every group, including ones the suggester did not surface' },
             { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
             { keys: [ 'I' ], description: 'Ignore the item (I again on an ignored card un-ignores)' },
         ],
@@ -302,11 +303,13 @@ function SuggestedLink({ statement, suggestion, hotkeyLink = false }) {
     }, [linkMutate, statement.id, group.id]);
 
     // The card-selection "L" hotkey -- only the FIRST suggestion of the
-    // selected card gets hotkeyLink, so L is never ambiguous.
+    // selected card gets hotkeyLink, so L is never ambiguous. Shift+L is a
+    // DIFFERENT action (open the full picker), handled by the page, so let it
+    // pass rather than swallowing it here.
     useEffect(() => {
         if ( !hotkeyLink ) return;
         const onKeyDown = (e) => {
-            if ( plainKey(e) !== 'l' || isTypingTarget(e.target) ) return;
+            if ( plainKey(e) !== 'l' || e.shiftKey || isTypingTarget(e.target) ) return;
             if ( linkIsPending || submitError != null ) return;
             e.preventDefault();
             handleLink();
@@ -326,7 +329,7 @@ function SuggestedLink({ statement, suggestion, hotkeyLink = false }) {
             <span className={styles.suggestionDescription} title={group.description}>
                 {group.description}
             </span>
-            <span className="tabular-nums">{formatDollars(total)}</span>
+            <Money value={total} />
             <span className={styles.suggestionMeta}>
                 {group.transactions.length} txn{group.transactions.length === 1 ? '' : 's'}
                 { group.statements.length > 0 && ` · reconciles ${group.statements.length}` }
@@ -554,7 +557,7 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
             }
             <div className={styles.inlineReconcileFooter}>
                 <span className={styles.inlineReconcileAmount}>
-                    Reconciles <strong className="tabular-nums">{formatDollars(amount)}</strong>
+                    Reconciles <strong><Money value={amount} /></strong>
                 </span>
                 <SpinnerButton
                     isPending={postIsPending}
@@ -685,9 +688,7 @@ function StatementCard({
                     <span className={`tabular-nums ${styles.cardDate}`}>{statement.date}</span>
                     <span className={styles.cardSource}>{statement.source}</span>
                 </div>
-                <span className={`tabular-nums ${styles.cardAmount} ${statement.amount < 0 ? styles.negativeAmount : ''}`}>
-                    {formatDollars(statement.amount)}
-                </span>
+                <Money value={statement.amount} className={styles.cardAmount} faintZero={false} />
             </div>
 
             { (statement.note || statement.key) &&
@@ -883,6 +884,17 @@ export default function Page() {
                 case 'i':
                     if ( selected && isEditor && (state === 'pending' || state === 'ignored') ) {
                         handleToggleIgnored(selected);
+                    }
+                    break;
+                case 'l':
+                    // Plain L belongs to the first suggestion (handled on the
+                    // suggestion row itself, and a no-op when there is none);
+                    // Shift+L opens the full picker, which is the only way to
+                    // reach a group the suggester did not surface -- a cheque
+                    // written months before it cleared, say.
+                    if ( e.shiftKey && selected && isEditor && state === 'pending' ) {
+                        e.preventDefault();
+                        handleAction('link', selected);
                     }
                     break;
                 case 'r':

@@ -23,6 +23,7 @@ import {
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
 import { FinalizedBadge, FundLabel, OutstandingBadge } from '../../components/Badges.jsx';
+import { Money } from '../../components/Money.jsx';
 import { HoverPopover } from '../../components/HoverPopover.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
@@ -121,16 +122,12 @@ function OutsideBreakdown({ breakdown, total }) {
                     { fund
                         ? <FundLabel fund={fund} />
                         : <span className={styles.breakdownUnknown}>Fund #{fundId}</span> }
-                    <span className={`tabular-nums ${amount < 0 ? styles.negative : ''}`}>
-                        {formatDollars(amount)}
-                    </span>
+                    <Money value={amount} />
                 </div>
             ))}
             <div className={`${styles.breakdownRow} ${styles.breakdownNet}`}>
                 <span>Net</span>
-                <span className={`tabular-nums ${total < 0 ? styles.negative : ''}`}>
-                    {formatDollars(total)}
-                </span>
+                <Money value={total} />
             </div>
         </div>
     );
@@ -190,14 +187,8 @@ function AmountCell({
                     ? <span className={styles.omittedMark} title="Shown on the expanded transaction rows below">⋯</span>
                     : <>
                         { provisionalSom
-                            ? <ProvisionalValue som={provisionalSom}>
-                                <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                                    {formatDollars(value)}
-                                </span>
-                            </ProvisionalValue>
-                            : <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                                {formatDollars(value)}
-                            </span>
+                            ? <ProvisionalValue som={provisionalSom}><Money value={value} /></ProvisionalValue>
+                            : <Money value={value} />
                         }
                         { isTotalCell &&
                             <span className={styles.breakdownSlot}>
@@ -293,7 +284,7 @@ function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hovere
                 </NavLink>
                 {/* Icon-only: the month grid is dense, and the badge's title
                   * carries the "waiting since / how long" detail on hover */}
-                <OutstandingBadge group={group} label="" />
+                <OutstandingBadge group={group} label="" className={styles.outstandingMark} />
                 { hasNote(group.note) &&
                     <GhostButton
                         icon="fa-circle-info"
@@ -1087,7 +1078,7 @@ export default function Page() {
 
             { hasSelection &&
                 <div className={styles.selectionReadout} data-selection-readout>
-                    <span className={styles.selectionSum}>{formatDollars(selectionSum)}</span>
+                    <Money value={selectionSum} className={styles.selectionSum} faintZero={false} />
                     <span className={styles.selectionMeta}>
                         { selectionCount === 0
                             ? 'no values selected'

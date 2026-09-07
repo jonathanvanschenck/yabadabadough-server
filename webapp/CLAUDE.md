@@ -157,6 +157,28 @@ shared predicates in `src/hooks/provisional.js` (the server's `lib/provisional.m
 like `queryKeys.js`/`fundColors.js`). See the server CLAUDE.md for the rule and its
 deliberate off-by-one.
 
+Every rendered dollar amount goes through **`<Money value={...} />`** — never
+`formatDollars` in JSX, and never a page-local `.negative` rule. It owns the whole reading of
+an amount: danger tone for negatives, faint for an exact zero (`faintZero={false}` where a
+zero is a real answer rather than noise), an em-dash for a missing value (`placeholder` to
+override in prose), and `tabular-nums` so columns align. `formatDollars` stays the way to get
+the STRING — titles, aria labels, template literals that build a sentence — and `<Money>`
+delegates to it, so the two cannot disagree about the format. This exists because the tones
+HAD drifted: the transactions grid and statements cards each carried their own `.negative`
+rule while balances, allocations, the fund pages and every modal had none, and the modals used
+a private `formatMoney` with no thousands separators, so the same amount read three ways.
+
+Modal focus is owned entirely by `CardModal` via **`useModalFocus`** (`hooks/ModalFocus.jsx`),
+built like `useStackedEscapeKey`: one capture-phase listener and a global stack where only the
+TOP-most modal traps, so nesting works and a child hands control back on close. It traps Tab
+inside the whole modal (the header close button included), takes initial focus from the modal
+BODY only (`[data-autofocus]`, else the first form control — never the close button), and
+restores focus to whatever opened it on dismissal, so tabbing resumes in the page instead of
+restarting at the top. Overlays that `createPortal` to `document.body` — the date picker and
+the searchable-selector dropdown — are visually inside the modal but DOM-wise outside it, so
+they are tagged `data-focus-overlay` and the trap stands down while focus is inside one. Any
+new portaled overlay that can hold focus MUST carry that attribute.
+
 **Always check `src/components/` before writing new UI** — buttons, links, modals,
 menus, badges, tables, inputs, spinners, cards, and toasts exist and must be reused. New
 UI goes here as a general reusable component, not a page-local one-off. Two tiers:

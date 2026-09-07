@@ -134,10 +134,6 @@
     white-space: nowrap;
 }
 
-.negativeAmount {
-    color: var(--u-danger-text);
-}
-
 .cardNote {
     color: var(--font-secondary-color);
     font-size: 0.9rem;

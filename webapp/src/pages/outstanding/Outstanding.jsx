@@ -6,6 +6,7 @@ import { IconButton } from '../../components/Buttons.jsx';
 import { BooleanInput } from '../../components/Inputs.jsx';
 import { EditTransactionGroupModal } from '../../components/SpecialModals.jsx';
 import Spinner from '../../components/Spinner.jsx';
+import { Money } from '../../components/Money.jsx';
 import { NavLink } from 'react-router';
 import {
     formatDollars,
@@ -159,8 +160,8 @@ export default function Page() {
                                     <td className={styles.referenceCell} title={group.reference ?? undefined}>
                                         { group.reference ? `#${group.reference}` : '—' }
                                     </td>
-                                    <td className={`${styles.moneyCell} tabular-nums`}>
-                                        {formatDollars(amount)}
+                                    <td className={styles.moneyCell}>
+                                        <Money value={amount} />
                                     </td>
                                     <td className={styles.actionsCell}>
                                         <IconButton

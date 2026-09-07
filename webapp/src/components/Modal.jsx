@@ -1,7 +1,8 @@
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 
 import { useStackedEscapeKey } from '../hooks/StackedEscapeKey.jsx';
+import { useModalFocus } from '../hooks/ModalFocus.jsx';
 
 import { Card, CardActionHeader, CardActionFooter, CardSection, CardErrorSection } from './Card.jsx';
 
@@ -16,45 +17,34 @@ const MODAL_SIZE_CLASS = {
     lg: styles.sizeLg,
 };
 
-// Controls we treat as "the first field" for initial focus. Buttons are
-// deliberately excluded so a modal never opens with a destructive/close action
-// focused; a modal with no form control (e.g. a read-only view) simply opens
-// with nothing focused, which is fine — Escape still works via the global
-// capture-phase stack, not DOM focus.
-const AUTOFOCUS_FALLBACK_SELECTOR = [
-    'input:not([type="hidden"]):not([disabled])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[role="combobox"]:not([aria-disabled="true"])',
-].join(', ');
-
 export function CardModal({ isOpen, setIsOpen, title, level, children, size = 'md', cardClassName='' }) {
 
     const closeModal = useCallback(() => setIsOpen(false), [setIsOpen]);
     useStackedEscapeKey(closeModal, isOpen);
 
-    // Move focus into the modal when it opens: a [data-autofocus]-flagged
-    // control if the modal declares one, else the first focusable form control.
-    // Scoped to the form container so the header close button is never the
-    // fallback. Runs after paint (rAF) so async/portaled children settle first.
-    // Nested modals each run their own copy of this effect against their own
-    // container, so opening a child never fights the parent's initial focus.
+    // Focus lives in one place for every modal in the app (37 of them route
+    // through here): trap Tab, and hand focus back on dismissal.
+    //   - the TRAP is the whole container, so the header close button stays
+    //     tabbable
+    //   - INITIAL focus is scoped to the body, so a modal never opens on the
+    //     close button
+    // Nested modals stack, and only the top-most one traps.
+    const containerRef = useRef(null);
     const formRef = useRef(null);
-    useEffect(() => {
-        if (!isOpen) return;
-        const raf = requestAnimationFrame(() => {
-            const container = formRef.current;
-            if (!container) return;
-            const target = container.querySelector('[data-autofocus]')
-                ?? container.querySelector(AUTOFOCUS_FALLBACK_SELECTOR);
-            target?.focus();
-        });
-        return () => cancelAnimationFrame(raf);
-    }, [isOpen]);
+    useModalFocus(containerRef, formRef, isOpen);
 
     return (
         isOpen
-        ? <div className={styles.modalContainer}>
+        ? <div
+            className={styles.modalContainer}
+            ref={containerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={typeof title === 'string' ? title : undefined}
+            // Focusable only as the last-resort landing spot for a modal with
+            // no form control at all; tabindex -1 keeps it out of the tab order
+            tabIndex={-1}
+        >
             <Card className={`${cardClassName} ${styles.cardBaseStyles} ${MODAL_SIZE_CLASS[size] ?? MODAL_SIZE_CLASS.md}`}>
                 <CardActionHeader title={title} level={level}>
                     <CloseButton onClick={() => setIsOpen(false)} />

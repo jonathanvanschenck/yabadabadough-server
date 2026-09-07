@@ -23,7 +23,7 @@ import {
     UnlinkStatementModal,
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
-import { formatDollars } from '../../components/domain.js';
+import { Money } from '../../components/Money.jsx';
 import styles from './TransactionGroup.module.css';
 
 
@@ -46,7 +46,7 @@ function TransactionLineRow({ transaction, fundById, isHighlighted, canEdit, onE
                 <FundLabel fund={fundById.get(t.target_fund_id)} />
             </td>
             <td className={styles.lineDesc} title={t.description}>{t.description}</td>
-            <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(t.amount)}</td>
+            <td className={styles.lineAmount}><Money value={t.amount} /></td>
             <td className={styles.lineNote} title={t.note ?? undefined}>
                 { t.note
                     ? <span className={styles.lineNoteText}>{t.note}</span>
@@ -329,7 +329,7 @@ export default function TransactionGroupPage() {
                                             <tr key={s.id} className={styles.lineRow}>
                                                 <td><strong>{s.source}</strong></td>
                                                 <td className="tabular-nums">{s.date}</td>
-                                                <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(s.amount)}</td>
+                                                <td className={styles.lineAmount}><Money value={s.amount} /></td>
                                                 <td className={styles.lineNote} title={s.note ?? s.key}>
                                                     <span className={styles.lineNoteText}>{s.note ?? s.key}</span>
                                                 </td>

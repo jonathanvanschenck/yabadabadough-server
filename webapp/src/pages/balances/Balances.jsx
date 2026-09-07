@@ -10,10 +10,11 @@ import {
 import { IconButton } from '../../components/Buttons.jsx';
 import { DateInput } from '../../components/Inputs.jsx';
 import { FundLabel } from '../../components/Badges.jsx';
+import { Money } from '../../components/Money.jsx';
 import { FundTypeIcon } from '../../components/SpecialIcons.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { formatDollars, buildFundTree } from '../../components/domain.js';
+import { buildFundTree } from '../../components/domain.js';
 import { fundColorVar } from '../../hooks/fundColors.js';
 import { parseOnParam, fundRowsOf, sumBalances } from './utils.jsx';
 import styles from './Balances.module.css';
@@ -78,10 +79,10 @@ export default function Page() {
 
     const money = (value) => {
         if ( value == null ) return '';
-        const text = formatDollars(value);
+        const amount = <Money value={value} />;
         return isProvisional
-            ? <ProvisionalValue som={firstUnfinalizedSom}>{text}</ProvisionalValue>
-            : text;
+            ? <ProvisionalValue som={firstUnfinalizedSom}>{amount}</ProvisionalValue>
+            : amount;
     };
 
     const onLabel = dayjs(on).format('MMM D, YYYY');

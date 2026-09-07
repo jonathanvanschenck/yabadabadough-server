@@ -32,6 +32,7 @@ import {
     statementNamesReference
 } from './domain.js';
 import { OutstandingBadge } from './Badges.jsx';
+import { Money } from './Money.jsx';
 import { STATEMENT_PROFILES, GENERIC_PROFILE } from './statementProfiles.js';
 import {
     useGetFundsQuery,
@@ -94,11 +95,6 @@ function monthsBetween(fromSom, toSom) {
         if ( out.length > 600 ) break; // safety valve against a bad range
     }
     return out;
-}
-
-function formatMoney(amount) {
-    if ( amount == null ) return 'unknown';
-    return (amount < 0 ? '-$' : '$') + Math.abs(amount).toFixed(2);
 }
 
 /**
@@ -1956,7 +1952,7 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                                         <tr key={i} className={problem ? styles.importPreviewBadRow : ''} title={problem ?? undefined}>
                                             <td>{row.key || '—'}</td>
                                             <td className="tabular-nums">{row.date || '—'}</td>
-                                            <td className="tabular-nums">{row.amount != null ? formatMoney(row.amount) : '—'}</td>
+                                            <td><Money value={row.amount} /></td>
                                             <td className={styles.importPreviewNote}>{row.note ?? ''}</td>
                                         </tr>
                                     );
@@ -2062,7 +2058,7 @@ export function EditStatementModal({ isOpen, setIsOpen, statement }) {
                     <LabeledTextInput label="Source" value={statement?.source} isFrozen={true} />
                     <LabeledTextInput label="Key" value={statement?.key} isFrozen={true} />
                     <LabeledTextInput label="Date" value={statement?.date} isFrozen={true} />
-                    <LabeledNumberInput label="Amount ($)" value={statement?.amount} isFrozen={true} render={() => formatMoney(statement?.amount)} />
+                    <LabeledNumberInput label="Amount ($)" value={statement?.amount} isFrozen={true} render={() => <Money value={statement?.amount} faintZero={false} />} />
                 </CardAutoGrid>
             </CardSection>
 
@@ -2138,7 +2134,7 @@ export function DeleteStatementModal({ isOpen, setIsOpen, statement, closePopout
             title="Delete Bank Statement Item"
             content={<>
                 <div style={{ textAlign: 'center' }}>
-                    Are you <strong>absolutely sure</strong> you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)})?
+                    Are you <strong>absolutely sure</strong> you want to delete the item <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, <Money value={statement?.amount} placeholder="unknown" faintZero={false} />)?
                 </div>
                 <Banner dense style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalWarning}>
                     Deletion is for undoing bad imports, NOT for hiding items: the
@@ -2195,7 +2191,7 @@ export function UnlinkStatementModal({ isOpen, setIsOpen, statement, closePopout
             title="Unlink Bank Statement Item"
             content={<>
                 <div style={{ textAlign: 'center' }}>
-                    Unlink <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, {formatMoney(statement?.amount)}) from its transaction group?
+                    Unlink <strong>{statement?.key ?? 'unknown'}</strong> from <strong>{statement?.source ?? 'unknown'}</strong> ({statement?.date ?? 'unknown'}, <Money value={statement?.amount} placeholder="unknown" faintZero={false} />) from its transaction group?
                 </div>
                 <div style={{ textAlign: 'center', marginTop: '1rem' }} className={styles.modalHint}>
                     This means <strong>this bank line is not actually explained by that group</strong>. The item returns to <strong>pending</strong> so you can reconcile it correctly. The transaction group and its transactions are <strong>NOT</strong> deleted, and no money moves.
@@ -2298,7 +2294,7 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
                         <div key={s.id} className={styles.statementItem}>
                             <strong>{s.source}</strong>
                             <span>{s.date}</span>
-                            <span>{formatMoney(s.amount)}</span>
+                            <Money value={s.amount} faintZero={false} />
                             <span className={styles.statementItemNote}>{s.note ?? s.key}</span>
                         </div>
                     ))}
@@ -2485,7 +2481,7 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
                     <div className={styles.statementItem}>
                         <strong>{statement.source}</strong>
                         <span className="tabular-nums">{statement.date}</span>
-                        <span className="tabular-nums">{formatMoney(statement.amount)}</span>
+                        <Money value={statement.amount} faintZero={false} />
                         <span className={styles.statementItemNote}>{statement.note ?? statement.key}</span>
                     </div>
                 }
@@ -2555,11 +2551,12 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
                             >
                                 <span className="tabular-nums">{group.date}</span>
                                 <span className={styles.linkCandidateDescription} title={group.description}>{group.description}</span>
-                                <span className={`tabular-nums ${amountMatch ? styles.linkCandidateAmountMatch : ''}`}
+                                <Money
+                                    value={total}
+                                    faintZero={false}
+                                    className={amountMatch ? styles.linkCandidateAmountMatch : ''}
                                     title={amountMatch ? "Matches the item's amount" : undefined}
-                                >
-                                    {formatMoney(total)}
-                                </span>
+                                />
                                 <span className={styles.linkCandidateMeta}>
                                     { group.reference &&
                                         <span

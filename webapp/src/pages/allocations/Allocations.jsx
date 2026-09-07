@@ -17,7 +17,8 @@ import {
     CopyAllocationsModal,
 } from '../../components/SpecialModals.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { formatDollars, buildFundTree } from '../../components/domain.js';
+import { buildFundTree } from '../../components/domain.js';
+import { Money } from '../../components/Money.jsx';
 import { fundColorVar } from '../../hooks/fundColors.js';
 import { monthRange, fundRowsOf, nearestPoolAncestorOf, canAllocate } from './utils.jsx';
 import styles from './Allocations.module.css';
@@ -82,7 +83,7 @@ function AllocationCell({ fund, allocation, isFinalized, isEditable, isCurrent, 
         >
             <div className={styles.cellInner}>
                 <span className={styles.cellValue}>
-                    { filled ? formatDollars(allocation.amount) : '' }
+                    { filled ? <Money value={allocation.amount} /> : '' }
                 </span>
                 <span className={styles.cellActions}>
                     { isEditable &&
@@ -379,7 +380,7 @@ export default function Page() {
                                     <td key={som} className={`${styles.allocCell} ${styles.totalsCell} tabular-nums`}>
                                         <div className={styles.cellInner}>
                                             <span className={styles.cellValue}>
-                                                { monthTotals[i] != null && formatDollars(monthTotals[i]) }
+                                                { monthTotals[i] != null && <Money value={monthTotals[i]} /> }
                                             </span>
                                             <span className={styles.cellActions} />
                                         </div>

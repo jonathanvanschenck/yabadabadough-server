@@ -104,7 +104,7 @@ export function StatementStateBadge({ statement, label, ...rest }) {
  * uses (this is the mirror image of that queue, from the ledger's side), and
  * it turns danger-red once the item is older than a bank would honour.
  */
-export function OutstandingBadge({ group, today, label, ...rest }) {
+export function OutstandingBadge({ group, today, label, className, ...rest }) {
     if ( !groupIsOutstanding(group) ) return null;
 
     const days = daysOutstanding(group, today);
@@ -117,11 +117,17 @@ export function OutstandingBadge({ group, today, label, ...rest }) {
         stale ? "Older than most banks will honour — chase it, or clear \u201cexpects a bank line\u201d to write it off." : null,
     ].filter(Boolean).join('\n');
 
-    return <span title={title} style={{ color: stale ? 'var(--u-danger-text)' : 'var(--u-warn-text)' }}>
+    return <span
+        className={className}
+        title={title}
+        style={{ color: stale ? 'var(--u-danger-text)' : 'var(--u-warn-text)' }}
+    >
+        {/* The gap belongs BETWEEN icon and label; with no label it would only
+          * shove the badge into whatever follows it (the row's ghost buttons) */}
         <FontAwesomeIcon
             icon="fa-solid fa-hourglass-half"
             widthAuto
-            style={{ marginRight: '0.5rem' }}
+            style={{ marginRight: displayLabel ? '0.5rem' : 0 }}
             {...rest}
         />
         {displayLabel}
