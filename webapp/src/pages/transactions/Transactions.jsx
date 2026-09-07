@@ -22,7 +22,7 @@ import {
     UnfinalizeMonthModal
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
-import { FinalizedBadge, FundLabel } from '../../components/Badges.jsx';
+import { FinalizedBadge, FundLabel, OutstandingBadge } from '../../components/Badges.jsx';
 import { HoverPopover } from '../../components/HoverPopover.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
@@ -281,6 +281,9 @@ function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hovere
                 >
                     {group.description}
                 </NavLink>
+                {/* Icon-only: the month grid is dense, and the badge's title
+                  * carries the "waiting since / how long" detail on hover */}
+                <OutstandingBadge group={group} label="" />
                 { hasNote(group.note) &&
                     <GhostButton
                         icon="fa-circle-info"

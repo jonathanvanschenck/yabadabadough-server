@@ -215,6 +215,13 @@
     font-weight: bold;
 }
 
+/* An item whose text NAMES the group's reference: the strongest match the
+   candidate list can show, so it gets the same emphasis as an amount match */
+.linkCandidateReferenceMatch {
+    color: var(--u-success-text);
+    font-weight: bold;
+}
+
 .linkCandidateMeta {
     color: var(--font-secondary-color);
     font-size: 0.85rem;

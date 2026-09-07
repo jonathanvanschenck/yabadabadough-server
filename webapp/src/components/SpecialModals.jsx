@@ -21,7 +21,17 @@ import {
 import { IconButton, SpinnerButton, TightIconButton } from './Buttons.jsx';
 import Spinner from './Spinner.jsx';
 import { Banner } from './Banner.jsx';
-import { fundIdsContainingMonthly, amountsMatch, transactionGroupTotal } from './domain.js';
+import {
+    fundIdsContainingMonthly,
+    amountsMatch,
+    transactionGroupTotal,
+    todayYDate,
+    groupIsOutstanding,
+    daysOutstanding,
+    outstandingIsStale,
+    statementNamesReference
+} from './domain.js';
+import { OutstandingBadge } from './Badges.jsx';
 import { STATEMENT_PROFILES, GENERIC_PROFILE } from './statementProfiles.js';
 import {
     useGetFundsQuery,
@@ -62,11 +72,6 @@ import CopiedToast from './CopiedToast.jsx';
 
 import styles from './SpecialModals.module.css';
 
-
-function todayYDate() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
 
 function monthLabel(ydate) {
     return ydate ? ydate.slice(0, 7) : 'unknown';
@@ -757,7 +762,10 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
     const defaultData = () => ({
         date: initialDate ?? todayYDate(),
         description: null,
-        note: null
+        note: null,
+        // The cheque case: money committed today, bank line arriving whenever
+        expects_statement: false,
+        reference: null
     });
 
     const [ data, setData ] = useState(defaultData);
@@ -823,6 +831,8 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
                     date: data.date,
                     description: data.description,
                     note: data.note ?? null,
+                    expects_statement: data.expects_statement,
+                    reference: data.reference ?? null,
                     transactions: lines.map(line => {
                         const spec = transactionLineToSpec(line);
                         if (inheritOne && !spec.description?.trim()) {
@@ -879,6 +889,26 @@ export function CreateTransactionGroupModal({ isOpen, setIsOpen, initialDate = n
                         onChange={(value) => handleChange('note', value)}
                         allowNull={true}
                     />
+                    <LabeledBooleanInput
+                        label="Awaiting a bank line"
+                        value={data.expects_statement}
+                        isFrozen={false}
+                        onChange={(value) => handleChange('expects_statement', value)}
+                        inputTitle={
+                            "Set this when the money is committed but the bank does not know yet"
+                            + " \u2014 a cheque you have written, a pending transfer, a promised refund."
+                            + " Date the group when you WROTE it; the bank item will carry the day it cleared."
+                        }
+                    />
+                    <LabeledTextInput
+                        label="Reference"
+                        value={data.reference}
+                        isFrozen={false}
+                        nullPlaceholder="(none)"
+                        onChange={(value) => handleChange('reference', value)}
+                        allowNull={true}
+                        inputTitle="Cheque number, wire confirmation, invoice id \u2014 what the bank line will name when it arrives"
+                    />
                 </CardAutoGrid>
             </CardSection>
 
@@ -930,7 +960,9 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
     const initialData = useCallback(() => ({
         date: group?.date ?? null,
         description: group?.description ?? null,
-        note: group?.note ?? null
+        note: group?.note ?? null,
+        expects_statement: group?.status?.expects_statement ?? false,
+        reference: group?.reference ?? null
     }), [group]);
 
     const [ data, setData ] = useState(initialData);
@@ -950,7 +982,8 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
         setSubmitError(null);
     };
 
-    const patch = changedFields(initialData(), data, [ 'date', 'description', 'note' ]);
+    const patch = changedFields(initialData(), data,
+        [ 'date', 'description', 'note', 'expects_statement', 'reference' ]);
 
     const { minDate: dateFloor, validityFor: dateFloorValidity } = useFinalizationDateFloor();
 
@@ -960,6 +993,9 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
     };
 
     const isManaged = group?.status?.allocation || group?.status?.eom_cleanup;
+    const hasStatements = (group?.statements?.length ?? 0) > 0;
+    const isOutstanding = groupIsOutstanding(group);
+    const outstandingDays = daysOutstanding(group);
 
     const {
         mutate: patchMutate,
@@ -1024,7 +1060,37 @@ export function EditTransactionGroupModal({ isOpen, setIsOpen, group }) {
                         onChange={(value) => handleChange('note', value)}
                         allowNull={true}
                     />
+                    <LabeledBooleanInput
+                        label="Awaiting a bank line"
+                        value={data.expects_statement}
+                        isFrozen={isManaged}
+                        isChanged={'expects_statement' in patch}
+                        onChange={(value) => handleChange('expects_statement', value)}
+                        inputTitle={
+                            hasStatements
+                                ? "A bank line is already linked, so this group is not outstanding either way."
+                                : "Clear this to retire an item you have given up on \u2014 a cheque that will never be cashed."
+                        }
+                    />
+                    <LabeledTextInput
+                        label="Reference"
+                        value={data.reference}
+                        isFrozen={isManaged}
+                        isChanged={'reference' in patch}
+                        nullPlaceholder="(none)"
+                        onChange={(value) => handleChange('reference', value)}
+                        allowNull={true}
+                        inputTitle="Cheque number, wire confirmation, invoice id"
+                    />
                 </CardAutoGrid>
+                { isOutstanding &&
+                    <Banner dense className={styles.modalWarning}>
+                        Waiting on a bank line since {group.date}
+                        { outstandingDays != null && ` (${outstandingDays} day${outstandingDays === 1 ? '' : 's'})` }.
+                        { outstandingIsStale(group)
+                            && " That is older than most banks will honour \u2014 chase it, or clear \u201cAwaiting a bank line\u201d to write it off." }
+                    </Banner>
+                }
             </CardSection>
 
             <CardActionFooter>
@@ -2149,7 +2215,11 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
     const defaultData = () => ({
         date: null, // null -> server default: the latest item date
         description: null, // null -> server default: the items' notes (fallback: keys)
-        note: null
+        note: null,
+        // Worth filling in when the cleared item IS a cheque that was never
+        // pre-entered: it records the number the bank reported. There is no
+        // "awaiting a bank line" here -- this group is born reconciled.
+        reference: null
     });
 
     // The default is ONE transaction of the item's amount (split it up by
@@ -2197,6 +2267,7 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
                     ...(data.date ? { date: data.date } : {}),
                     ...(data.description ? { description: data.description } : {}),
                     ...(data.note ? { note: data.note } : {}),
+                    ...(data.reference ? { reference: data.reference } : {}),
                     transactions: lines.map(transactionLineToSpec)
                 }
             },
@@ -2261,6 +2332,15 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
                         onChange={(value) => handleChange('note', value)}
                         allowNull={true}
                     />
+                    <LabeledTextInput
+                        label="Reference"
+                        value={data.reference}
+                        isFrozen={false}
+                        nullPlaceholder="(none)"
+                        onChange={(value) => handleChange('reference', value)}
+                        allowNull={true}
+                        inputTitle="Cheque number or other instrument reference, if this item is one"
+                    />
                 </CardAutoGrid>
             </CardSection>
 
@@ -2290,24 +2370,32 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
 }
 
 
-const LINK_WINDOW_OPTIONS = [ 7, 14, 30, 90 ];
+const LINK_WINDOW_OPTIONS = [ 7, 14, 30, 90, 180, 365 ];
 const LINK_MAX_CANDIDATES = 30;
 
 /**
  * Reconcile a PENDING statement item against an EXISTING transaction group
  * (the transaction was pre-entered, or this is the second side of a transfer
- * whose first side already created the group). Suggests nearby groups,
- * ranked amount-matches first, then by date proximity.
+ * whose first side already created the group).
+ *
+ * Candidates rank by how MUCH evidence ties them to the item: a reference the
+ * item actually names (near-certain) beats a matching amount, which beats a
+ * group merely waiting on a bank line, which beats date proximity. The
+ * "awaiting a bank line" mode drops the date window entirely -- the whole
+ * point of an outstanding cheque is that it cleared nowhere near when it was
+ * written, so a date window is the wrong instrument for finding one.
  */
 export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
 
     const [ windowDays, setWindowDays ] = useState(14);
+    const [ onlyOutstanding, setOnlyOutstanding ] = useState(false);
     const [ searchTerm, setSearchTerm ] = useState(null);
     const [ selectedGroupId, setSelectedGroupId ] = useState(null);
     const [ submitError, setSubmitError ] = useState(null);
 
     const reset = useCallback(() => {
         setWindowDays(14);
+        setOnlyOutstanding(false);
         setSearchTerm(null);
         setSelectedGroupId(null);
         setSubmitError(null);
@@ -2320,8 +2408,13 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
     const itemDate = statement?.date ?? null;
     const groupsQ = useGetTransactionGroupsQuery(
         {
-            since: itemDate ? dayjs(itemDate).subtract(windowDays, 'day').format('YYYY-MM-DD') : undefined,
-            until: itemDate ? dayjs(itemDate).add(windowDays, 'day').format('YYYY-MM-DD') : undefined,
+            // Outstanding mode is deliberately UNBOUNDED by date: a cheque
+            // written in March and cashed in November is precisely the case a
+            // date window around the item cannot find
+            ...(onlyOutstanding ? { outstanding: true } : {
+                since: itemDate ? dayjs(itemDate).subtract(windowDays, 'day').format('YYYY-MM-DD') : undefined,
+                until: itemDate ? dayjs(itemDate).add(windowDays, 'day').format('YYYY-MM-DD') : undefined,
+            }),
             // Allocation/eom_cleanup groups are pure bookkeeping: the server
             // refuses linking them, so don't offer them
             allocation: false,
@@ -2334,7 +2427,9 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
     const candidates = useMemo(() => {
         const term = (searchTerm ?? '').trim().toLowerCase();
         return (groupsQ.data ?? [])
-            .filter(g => !term || g.description?.toLowerCase().includes(term))
+            .filter(g => !term
+                || g.description?.toLowerCase().includes(term)
+                || g.reference?.toLowerCase().includes(term))
             .map(g => {
                 const total = transactionGroupTotal(g);
                 const amountMatch = amountsMatch(total, absAmount)
@@ -2343,15 +2438,21 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
                     group: g,
                     total,
                     amountMatch,
+                    // The bank memo naming this group's reference is the
+                    // strongest signal available -- an exact key, not a guess
+                    referenceMatch: statementNamesReference(statement, g.reference),
+                    outstanding: groupIsOutstanding(g),
                     dateDistance: Math.abs(dayjs(g.date).diff(dayjs(itemDate), 'day')),
                 };
             })
             .toSorted((a, b) =>
-                a.amountMatch !== b.amountMatch ? (a.amountMatch ? -1 : 1)
+                a.referenceMatch !== b.referenceMatch ? (a.referenceMatch ? -1 : 1)
+                : a.amountMatch !== b.amountMatch ? (a.amountMatch ? -1 : 1)
+                : a.outstanding !== b.outstanding ? (a.outstanding ? -1 : 1)
                 : a.dateDistance !== b.dateDistance ? a.dateDistance - b.dateDistance
                 : b.group.id - a.group.id
             );
-    }, [groupsQ.data, searchTerm, absAmount, itemDate]);
+    }, [groupsQ.data, searchTerm, absAmount, itemDate, statement]);
     const shownCandidates = candidates.slice(0, LINK_MAX_CANDIDATES);
 
     const {
@@ -2398,20 +2499,28 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
 
             <CardSection title="Pick a group">
                 <CardAutoGrid>
+                    <LabeledBooleanInput
+                        label="Only groups awaiting a bank line"
+                        value={onlyOutstanding}
+                        isFrozen={false}
+                        onChange={(value) => { setOnlyOutstanding(value); setSelectedGroupId(null); }}
+                        inputTitle="Searches every outstanding group regardless of date \u2014 the way to find a cheque written months before it cleared"
+                    />
                     <LabeledSelector
                         label="Search window"
                         value={windowDays}
                         optionKeys={LINK_WINDOW_OPTIONS.map(d => d.toString())}
                         optionDisplayNames={LINK_WINDOW_OPTIONS.map(d => `± ${d} days around ${itemDate ?? 'the item'}`)}
                         onChange={(value) => setWindowDays(parseInt(value, 10))}
-                        isFrozen={false}
+                        isFrozen={onlyOutstanding}
+                        inputTitle={onlyOutstanding ? "Not used while searching outstanding groups, which are unbounded by date" : undefined}
                         allowNull={false}
                     />
                     <LabeledTextInput
-                        label="Filter by description"
+                        label="Filter by description or reference"
                         value={searchTerm}
                         isFrozen={false}
-                        nullPlaceholder="Search descriptions ..."
+                        nullPlaceholder="Search descriptions and references ..."
                         onChange={(value) => setSearchTerm(value)}
                         allowNull={true}
                     />
@@ -2423,11 +2532,12 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
                     ? <CardErrorSection errorMessage={groupsQ.error.message} errorMessageDetails={groupsQ.error.details?.message} />
                     : shownCandidates.length === 0
                     ? <div className={styles.linkCandidatesEmpty}>
-                        No matching transaction groups within ± {windowDays} days —
-                        widen the window, or create a new group instead.
+                        { onlyOutstanding
+                            ? "No groups are awaiting a bank line — clear the filter, or create a new group instead."
+                            : `No matching transaction groups within ± ${windowDays} days — widen the window, try “only groups awaiting a bank line”, or create a new group instead.` }
                     </div>
                     : <div className={styles.linkCandidatesList} role="listbox" aria-label="Candidate transaction groups">
-                        { shownCandidates.map(({ group, total, amountMatch }) => (
+                        { shownCandidates.map(({ group, total, amountMatch, referenceMatch }) => (
                             <div
                                 key={group.id}
                                 role="option"
@@ -2451,9 +2561,20 @@ export function LinkStatementModal({ isOpen, setIsOpen, statement }) {
                                     {formatMoney(total)}
                                 </span>
                                 <span className={styles.linkCandidateMeta}>
+                                    { group.reference &&
+                                        <span
+                                            className={referenceMatch ? styles.linkCandidateReferenceMatch : undefined}
+                                            title={referenceMatch
+                                                ? "This item's text names the group's reference"
+                                                : "The group's reference"}
+                                        >
+                                            #{group.reference}{' · '}
+                                        </span>
+                                    }
                                     {group.transactions.length} txn{group.transactions.length === 1 ? '' : 's'}
                                     { group.statements.length > 0 && ` · reconciles ${group.statements.length}` }
                                 </span>
+                                <OutstandingBadge group={group} label="" />
                             </div>
                         ))}
                         { candidates.length > shownCandidates.length &&

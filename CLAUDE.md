@@ -399,6 +399,25 @@ TransactionGroup, `finalized_months_since` in Fund).
 - Has several denormalized values (`split`,`allocation`,`eom_cleanup`) for easier querying; the
   `allocation`/`eom_cleanup` flags are reserved for the internal Allocation / MonthFinalization
   paths — public `create` rejects them (at most one of the two, db CHECK)
+- **Outstanding tracking** (`expects_statement` + `reference`, schema v3): `expects_statement`
+  is the one thing that is NOT derivable — whether a group is waiting on a bank line at all.
+  `has_statements = false` alone cannot answer it, because tracked→tracked covers both an
+  internal reallocation that will NEVER have a bank line (`Groceries → Dining`) and a transfer
+  that has TWO (`Checking → Savings`). So it is stored, defaulting to false, and refused on
+  allocation/eom_cleanup groups (they correspond to no bank event; column CHECK backstops).
+  **`outstanding` is derived, never stored**: `expects_statement` set AND nothing linked, as the
+  `outstanding` getter and its query-side twin `OUTSTANDING_SQL` (change them together) — so
+  linking clears it and unlinking restores it with no write, and there is no flag to forget to
+  reset. `from_db`/`count` take `expects_statement`, `outstanding` and `reference`; `outstanding`
+  is its own filter rather than a caller-composed `expects_statement + has_statements` because
+  the NEGATION is a disjunction that does not decompose into those two. `reference` is a
+  free-form instrument reference (cheque number, wire confirmation, invoice id), stored trimmed
+  with blank normalized to NULL, deliberately NOT unique — a matching hint, never an identity;
+  filtering on a blank reference means "unreferenced", not "no filter", and lookup is
+  case-insensitive (`= ? COLLATE NOCASE`, with the partial index declared NOCASE so it still
+  applies) to agree with the webapp's `statementNamesReference`. The motivating case is
+  a cheque: the group is dated when you WROTE it (so the money leaves the envelope then), the
+  bank item is dated when it CLEARED, and nothing anywhere constrains the gap
 - `group.delete(db)` removes a group and its transactions; the only guard is the finalized-month
   check (which inherently protects eom_cleanup groups — they only exist inside finalized months).
   `TransactionGroup.assert_month_unfinalized(db, date)` is the shared guard helper
@@ -457,7 +476,9 @@ TransactionGroup, `finalized_months_since` in Fund).
   `POST /api/statements/statement/:id/link` (pre-entered transactions; the second side of a
   transfer): no transactions are created, allocation/eom_cleanup groups are refused, and —
   unlike group creation — a finalized-month group IS allowed (nothing moves; note a mislink
-  there can only be undone by deleting the ITEM without the group and re-importing).
+  there can only be undone by deleting the ITEM without the group and re-importing). This is
+  the far end of the cheque story: a group written months ago with `expects_statement` stops
+  reading as `outstanding` the moment its item lands here.
 - **Unlink** (`item.unlink(db)` / `POST /api/statements/statement/:id/unlink`, editor) releases
   a RECONCILED item back to pending while the group and its transactions survive untouched —
   "this bank line is not actually explained by that group". No money moves, so (like

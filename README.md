@@ -90,6 +90,36 @@ reconciliation, while deleting and recreating it silently releases the bank line
 back to pending and sets up a double-count on the next import. Edit; don't
 delete and retype.
 
+### Outstanding items (cheques and other float)
+
+Some money is committed before the bank knows about it. You write a cheque on
+the 1st; it clears in November, or never. The envelope should empty the day you
+wrote it — that is the whole point of budgeting — but until the bank line
+arrives, nothing links the two.
+
+Two fields on a group cover this:
+
+- **`expects_statement`** — "a bank line is coming for this." Set it when you
+  pre-enter a cheque, a pending ACH, or a refund you have been promised.
+- **`reference`** — the instrument number: a cheque number, a wire
+  confirmation, an invoice id. Free-form, and deliberately not unique. When the
+  item finally clears, this is the exact key that matches it back.
+
+**Outstanding** is then derived, never stored: the group expects a bank line and
+none is linked yet. Link the item and it stops being outstanding; unlink it and
+it starts again. There is no status to remember to clear, and
+`?outstanding=true` on the groups list is your uncleared-cheque work queue.
+
+Date the group when you *wrote* the cheque and let the bank item carry the date
+it *cleared* — the gap between them is unconstrained, deliberately, and linking
+works even after the writing month has been finalized (linking moves no money).
+The bank item's own date is the cleared date; there is no second date field,
+because the link already tells you.
+
+> Clearing `expects_statement` is how you retire a cheque you have given up on.
+> Allocation and end-of-month cleanup groups are pure bookkeeping and can never
+> expect a bank line.
+
 ### Allocations
 
 An **allocation** is a monthly budget line: "`Groceries` gets $600 in March".

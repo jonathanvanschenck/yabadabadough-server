@@ -6,7 +6,7 @@ import {
     StatementStateIcon,
     RoleIcon
 } from './SpecialIcons.jsx';
-import { fundTypeOf, statementStateOf } from './domain.js';
+import { fundTypeOf, statementStateOf, groupIsOutstanding, daysOutstanding, outstandingIsStale } from './domain.js';
 import { fundColorVar } from '../hooks/fundColors.js';
 
 export function Badge({ text, icon, className, style, ...rest }) {
@@ -93,6 +93,39 @@ export function StatementStateBadge({ statement, label, ...rest }) {
     const state = statementStateOf(statement);
     const displayLabel = label ?? STATEMENT_STATE_LABELS[state];
     return <span title={displayLabel} style={{ color: STATEMENT_STATE_COLORS[state] }}><StatementStateIcon statement={statement} marginRight="0.5rem" {...rest} />{displayLabel}</span>;
+}
+
+/**
+ * A transaction group still waiting on its bank line -- a cheque written but
+ * not cashed, a pending ACH, a promised refund. Renders nothing when the
+ * group is not outstanding, so it can be dropped in unconditionally.
+ *
+ * Amber is the same "wants attention" register a pending statement item
+ * uses (this is the mirror image of that queue, from the ledger's side), and
+ * it turns danger-red once the item is older than a bank would honour.
+ */
+export function OutstandingBadge({ group, today, label, ...rest }) {
+    if ( !groupIsOutstanding(group) ) return null;
+
+    const days = daysOutstanding(group, today);
+    const stale = outstandingIsStale(group, today);
+    const displayLabel = label ?? "Outstanding";
+    const title = [
+        days == null
+            ? "Waiting on a bank line"
+            : `Waiting on a bank line — ${days} day${days === 1 ? '' : 's'} since ${group.date}`,
+        stale ? "Older than most banks will honour — chase it, or clear \u201cexpects a bank line\u201d to write it off." : null,
+    ].filter(Boolean).join('\n');
+
+    return <span title={title} style={{ color: stale ? 'var(--u-danger-text)' : 'var(--u-warn-text)' }}>
+        <FontAwesomeIcon
+            icon="fa-solid fa-hourglass-half"
+            widthAuto
+            style={{ marginRight: '0.5rem' }}
+            {...rest}
+        />
+        {displayLabel}
+    </span>;
 }
 
 export function FinalizedBadge({ value, label, ...rest }) {

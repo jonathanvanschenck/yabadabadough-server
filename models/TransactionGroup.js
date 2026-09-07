@@ -20,11 +20,37 @@ const {
     ydate2stmt
 } = require("../lib/db.js").helpers;
 
+/**
+ * Normalize a free-form instrument reference: trimmed, with blank normalized
+ * to NULL. "" and "   " must never masquerade as a real reference -- they
+ * would match nothing on lookup while reading as "set" in the UI.
+ */
+const normalize_reference = (reference) => {
+    if ( reference == null ) return null;
+    const trimmed = String(reference).trim();
+    return trimmed.length ? trimmed : null;
+};
+
+
+// The SQL twin of the `outstanding` getter below: a group that declared a
+// bank line is coming and has none linked yet. Two expressions of one rule,
+// in two languages -- change them together.
+const OUTSTANDING_SQL = `(
+    transaction_groups.expects_statement = 1
+    AND NOT EXISTS (
+        SELECT 1 FROM bank_statement_items
+        WHERE bank_statement_items.group_id = transaction_groups.id
+    )
+)`;
+
+
 const GROUP_COLUMNS = [
     "id",
     "date",
     "description",
     "note",
+    "expects_statement",
+    "reference",
     "split",
     "allocation",
     "eom_cleanup",
@@ -86,6 +112,8 @@ module.exports = class TransactionGroup extends Base {
             date,
             description,
             note,
+            expects_statement,
+            reference,
             split,
             allocation,
             eom_cleanup
@@ -93,6 +121,8 @@ module.exports = class TransactionGroup extends Base {
             @date,
             @description,
             @note,
+            @expects_statement,
+            @reference,
             @split,
             @allocation,
             @eom_cleanup
@@ -110,7 +140,9 @@ module.exports = class TransactionGroup extends Base {
             UPDATE transaction_groups
             SET date = @date,
                 description = @description,
-                note = @note
+                note = @note,
+                expects_statement = @expects_statement,
+                reference = @reference
             WHERE id = @id
         `,
         delete: `
@@ -132,6 +164,8 @@ module.exports = class TransactionGroup extends Base {
         description,
         date,
         note,
+        expects_statement,
+        reference,
         split,
         allocation,
         eom_cleanup,
@@ -144,12 +178,30 @@ module.exports = class TransactionGroup extends Base {
         this.description = description;
         this.date = date;
         this.note = note;
+        this.expects_statement = expects_statement;
+        this.reference = reference;
         this.split = split;
         this.allocation = allocation;
         this.eom_cleanup = eom_cleanup;
         this.transactions = transactions;
         this.statements = statements;
         this.created_at = created_at;
+    }
+
+    /**
+     * The canonical derived state (never stored -- always derivable from
+     * `expects_statement` and the hydrated statements; `OUTSTANDING_SQL` is
+     * the query-side twin): the group declared that a bank line is coming and
+     * none has been linked yet. A written cheque that has not cleared, a
+     * pending ACH, a promised refund.
+     *
+     * Because it is derived, linking a statement item clears it and
+     * unlinking one restores it, both without writing to the group -- there
+     * is no flag to forget to reset. `expects_statement` stays put as the
+     * standing statement of intent.
+     */
+    get outstanding() {
+        return !!this.expects_statement && this.statements.length === 0;
     }
 
     static openapi_TransactionGroupSchema = {
@@ -160,14 +212,22 @@ module.exports = class TransactionGroup extends Base {
             description: { type: 'string' },
             date: { type: 'string', format: 'date', example: '2026-01-15' },
             note: { type: 'string', nullable: true },
+            reference: {
+                type: 'string',
+                nullable: true,
+                description: "Free-form instrument reference -- a cheque number, a wire confirmation, an invoice id. Stored trimmed (blank becomes null) and deliberately NOT unique: it is a matching hint for reconciliation, never an identity.",
+                example: '1247'
+            },
             status: {
                 type: 'object',
                 properties: {
                     split: { type: 'boolean', description: "true iff the group holds more than one transaction" },
                     allocation: { type: 'boolean', description: "Reserved for the internal Allocation path: the month's start-of-month allocation group" },
-                    eom_cleanup: { type: 'boolean', description: "Reserved for the internal MonthFinalization path: an end-of-month cleanup group" }
+                    eom_cleanup: { type: 'boolean', description: "Reserved for the internal MonthFinalization path: an end-of-month cleanup group" },
+                    expects_statement: { type: 'boolean', description: "A bank line is expected for this group but may not have arrived yet. Never set on allocation/eom_cleanup groups (db CHECK)" },
+                    outstanding: { type: 'boolean', description: "DERIVED, never stored: expects_statement is set and no bank statement item is linked yet. Linking an item clears it; unlinking restores it" }
                 },
-                required: [ 'split', 'allocation', 'eom_cleanup' ]
+                required: [ 'split', 'allocation', 'eom_cleanup', 'expects_statement', 'outstanding' ]
             },
             transactions: {
                 type: 'array',
@@ -180,7 +240,7 @@ module.exports = class TransactionGroup extends Base {
             },
             created_at: { type: 'string', format: 'date-time' }
         },
-        required: [ 'id', 'description', 'date', 'note', 'status', 'transactions', 'statements', 'created_at' ]
+        required: [ 'id', 'description', 'date', 'note', 'reference', 'status', 'transactions', 'statements', 'created_at' ]
     };
 
     to_api() {
@@ -189,10 +249,13 @@ module.exports = class TransactionGroup extends Base {
             description: this.description,
             date: this.date.toJSON(),
             note: this.note,
+            reference: this.reference,
             status: {
                 split: this.split,
                 allocation: this.allocation,
                 eom_cleanup: this.eom_cleanup,
+                expects_statement: this.expects_statement,
+                outstanding: this.outstanding,
             },
             transactions: this.transactions.map(t => t.to_api()),
             statements: this.statements.map(s => s.to_api()),
@@ -210,6 +273,8 @@ module.exports = class TransactionGroup extends Base {
             date: stmt2ydate(row.date),
             description: row.description,
             note: row.note,
+            expects_statement: stmt2boolean(row.expects_statement),
+            reference: row.reference,
             split: stmt2boolean(row.split),
             allocation: stmt2boolean(row.allocation),
             eom_cleanup: stmt2boolean(row.eom_cleanup),
@@ -230,6 +295,9 @@ module.exports = class TransactionGroup extends Base {
         split,
         allocation,
         eom_cleanup,
+        expects_statement,
+        reference,
+        outstanding,
         has_statements,
         description_like,
     }={}) {
@@ -261,6 +329,38 @@ module.exports = class TransactionGroup extends Base {
             wheres.push("transaction_groups.eom_cleanup = @eom_cleanup");
             params.eom_cleanup = boolean2stmt(eom_cleanup);
             keys.push("eom_cleanup");
+        }
+        if ( expects_statement !== undefined ) {
+            wheres.push("transaction_groups.expects_statement = @expects_statement");
+            params.expects_statement = boolean2stmt(expects_statement);
+            keys.push("expects_statement");
+        }
+        if ( reference !== undefined ) {
+            // A blank reference normalizes to NULL, which `= @reference` can
+            // never match -- so it means "unreferenced", not "no filter"
+            const _reference = normalize_reference(reference);
+            if ( _reference === null ) {
+                wheres.push("transaction_groups.reference IS NULL");
+                keys.push("reference_null");
+            } else {
+                // NOCASE so an alphanumeric reference ("AB-99x") matches
+                // however it was typed -- and so this agrees with the webapp's
+                // case-insensitive `statementNamesReference`. The partial
+                // index is declared NOCASE to match, so it still applies.
+                wheres.push("transaction_groups.reference = @reference COLLATE NOCASE");
+                params.reference = _reference;
+                keys.push("reference");
+            }
+        }
+        if ( outstanding !== undefined ) {
+            // The SQL twin of the `outstanding` getter (expects_statement set,
+            // nothing linked yet). Kept as a filter of its own rather than
+            // leaving callers to compose expects_statement + has_statements,
+            // so the rule has one definition -- and so the negation, which is
+            // a disjunction that does NOT decompose into those two filters,
+            // stays expressible.
+            wheres.push((outstanding ? "" : "NOT ") + OUTSTANDING_SQL);
+            keys.push("outstanding_" + boolean2stmt(outstanding));
         }
         if ( has_statements !== undefined ) {
             wheres.push((has_statements ? "" : "NOT ")
@@ -324,7 +424,7 @@ module.exports = class TransactionGroup extends Base {
      * Total rows matching the same filters as from_db (order/limit/offset
      * are accepted and ignored, so the API layer can pass one filter object
      * to both). No JOIN needed: the wheres only touch transaction_groups
-     * (has_statements is an EXISTS subquery).
+     * (has_statements and outstanding are both EXISTS subqueries).
      */
     static count(db, { order_by, order_direction, limit, offset, ...filters }={}) {
         const { wheres, params, keys } = this._from_db_wheres(filters);
@@ -349,6 +449,11 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note,
+        // Default for the internal callers (Allocation, MonthFinalization),
+        // which construct pure-bookkeeping groups: no bank event corresponds
+        // to them, and the db CHECK refuses expects_statement on one anyway
+        expects_statement = false,
+        reference = null,
         split,
         eom_cleanup,
         allocation,
@@ -359,6 +464,8 @@ module.exports = class TransactionGroup extends Base {
             date: ydate2stmt(date),
             description,
             note,
+            expects_statement: boolean2stmt(expects_statement),
+            reference: normalize_reference(reference),
             split: boolean2stmt(split),
             eom_cleanup: boolean2stmt(eom_cleanup),
             allocation: boolean2stmt(allocation),
@@ -403,6 +510,8 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note = null,
+        expects_statement = false,
+        reference = null,
         eom_cleanup = false,
         allocation = false,
         transactions = []
@@ -431,6 +540,8 @@ module.exports = class TransactionGroup extends Base {
             date,
             description,
             note,
+            expects_statement,
+            reference,
             split: transactions.length > 1,
             eom_cleanup: false,
             allocation: false,
@@ -443,6 +554,8 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note,
+        expects_statement,
+        reference,
         transactions
     }={}) {
         const items = BankStatementItem._assert_linkable(db, statement_ids);
@@ -464,6 +577,8 @@ module.exports = class TransactionGroup extends Base {
             date: _date,
             description: _description,
             note,
+            expects_statement,
+            reference,
             split: transactions.length > 1,
             eom_cleanup: false,
             allocation: false,
@@ -484,7 +599,9 @@ module.exports = class TransactionGroup extends Base {
      * here.
      *
      * `date` defaults to the latest linked item's date; `description`
-     * defaults to the items' notes (falling back to their keys).
+     * defaults to the items' notes (falling back to their keys). `reference`
+     * is worth setting when the cleared item IS a cheque you never pre-entered
+     * -- it records the instrument number the bank reported.
      *
      * NOTE : the sum of the transaction amounts is intentionally NOT checked
      *        against the item amounts (transfers make any simple rule
@@ -495,6 +612,8 @@ module.exports = class TransactionGroup extends Base {
         date = null,
         description = null,
         note = null,
+        expects_statement = false,
+        reference = null,
         transactions = []
     }={}) {
         if ( statement_ids.length < 1 ) throw new Error("Must provide at least one statement id");
@@ -503,7 +622,10 @@ module.exports = class TransactionGroup extends Base {
 
         const transaction = this.build_transaction(
             db, "create_from_statements", this._create_from_statements.bind(this));
-        return transaction(db, { statement_ids, date, description, note, transactions });
+        return transaction(db, {
+            statement_ids, date, description, note,
+            expects_statement, reference, transactions
+        });
     }
 
     static _link_statements(db, group, statement_ids) {
@@ -531,6 +653,10 @@ module.exports = class TransactionGroup extends Base {
      * `create_from_statements`). No transactions are created or modified, and
      * (as everywhere) item amounts are never checked against the group's.
      *
+     * This is the far end of the cheque story: a group written months ago
+     * with `expects_statement` set stops reading as `outstanding` the moment
+     * its item lands here, with no write to the group itself.
+     *
      * Unlike `create_from_statements`, the group may live in a FINALIZED
      * month: linking moves no money, and statement imports routinely lag
      * finalization. The asymmetry to know about: a mislink into a finalized
@@ -550,6 +676,8 @@ module.exports = class TransactionGroup extends Base {
         date,
         description,
         note = null,
+        expects_statement = false,
+        reference = null,
         source_fund_id,
         target_fund_id,
         amount,
@@ -558,6 +686,8 @@ module.exports = class TransactionGroup extends Base {
             date,
             description,
             note,
+            expects_statement,
+            reference,
             transactions: [{
                 source_fund_id,
                 target_fund_id,
@@ -765,6 +895,8 @@ module.exports = class TransactionGroup extends Base {
         description,
         note,
         date,
+        expects_statement,
+        reference,
     }={}) {
         if ( group.allocation ) {
             throw new Error("Allocation groups are managed via Allocation.set(...)");
@@ -800,6 +932,10 @@ module.exports = class TransactionGroup extends Base {
             date: ydate2stmt(next_date),
             description: description ?? group.description,
             note: note !== undefined ? note : group.note,
+            expects_statement: boolean2stmt(
+                expects_statement !== undefined ? expects_statement : group.expects_statement),
+            reference: normalize_reference(
+                reference !== undefined ? reference : group.reference),
         });
         // Cascade to the denormalized date copy on every transaction
         if ( date_changed ) Transaction._set_date_for_group(db, group.id, next_date);
@@ -809,10 +945,14 @@ module.exports = class TransactionGroup extends Base {
 
     /**
      * Edit this group's scalar fields IN PLACE -- `description`, `note`,
-     * `date`. A date change cascades to the denormalized date on every child
-     * transaction and re-checks each one's start-date invariant against the
-     * new date. Runs in one sqlite transaction: a failed check leaves
-     * everything untouched.
+     * `date`, `expects_statement`, `reference`. A date change cascades to the
+     * denormalized date on every child transaction and re-checks each one's
+     * start-date invariant against the new date. Runs in one sqlite
+     * transaction: a failed check leaves everything untouched.
+     *
+     * Clearing `expects_statement` is how you retire a cheque you have given
+     * up on; there is no separate "outstanding" field to reset, since that
+     * state is derived from this flag plus whether anything is linked.
      *
      * The group's id -- and therefore any bank statement reconciliation
      * pointing at it -- is stable across updates (this is the reason updates

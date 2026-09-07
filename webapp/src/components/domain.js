@@ -166,6 +166,83 @@ export function transactionGroupTotal(group) {
 }
 
 /**
+ * Today as a 'YYYY-MM-DD' string in the BROWSER's timezone. The server
+ * deliberately keeps no clock of its own (it cannot know the user's zone),
+ * so "today" is always the client's answer -- this is the one place that
+ * decides it.
+ */
+export function todayYDate() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+// Shorter than this and a reference collides with everything -- a bare "12"
+// appears inside half the amounts and dates a bank memo carries
+const MIN_REFERENCE_MATCH_LENGTH = 3;
+
+/**
+ * Whether a bank statement item plausibly NAMES a group's `reference` -- the
+ * exact-key half of reconciliation, as opposed to the fuzzy date/amount half.
+ *
+ * Banks bury the number in free text ("CHECK 1247", "CHK#1247", "Cheque no
+ * 1247"), so this matches the reference as a whole token inside the item's
+ * searchable text rather than requiring equality. The token boundaries
+ * matter: "1247" must not match "31247" or "12470", which are different
+ * cheques entirely.
+ */
+export function statementNamesReference(statement, reference) {
+    if ( !statement || !reference ) return false;
+    const ref = String(reference).trim();
+    if ( ref.length < MIN_REFERENCE_MATCH_LENGTH ) return false;
+    const escaped = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^0-9A-Za-z])${escaped}(?:[^0-9A-Za-z]|$)`, 'i')
+        .test(`${statement.note ?? ''} ${statement.key ?? ''}`);
+}
+
+/**
+ * Whether a transaction group is still waiting on its bank line: prefer the
+ * API's canonical derived `outstanding`, falling back to the rule itself
+ * (expects a statement, nothing linked yet) so the helper still answers for
+ * a group shape that predates the field.
+ */
+export function groupIsOutstanding(group) {
+    if ( !group ) return false;
+    if ( group.status?.outstanding != null ) return group.status.outstanding;
+    return !!group.status?.expects_statement && (group.statements?.length ?? 0) === 0;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Plain date strings, so parse them as UTC midnights and subtract -- no
+// dayjs, and no DST edge to fall into (same reasoning as monthLabel)
+const utcDay = (date) => {
+    const [ year, month, day ] = date.split('-').map(Number);
+    return Date.UTC(year, month - 1, day) / MS_PER_DAY;
+};
+
+/**
+ * How many days an outstanding group has been waiting, measured from its own
+ * date -- the day the cheque was written, not the day it was entered. Null
+ * when the group is not outstanding: there is nothing to be waiting for.
+ */
+export function daysOutstanding(group, today = todayYDate()) {
+    if ( !groupIsOutstanding(group) || !group.date || !today ) return null;
+    return Math.max(0, Math.round(utcDay(today) - utcDay(group.date)));
+}
+
+/**
+ * Most banks refuse a cheque more than six months old. Past this an
+ * outstanding item is worth chasing (or writing off with
+ * `expects_statement: false`) rather than quietly waiting on.
+ */
+export const STALE_OUTSTANDING_DAYS = 180;
+
+export function outstandingIsStale(group, today = todayYDate()) {
+    const days = daysOutstanding(group, today);
+    return days != null && days >= STALE_OUTSTANDING_DAYS;
+}
+
+/**
  * A bank statement item's state: prefer the API's canonical `state` field,
  * deriving it from the raw flags only as a fallback (every item is in
  * exactly one of these).
