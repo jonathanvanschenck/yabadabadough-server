@@ -109,6 +109,33 @@ async function main() {
         } ],
     });
 
+    // --- Outstanding items (cheques written, not yet cashed) ------------
+    // The float: money that has left its envelope but that the bank has not
+    // confirmed. Drives /outstanding, the row accent on /transactions, and
+    // the link modal's "only groups awaiting a bank line" mode. The 210-day
+    // one is past the stale threshold; cc-p08 below cashes the 8-day one.
+    const outstanding = [
+        { days: 8,   desc: "Plumber cheque",       reference: "1247", amount: 420.00 },
+        { days: 45,  desc: "Roof deposit cheque",  reference: "1248", amount: 1500.00 },
+        { days: 210, desc: "Contractor cheque",    reference: "1102", amount: 875.00 },
+        // No reference: outstanding is about the waiting, not the instrument
+        { days: 20,  desc: "Insurance refund due", reference: null,   amount: 310.25 },
+    ];
+    for ( const o of outstanding ) {
+        await api("POST", "/api/transactions/transaction-groups", {
+            date: D(o.days),
+            description: o.desc,
+            expects_statement: true,
+            reference: o.reference,
+            transactions: [ {
+                source_fund_id: pool,
+                target_fund_id: external,
+                amount: o.amount,
+                description: o.desc,
+            } ],
+        });
+    }
+
     // --- The pending queue ----------------------------------------------
     const pending = [
         // History-prefill hits (leading note tokens match history above)
@@ -127,6 +154,11 @@ async function main() {
         // savings side pending WITH a suggestion pointing at that group
         { source: CHK, key: "chk-p02", amount: -500.00, date: D(2), note: "XFER TO SAVINGS" },
         { source: "OSCU Savings", key: "sav-p01", amount: 500.00, date: D(1), note: "XFER FROM CHECKING" },
+        // A cheque coming home: the bank names the number ("CHECK 1247"), so
+        // the link modal's reference match pins it to the Plumber cheque
+        // group written 8 days ago -- exactly the workflow the reference
+        // field exists for
+        { source: CHK, key: "chk-p05", amount: -420.00, date: D(0), note: "CHECK 1247" },
         // Noise to ignore (or already ignored, to browse that state)
         { source: CHK, key: "chk-p03", amount: 0.42, date: D(3), note: "INTEREST PAYMENT" },
         { source: CHK, key: "chk-p04", amount: -5.00, date: D(3), note: "MONTHLY SERVICE FEE" },
@@ -151,7 +183,9 @@ async function main() {
     const counts = items.reduce((acc, i) => (acc[i.state] = (acc[i.state] ?? 0) + 1, acc), {});
     console.log(`Seeded ${BASE}:`);
     console.log(`  8 funds (Main Pool + envelopes + monthly "Fun Money" + untracked "External World")`);
+    const outstandingGroups = await api("GET", "/api/transactions/transaction-groups?outstanding=true");
     console.log(`  ${items.length} statement items: ${counts.pending ?? 0} pending, ${counts.reconciled ?? 0} reconciled (history), ${counts.ignored ?? 0} ignored`);
+    console.log(`  ${outstandingGroups.length} outstanding groups (cheques written but not cashed; one is past the 180-day stale mark)`);
     console.log("");
     console.log("What to expect on /statements (pending view):");
     console.log("  - Costco / Safeway / Shell / Netflix / DoorDash items: funds + description");
@@ -163,6 +197,14 @@ async function main() {
     console.log("  - AMZN MKTP / PAYROLL / INTEREST PAYMENT: no help on purpose (manual");
     console.log("    reconcile, income, and an ignore candidate)");
     console.log("  - J/K, Enter, L, I, R, /, ? drive it all; ? or the corner icon shows help");
+    console.log("");
+    console.log("What to expect on /outstanding:");
+    console.log("  - 4 groups waiting on a bank line, oldest first; the 210-day Contractor");
+    console.log("    cheque is styled as stale (past what a bank would honour)");
+    console.log('  - CHECK 1247 -420.00 sits in the pending queue: open its Link modal and');
+    console.log('    "Plumber cheque" group tops the list on the REFERENCE match. Linking it');
+    console.log("    drops that group off /outstanding with no write to the group itself");
+    console.log("  - /transactions shows the same items with an accent down the date column");
 }
 
 main().catch(err => {

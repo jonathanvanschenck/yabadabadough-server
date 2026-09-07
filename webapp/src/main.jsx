@@ -19,6 +19,7 @@ import Transactions from './pages/transactions/Transactions.jsx'
 import TransactionGroup from './pages/transaction_group/TransactionGroup.jsx'
 import Allocations from './pages/allocations/Allocations.jsx'
 import Statements from './pages/statements/Statements.jsx'
+import Outstanding from './pages/outstanding/Outstanding.jsx'
 import Users from './pages/users/Users.jsx'
 import User from './pages/user/User.jsx'
 
@@ -37,6 +38,7 @@ const router = createBrowserRouter(
                 { path: "transaction-group/:id", Component: TransactionGroup },
                 { path: "allocations", Component: Allocations },
                 { path: "statements", Component: Statements },
+                { path: "outstanding", Component: Outstanding },
                 { path: "users", Component: Users },
                 { path: "user/:id", Component: User },
                 { path: "*", Component: NotFound  }

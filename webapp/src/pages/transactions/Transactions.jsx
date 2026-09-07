@@ -26,7 +26,12 @@ import { FinalizedBadge, FundLabel, OutstandingBadge } from '../../components/Ba
 import { HoverPopover } from '../../components/HoverPopover.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { formatDollars, previousMonthSom } from '../../components/domain.js';
+import {
+    formatDollars,
+    previousMonthSom,
+    groupIsOutstanding,
+    outstandingIsStale
+} from '../../components/domain.js';
 import { fundColorVar } from '../../hooks/fundColors.js';
 import {
     monthBoundsOf,
@@ -256,6 +261,11 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
 function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hoveredFundId, isExpanded, onToggleExpand, onShowNote, onDeleteGroup, isMonthFinalized = false, isEditor = false, rowClassName = '' }) {
     const netMap = netAmountsByFund(group.transactions);
     const isSpecial = group.status.allocation || group.status.eom_cleanup;
+    // Computed here rather than passed in, so it applies wherever a group row
+    // is rendered. Stale outstanding items escalate to the danger accent.
+    const outstandingClass = !groupIsOutstanding(group) ? ''
+        : outstandingIsStale(group) ? styles.outstandingRowStale
+        : styles.outstandingRow;
     const deleteDisabledReason = !isEditor
         ? 'Editor role required to delete transaction groups'
         : isSpecial
@@ -264,7 +274,7 @@ function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hovere
         ? 'This month is finalized — unfinalize it to delete groups'
         : null;
     return (<>
-        <tr className={`${styles.bodyRow} ${rowClassName}`}>
+        <tr className={`${styles.bodyRow} ${rowClassName} ${outstandingClass}`}>
             <td className={`${styles.dateCell} ${styles.stickyCol1}`}>
                 <GhostButton
                     icon={isExpanded ? 'fa-angle-down' : 'fa-angle-right'}

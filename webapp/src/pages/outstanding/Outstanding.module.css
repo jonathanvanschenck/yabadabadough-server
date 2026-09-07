@@ -1,0 +1,178 @@
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+/* ---- Top bar: title + count | stale filter | what the page means ---- */
+
+.topBar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-top: 0.5rem;
+}
+
+.topBarSide {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.topBarRight {
+    justify-content: flex-end;
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.pageTitle {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.count {
+    color: var(--font-muted);
+    font-size: 0.85rem;
+}
+
+.staleControl {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+/* ---- Loading / error / empty states ---- */
+
+.centerState {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.errorTitle {
+    color: var(--font-danger-color);
+    margin: 0;
+}
+
+.emptyState {
+    text-align: center;
+    color: var(--font-faint);
+    padding: 1.5rem 0.5rem;
+    font-style: italic;
+}
+
+/* ---- The table ----
+ *
+ * Sticky header over a single scroll region, same construction as the
+ * balances table: separate borders (collapse breaks sticky) and a solid
+ * background on every cell so rows do not scroll through the header.
+ */
+
+.tableScroll {
+    --thead-height: 2.2rem;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.8rem;
+    width: 100%;
+    max-width: 68rem;
+}
+
+.table td,
+.table th {
+    padding: 0.3rem 0.5rem;
+    background-color: var(--bg-secondary-color);
+}
+
+.table td {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    height: var(--thead-height);
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--input-border-color);
+    font-weight: 500;
+    color: var(--font-secondary-color);
+    text-align: left;
+}
+
+.bodyRow:hover td {
+    background-color: var(--bg-hover-color);
+}
+
+/* The waiting accent, matching the transactions grid so an outstanding row
+ * reads the same on both pages */
+.bodyRow td:first-child {
+    box-shadow: inset 0.2rem 0 0 0 var(--u-warn-text);
+}
+
+.staleRow td:first-child {
+    box-shadow: inset 0.2rem 0 0 0 var(--u-danger-text);
+}
+
+.dateCell {
+    white-space: nowrap;
+    width: 7rem;
+}
+
+.waitedCell {
+    white-space: nowrap;
+    width: 8rem;
+    color: var(--u-warn-text);
+}
+
+.staleRow .waitedCell,
+.staleRow .dateCell {
+    color: var(--u-danger-text);
+}
+
+.descCell {
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.descLink {
+    color: inherit;
+}
+
+.referenceCell {
+    white-space: nowrap;
+    width: 9rem;
+    color: var(--font-secondary-color);
+}
+
+.moneyCell {
+    text-align: right;
+    white-space: nowrap;
+    width: 8rem;
+}
+
+.actionsCell {
+    text-align: right;
+    white-space: nowrap;
+    width: 6rem;
+}
+
+.noteCell {
+    color: var(--font-muted);
+    width: 3rem;
+}

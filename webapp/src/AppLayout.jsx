@@ -104,6 +104,7 @@ function App() {
                     <NavLink to="/transactions">Transactions</NavLink>
                     <NavLink to="/allocations">Allocations</NavLink>
                     <NavLink to="/statements">Statements</NavLink>
+                    <NavLink to="/outstanding">Outstanding</NavLink>
                     { auth.roles.adminable &&
                         <NavLink to="/users">Users</NavLink>
                     }

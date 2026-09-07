@@ -107,8 +107,14 @@ Two fields on a group cover this:
 
 **Outstanding** is then derived, never stored: the group expects a bank line and
 none is linked yet. Link the item and it stops being outstanding; unlink it and
-it starts again. There is no status to remember to clear, and
-`?outstanding=true` on the groups list is your uncleared-cheque work queue.
+it starts again. There is no status to remember to clear.
+
+The **Outstanding** page is the mirror image of the statements queue — that one
+lists bank lines you have not explained, this one lists money you have committed
+that the bank has not seen. Oldest first, since the top of the list is what is
+most likely to have gone astray, and anything past six months is styled as stale.
+Groups waiting on a bank line also carry an accent down the date column on the
+transactions grid, so they are visible where you already work.
 
 Date the group when you *wrote* the cheque and let the bank item carry the date
 it *cleared* — the gap between them is unconstrained, deliberately, and linking

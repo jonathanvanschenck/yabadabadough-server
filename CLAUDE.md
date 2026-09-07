@@ -417,7 +417,13 @@ TransactionGroup, `finalized_months_since` in Fund).
   case-insensitive (`= ? COLLATE NOCASE`, with the partial index declared NOCASE so it still
   applies) to agree with the webapp's `statementNamesReference`. The motivating case is
   a cheque: the group is dated when you WROTE it (so the money leaves the envelope then), the
-  bank item is dated when it CLEARED, and nothing anywhere constrains the gap
+  bank item is dated when it CLEARED, and nothing anywhere constrains the gap.
+  Webapp: the `/outstanding` page (the mirror of the statements queue — bespoke table, not
+  `SearchableTable`, because the per-row stale styling is the content), an accent down the
+  date column on the transactions grid, `OutstandingBadge` + both fields on the group page
+  and the create/edit modals, and the link modal's "only groups awaiting a bank line" mode,
+  which drops the date window entirely and ranks a `statementNamesReference` hit above an
+  amount match. The 180-day stale threshold lives in `webapp/src/components/domain.js`
 - `group.delete(db)` removes a group and its transactions; the only guard is the finalized-month
   check (which inherently protects eom_cleanup groups — they only exist inside finalized months).
   `TransactionGroup.assert_month_unfinalized(db, date)` is the shared guard helper
