@@ -15,7 +15,9 @@ import styles from './KeyboardHelp.module.css';
  * `isOpen`/`setIsOpen` are controlled by the caller so the page's own "?"
  * shortcut can open the same modal. `groups` is
  * `[{ title, shortcuts: [{ keys: ["J", "↓"], description }] }]` -- multiple
- * keys in one entry render as alternatives ("J or ↓").
+ * keys in one entry render as alternatives ("J or ↓"). A nested array is a
+ * CHORD, joined with "+" instead: `keys: [["Shift", "L"]]` renders "Shift+L",
+ * and the two forms compose (`[["Shift","L"], "F2"]` -> "Shift+L or F2").
  */
 export function FloatingKeyboardHelp({ isOpen, setIsOpen, title = 'Keyboard shortcuts', intro = null, groups = [] }) {
     return (<>
@@ -43,7 +45,15 @@ export function FloatingKeyboardHelp({ isOpen, setIsOpen, title = 'Keyboard shor
                                     { shortcut.keys.map((key, j) => (
                                         <Fragment key={j}>
                                             { j > 0 && <span className={styles.keySep}>or</span> }
-                                            <kbd className={styles.kbd}>{key}</kbd>
+                                            { Array.isArray(key)
+                                                ? key.map((part, k) => (
+                                                    <Fragment key={k}>
+                                                        { k > 0 && <span className={styles.keyPlus}>+</span> }
+                                                        <kbd className={styles.kbd}>{part}</kbd>
+                                                    </Fragment>
+                                                ))
+                                                : <kbd className={styles.kbd}>{key}</kbd>
+                                            }
                                         </Fragment>
                                     ))}
                                 </span>

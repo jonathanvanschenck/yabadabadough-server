@@ -108,6 +108,19 @@
     border-color: var(--bg-danger-color) !important;
 }
 
+/* ...but the danger ring must not SWALLOW the focus ring. It carries
+   !important (it has to beat .required/.changed, which are !important
+   themselves), and that also beat the plain :focus rule -- so an invalid field
+   showed no focus indication at all. Layer the two instead: the focus ring
+   tight against the edge, the danger glow outside it, so the field reads as
+   focused AND invalid rather than losing one state to the other. */
+.textInput:invalid:focus:not(:disabled),
+.textInput:invalid:hover:not(:disabled) {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
+}
+
 .textInputFrozen {
     color: var(--font-primary-color);
     padding: 0.5rem;
@@ -544,6 +557,14 @@
 .dpTrigger.invalid {
     box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
     border-color: var(--bg-danger-color) !important;
+}
+
+/* Same layering as .textInput:invalid -- see the note there */
+.dpTrigger.invalid:focus,
+.dpTrigger.invalid:hover {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
 }
 
 .dpValue {

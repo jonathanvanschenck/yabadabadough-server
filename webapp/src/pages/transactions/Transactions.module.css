@@ -512,11 +512,14 @@ td.colHover {
     color: var(--font-faint);
 }
 
-/* The icon-only outstanding mark sits between the description and the row's
- * ghost buttons, so it needs its own left gap -- the icon carries none of its
- * own without a label beside it */
+/* The icon-only outstanding mark sits BETWEEN the description and the row's
+ * ghost buttons, so it needs a gap on both sides -- the icon carries none of
+ * its own without a label beside it. The right side is smaller because the
+ * ghost button that follows contributes its own 0.25rem of padding, which
+ * evens the two visual gaps out. */
 .outstandingMark {
     margin-left: 0.5rem;
+    margin-right: 0.25rem;
 }
 
 /* Sub-rows of an expanded group */

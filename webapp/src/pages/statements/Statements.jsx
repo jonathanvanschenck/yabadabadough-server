@@ -252,7 +252,7 @@ const SHORTCUT_GROUPS = [
             { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
             { keys: [ 'S', 'T', 'D' ], description: 'Jump into the Source / Target / Description fields — S and T open the fund search (type, then Enter to pick), D selects the description text; Esc returns to the card' },
             { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
-            { keys: [ 'Shift', 'L' ], description: 'Open the full link picker — search every group, including ones the suggester did not surface' },
+            { keys: [ [ 'Shift', 'L' ] ], description: 'Open the full link picker — search every group, including ones the suggester did not surface' },
             { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
             { keys: [ 'I' ], description: 'Ignore the item (I again on an ignored card un-ignores)' },
         ],
