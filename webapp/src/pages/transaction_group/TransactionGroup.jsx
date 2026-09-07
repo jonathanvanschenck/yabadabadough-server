@@ -10,11 +10,11 @@ import {
 } from '../../hooks/Queries.jsx';
 import Spinner from '../../components/Spinner.jsx';
 import { Card, CardActionHeader, CardSection, CardAutoGrid } from '../../components/Card.jsx';
-import { LabeledTextInput, LabeledTextArea } from '../../components/Inputs.jsx';
+import { LabeledTextInput, LabeledTextArea, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { IconButton, TightIconButton } from '../../components/Buttons.jsx';
 import { BackLink } from '../../components/Links.jsx';
 import { Banner } from '../../components/Banner.jsx';
-import { FundLabel, FinalizedBadge, Badge } from '../../components/Badges.jsx';
+import { FundLabel, FinalizedBadge, Badge, OutstandingBadge } from '../../components/Badges.jsx';
 import {
     EditTransactionGroupModal,
     EditTransactionGroupTransactionsModal,
@@ -23,7 +23,7 @@ import {
     UnlinkStatementModal,
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
-import { formatDollars } from '../../components/domain.js';
+import { Money } from '../../components/Money.jsx';
 import styles from './TransactionGroup.module.css';
 
 
@@ -46,7 +46,7 @@ function TransactionLineRow({ transaction, fundById, isHighlighted, canEdit, onE
                 <FundLabel fund={fundById.get(t.target_fund_id)} />
             </td>
             <td className={styles.lineDesc} title={t.description}>{t.description}</td>
-            <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(t.amount)}</td>
+            <td className={styles.lineAmount}><Money value={t.amount} /></td>
             <td className={styles.lineNote} title={t.note ?? undefined}>
                 { t.note
                     ? <span className={styles.lineNoteText}>{t.note}</span>
@@ -197,6 +197,7 @@ export default function TransactionGroupPage() {
                         className={styles.managedBadge}
                     />
                 }
+                <OutstandingBadge group={group} />
                 <FinalizedBadge value={isFinalized} />
                 <BackLink to="/transactions" linkText="Transactions" />
             </div>
@@ -244,6 +245,19 @@ export default function TransactionGroupPage() {
                             value={group.note}
                             isFrozen={true}
                             nullPlaceholder="(none)"
+                        />
+                        <LabeledTextInput
+                            label="Reference"
+                            value={group.reference}
+                            isFrozen={true}
+                            nullPlaceholder="(none)"
+                            inputTitle="Cheque number, wire confirmation, invoice id"
+                        />
+                        <LabeledBooleanInput
+                            label="Awaiting a bank line"
+                            value={group.status.expects_statement}
+                            isFrozen={true}
+                            inputTitle="Whether a bank line is expected for this group. Combined with what is linked below, this is what makes it outstanding"
                         />
                     </CardAutoGrid>
                 </CardSection>
@@ -315,7 +329,7 @@ export default function TransactionGroupPage() {
                                             <tr key={s.id} className={styles.lineRow}>
                                                 <td><strong>{s.source}</strong></td>
                                                 <td className="tabular-nums">{s.date}</td>
-                                                <td className={`${styles.lineAmount} tabular-nums`}>{formatDollars(s.amount)}</td>
+                                                <td className={styles.lineAmount}><Money value={s.amount} /></td>
                                                 <td className={styles.lineNote} title={s.note ?? s.key}>
                                                     <span className={styles.lineNoteText}>{s.note ?? s.key}</span>
                                                 </td>

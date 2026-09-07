@@ -15,6 +15,7 @@ const {
     string_to_boolean,
     only_string,
     only_non_empty_string,
+    only_boolean,
     only_id,
     only_positive_number,
     only_ydate,
@@ -177,7 +178,7 @@ module.exports = class TransactionsCollection extends Collection {
 
             static openapi_Summary = "List Transaction Groups";
 
-            static openapi_Description = "Get a list of transaction groups (each hydrated with its transactions and any reconciled bank statement items). You can filter and sort the results using query parameters.";
+            static openapi_Description = "Get a list of transaction groups (each hydrated with its transactions and any reconciled bank statement items). You can filter and sort the results using query parameters. `outstanding=true` is the uncleared-instrument work queue: groups that declared a bank line was coming (`expects_statement`) and still have nothing linked -- written-but-uncashed cheques, pending ACH, promised refunds.";
 
             static query_key = ["transaction-groups"];
 
@@ -225,6 +226,27 @@ module.exports = class TransactionsCollection extends Collection {
                     schema: { type: 'boolean' }
                 },
                 {
+                    name: 'expects_statement',
+                    in: 'query',
+                    description: 'Filter by whether a bank line is expected for the group (the stored intent, regardless of whether it has arrived)',
+                    required: false,
+                    schema: { type: 'boolean' }
+                },
+                {
+                    name: 'outstanding',
+                    in: 'query',
+                    description: 'Filter by the DERIVED outstanding state: expects_statement is set and nothing is linked yet. This is the uncleared-cheque work queue',
+                    required: false,
+                    schema: { type: 'boolean' }
+                },
+                {
+                    name: 'reference',
+                    in: 'query',
+                    description: 'Filter by exact instrument reference (a cheque number, a wire confirmation). Blank matches groups with no reference',
+                    required: false,
+                    schema: { type: 'string' }
+                },
+                {
                     name: 'description_like',
                     in: 'query',
                     description: 'Filter by description using a case-insensitive substring match',
@@ -243,6 +265,9 @@ module.exports = class TransactionsCollection extends Collection {
                 filter.allocation = string_to_boolean(req.query?.allocation);
                 filter.eom_cleanup = string_to_boolean(req.query?.eom_cleanup);
                 filter.has_statements = string_to_boolean(req.query?.has_statements);
+                filter.expects_statement = string_to_boolean(req.query?.expects_statement);
+                filter.outstanding = string_to_boolean(req.query?.outstanding);
+                filter.reference = only_string(req.query?.reference);
                 filter.description_like = only_string(req.query?.description_like);
 
                 return filter;
@@ -309,7 +334,7 @@ module.exports = class TransactionsCollection extends Collection {
 
             static openapi_Summary = "Create Transaction Group";
 
-            static openapi_Description = "Create a transaction group holding one or more transactions (one = an ordinary expense/transfer, several = a split). Transactions may not be dated in a finalized month or before their funds' start dates. The internal allocation/eom_cleanup group kinds cannot be created here (use the allocations / finalizations APIs).";
+            static openapi_Description = "Create a transaction group holding one or more transactions (one = an ordinary expense/transfer, several = a split). Transactions may not be dated in a finalized month or before their funds' start dates. The internal allocation/eom_cleanup group kinds cannot be created here (use the allocations / finalizations APIs). Set `expects_statement` when the money is committed but the bank line has not arrived yet -- the classic case being a cheque, dated here to the day you WROTE it, which may not clear for months; record its number in `reference` so the cleared item can be matched back.";
 
             static openapi_RequestBodySchema = {
                 type: 'object',
@@ -317,6 +342,8 @@ module.exports = class TransactionsCollection extends Collection {
                     date: { type: 'string', format: 'date' },
                     description: { type: 'string' },
                     note: { type: 'string', nullable: true },
+                    expects_statement: { type: 'boolean', description: "A bank line is expected for this group but has not arrived yet (a written-but-uncashed cheque, a pending ACH). Defaults to false" },
+                    reference: { type: 'string', nullable: true, description: "Free-form instrument reference, e.g. a cheque number" },
                     transactions: {
                         type: 'array',
                         minItems: 1,
@@ -331,6 +358,8 @@ module.exports = class TransactionsCollection extends Collection {
                     [ "date", only_ydate, "YYYY-MM-DD string", { required: true } ],
                     [ "description", only_non_empty_string, "non-empty string", { required: true } ],
                     [ "note", nullable(only_string), "string or null" ],
+                    [ "expects_statement", only_boolean, "boolean" ],
+                    [ "reference", nullable(only_string), "string or null" ],
                 ]);
 
                 data.transactions = parse_transaction_specs(req.body?.transactions);
@@ -387,6 +416,8 @@ module.exports = class TransactionsCollection extends Collection {
                     date: { type: 'string', format: 'date', nullable: true, description: "Defaults to the latest item date" },
                     description: { type: 'string', nullable: true, description: "Defaults to the items' notes (fallback: keys)" },
                     note: { type: 'string', nullable: true },
+                    expects_statement: { type: 'boolean', description: "Rarely needed here (the group is born reconciled), but honoured so a later unlink reads as outstanding. Defaults to false" },
+                    reference: { type: 'string', nullable: true, description: "Free-form instrument reference, e.g. the cheque number this cleared item paid" },
                     transactions: {
                         type: 'array',
                         minItems: 1,
@@ -401,6 +432,8 @@ module.exports = class TransactionsCollection extends Collection {
                     [ "date", nullable(only_ydate), "YYYY-MM-DD string or null" ],
                     [ "description", nullable(only_non_empty_string), "non-empty string or null" ],
                     [ "note", nullable(only_string), "string or null" ],
+                    [ "expects_statement", only_boolean, "boolean" ],
+                    [ "reference", nullable(only_string), "string or null" ],
                 ]);
 
                 const raw_ids = req.body?.statement_ids;
@@ -505,7 +538,7 @@ module.exports = class TransactionsCollection extends Collection {
 
             static openapi_Summary = "Update Transaction Group";
 
-            static openapi_Description = "Update a transaction group's scalar fields in place: description, note, and/or date. A date change cascades to every transaction in the group (re-checking their funds' start dates) and may not move the group into -- or out of -- a finalized month (409). The group's id is stable, so bank statement reconciliation survives (this is the reason to prefer updates over delete-and-recreate). Allocation and eom_cleanup groups cannot be edited here (409). Adding/removing/editing the group's transactions goes through PATCH .../transactions.";
+            static openapi_Description = "Update a transaction group's scalar fields in place: description, note, date, expects_statement and/or reference. A date change cascades to every transaction in the group (re-checking their funds' start dates) and may not move the group into -- or out of -- a finalized month (409). The group's id is stable, so bank statement reconciliation survives (this is the reason to prefer updates over delete-and-recreate). Allocation and eom_cleanup groups cannot be edited here (409). Adding/removing/editing the group's transactions goes through PATCH .../transactions.";
 
             static openapi_Parameters = [
                 this.GroupIDParam
@@ -516,7 +549,9 @@ module.exports = class TransactionsCollection extends Collection {
                 properties: {
                     description: { type: 'string' },
                     note: { type: 'string', nullable: true },
-                    date: { type: 'string', format: 'date', description: "Cascades to every transaction in the group" }
+                    date: { type: 'string', format: 'date', description: "Cascades to every transaction in the group" },
+                    expects_statement: { type: 'boolean', description: "Whether a bank line is still expected. Clearing it retires a cheque you have given up on; the derived `outstanding` follows from this plus whether anything is linked" },
+                    reference: { type: 'string', nullable: true, description: "Free-form instrument reference, e.g. a cheque number" }
                 }
             }
 
@@ -526,6 +561,8 @@ module.exports = class TransactionsCollection extends Collection {
                     [ "description", only_non_empty_string, "non-empty string" ],
                     [ "note", nullable(only_string), "string or null" ],
                     [ "date", only_ydate, "YYYY-MM-DD string" ],
+                    [ "expects_statement", only_boolean, "boolean" ],
+                    [ "reference", nullable(only_string), "string or null" ],
                 ]);
                 return { group, data };
             }

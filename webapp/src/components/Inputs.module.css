@@ -108,6 +108,19 @@
     border-color: var(--bg-danger-color) !important;
 }
 
+/* ...but the danger ring must not SWALLOW the focus ring. It carries
+   !important (it has to beat .required/.changed, which are !important
+   themselves), and that also beat the plain :focus rule -- so an invalid field
+   showed no focus indication at all. Layer the two instead: the focus ring
+   tight against the edge, the danger glow outside it, so the field reads as
+   focused AND invalid rather than losing one state to the other. */
+.textInput:invalid:focus:not(:disabled),
+.textInput:invalid:hover:not(:disabled) {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
+}
+
 .textInputFrozen {
     color: var(--font-primary-color);
     padding: 0.5rem;
@@ -178,6 +191,19 @@
 .textArea:focus:not(:disabled) {
     outline: none;
     box-shadow: 0 0 3px 2px var(--font-primary-color);
+}
+
+.textArea:invalid:not(:disabled) {
+    box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
+    border-color: var(--bg-danger-color) !important;
+}
+
+/* Focus layered over the danger ring -- see the note on .textInput:invalid */
+.textArea:invalid:focus:not(:disabled),
+.textArea:invalid:hover:not(:disabled) {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
 }
 
 .textArea::placeholder {
@@ -258,6 +284,19 @@
     padding: 0.5rem;
 }
 
+.selector:invalid:not(:disabled) {
+    box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
+    border-color: var(--bg-danger-color) !important;
+}
+
+/* Focus layered over the danger ring -- see the note on .textInput:invalid */
+.selector:invalid:focus:not(:disabled),
+.selector:invalid:hover:not(:disabled) {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
+}
+
 .selectorFrozen {
     color: var(--font-primary-color);
     padding: 0.5rem;
@@ -333,6 +372,22 @@
 
 .searchableSelectorTrigger.pending {
     cursor: default;
+}
+
+/* The fund selector is a div[tabindex], not a form control, so it takes the
+   .invalid CLASS rather than :invalid -- same arrangement as the date picker's
+   trigger. Unlike that one it never sets `outline: none`, so the browser's own
+   focus ring still shows through the danger ring; only :hover needs the
+   layering treatment, to keep its feedback from being swallowed. */
+.searchableSelectorTrigger.invalid {
+    box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
+    border-color: var(--bg-danger-color) !important;
+}
+
+.searchableSelectorTrigger.invalid:hover {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
 }
 
 .searchableSelectorValue {
@@ -544,6 +599,14 @@
 .dpTrigger.invalid {
     box-shadow: 0 0 3px 2px var(--bg-danger-color) !important;
     border-color: var(--bg-danger-color) !important;
+}
+
+/* Same layering as .textInput:invalid -- see the note there */
+.dpTrigger.invalid:focus,
+.dpTrigger.invalid:hover {
+    box-shadow:
+        0 0 0 2px var(--font-primary-color),
+        0 0 3px 4px var(--bg-danger-color) !important;
 }
 
 .dpValue {

@@ -66,7 +66,7 @@ describe("Utils API", () => {
             expect(await res.json()).to.deep.equal({
                 webserver: "test-version",
                 webapp: "test-version",
-                db: 1, // PRAGMA user_version of a freshly-initialized schema
+                db: 3, // PRAGMA user_version of a freshly-initialized schema
             });
         });
     });

@@ -77,6 +77,10 @@ CREATE TABLE funds (
     id                INTEGER PRIMARY KEY,
     name              TEXT NOT NULL UNIQUE,
 
+    -- Free-form prose: what the fund is for and the intentions behind it
+    -- (NULL = none). Added in migration 0001-0002.
+    description       TEXT,
+
     parent_id         INTEGER REFERENCES funds(id)
                         ON DELETE RESTRICT
                         ON UPDATE CASCADE, -- NULL for roots
@@ -284,6 +288,24 @@ CREATE TABLE transaction_groups (
     -- NOTE : bank statement items reference groups (bank_statement_items.group_id),
     --        not the other way around -- see that table below
 
+    -- A bank line is EXPECTED for this group but has not been imported yet: a
+    -- written-but-uncashed check, a pending ACH, a promised refund. This is a
+    -- statement of INTENT only -- "outstanding" is derived (this flag AND no
+    -- linked bank_statement_items), so linking an item clears it with no write
+    -- and unlinking one restores it. Internal allocation/eom_cleanup groups
+    -- never correspond to a bank event, so they may never set it.
+    expects_statement   INTEGER NOT NULL DEFAULT 0
+                        CHECK (
+                            expects_statement IN (0,1)
+                            AND NOT (expects_statement = 1 AND (allocation = 1 OR eom_cleanup = 1))
+                        ),
+
+    -- Free-form instrument reference: a check number, a wire confirmation, an
+    -- invoice id. Deliberately NOT unique -- banks recycle these across years
+    -- and accounts, so it is a matching hint for reconciliation, never an
+    -- identity. Stored trimmed, with the empty string normalized to NULL.
+    reference           TEXT,
+
     -- DENORMALIZED VALUES:
     -- Reference value for if this group has multiple transactions
     split               INTEGER NOT NULL CHECK (split IN (0,1)),
@@ -304,6 +326,12 @@ CREATE INDEX idx_transaction_groups_date ON transaction_groups(date);
 CREATE INDEX idx_transaction_groups_split ON transaction_groups(split);
 CREATE INDEX idx_transaction_groups_allocation ON transaction_groups(allocation);
 CREATE INDEX idx_transaction_groups_eom_cleanup ON transaction_groups(eom_cleanup);
+CREATE INDEX idx_transaction_groups_expects_statement
+    ON transaction_groups(expects_statement);
+-- Partial: this index exists to resolve a cleared item back to the group that
+-- named it, and an unreferenced group is the overwhelming majority case
+CREATE INDEX idx_transaction_groups_reference
+    ON transaction_groups(reference COLLATE NOCASE) WHERE reference IS NOT NULL;
 
 -- NOTE : this table is defined AFTER transaction_groups (its reconciliation
 --        target) so that group_id and its cross-column CHECK can live in the
@@ -401,4 +429,4 @@ ALTER TABLE funds
 CREATE INDEX idx_funds_finalization_id ON funds(finalization_id);
 
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 3;

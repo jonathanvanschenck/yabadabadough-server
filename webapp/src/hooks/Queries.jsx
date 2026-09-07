@@ -235,6 +235,9 @@ export function useGetTransactionGroupsQuery(
         allocation,
         eomCleanup,
         hasStatements,
+        expectsStatement,
+        outstanding,
+        reference,
         descriptionLike,
         orderBy,
         orderDirection
@@ -250,6 +253,9 @@ export function useGetTransactionGroupsQuery(
         allocation: allocation,
         eom_cleanup: eomCleanup,
         has_statements: hasStatements,
+        expects_statement: expectsStatement,
+        outstanding: outstanding,
+        reference: reference,
         description_like: descriptionLike,
         order_by: orderBy,
         order_direction: orderDirection,
@@ -979,6 +985,7 @@ function useInvalidatingMutation(mutationFn) {
  * @typedef {object} PostFundMutationData
  * @property {object} formData - The payload (snake_case, matching the API)
  * @property {string} formData.name
+ * @property {string|null} [formData.description] - What the fund is for and its intentions
  * @property {boolean} formData.tracked
  * @property {boolean} [formData.monthly] - Requires tracked, a parent, and a pool ancestor
  * @property {boolean} [formData.pool] - Requires tracked; excludes monthly
@@ -1009,6 +1016,7 @@ export function usePostFundMutation() {
  * @property {object} formData - The payload (snake_case, matching the API)
  * @property {number} formData.id - The fund ID
  * @property {string} [formData.name]
+ * @property {string|null} [formData.description] - What the fund is for; null clears it
  * @property {boolean} [formData.tracked]
  * @property {boolean} [formData.monthly]
  * @property {boolean} [formData.pool]
@@ -1099,6 +1107,8 @@ export function useDeleteFundMutation() {
  * @property {string} formData.date - YYYY-MM-DD
  * @property {string} formData.description
  * @property {string|null} [formData.note]
+ * @property {boolean} [formData.expects_statement] - A bank line is expected but has not arrived (an uncashed cheque, a pending ACH)
+ * @property {string|null} [formData.reference] - Instrument reference, e.g. a cheque number
  * @property {TransactionSpec[]} formData.transactions - At least one
  *
  * @returns {import('@tanstack/react-query').UseMutationResult}
@@ -1142,9 +1152,10 @@ export function usePostTransactionGroupFromStatementsMutation() {
 }
 
 /**
- * Patch a Transaction Group's scalar fields (description/note/date). The
- * group id is stable, so bank statement reconciliation survives -- prefer
- * this over delete-and-recreate. Allocation/eom_cleanup groups 409.
+ * Patch a Transaction Group's scalar fields (description/note/date/
+ * expects_statement/reference). The group id is stable, so bank statement
+ * reconciliation survives -- prefer this over delete-and-recreate.
+ * Allocation/eom_cleanup groups 409.
  *
  * @typedef {object} PatchTransactionGroupMutationData
  * @property {object} formData - The payload (snake_case, matching the API)
@@ -1152,6 +1163,8 @@ export function usePostTransactionGroupFromStatementsMutation() {
  * @property {string} [formData.description]
  * @property {string|null} [formData.note]
  * @property {string} [formData.date] - YYYY-MM-DD; cascades to every transaction in the group
+ * @property {boolean} [formData.expects_statement] - Clear it to retire a cheque you have given up on
+ * @property {string|null} [formData.reference] - Instrument reference, e.g. a cheque number
  *
  * @returns {import('@tanstack/react-query').UseMutationResult}
  */

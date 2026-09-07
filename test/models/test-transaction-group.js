@@ -883,10 +883,13 @@ describe("TransactionGroup Model", () => {
             expect(api_data.description).to.equal("API test");
             expect(api_data.note).to.equal("Test note");
             expect(api_data.date).to.equal("2026-06-01");
+            expect(api_data.reference).to.equal(null);
             expect(api_data.status).to.deep.equal({
                 split: false,
                 allocation: false,
                 eom_cleanup: false,
+                expects_statement: false,
+                outstanding: false,
             });
             expect(api_data.statements).to.deep.equal([]);
             expect(api_data.transactions).to.be.an("array");
@@ -1700,6 +1703,242 @@ describe("TransactionGroup Model", () => {
             const filter = { order_by: "date", order_direction: "DESC", limit: 1, offset: 0 };
             expect(TransactionGroup.count(db, filter)).to.equal(3);
             expect(TransactionGroup.from_db(db, filter)).to.have.lengthOf(1);
+        });
+    });
+
+    describe("outstanding tracking (expects_statement / reference)", () => {
+        // "I wrote cheque 1247 on July 1st"
+        function write_cheque({
+            date = "2026-07-01",
+            description = "Rent cheque",
+            reference = "1247",
+            expects_statement = true,
+            amount = 500,
+        }={}) {
+            return TransactionGroup.create_single(db, {
+                date: YDate.parse(date),
+                description,
+                expects_statement,
+                reference,
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount,
+            });
+        }
+
+        // "...and it finally cleared the bank on September 15th"
+        function cheque_clears(key="CHK1247", date="2026-09-15", amount=-500) {
+            const { created } = BankStatementItem.import_many(db, [{
+                source: "Bank", key, amount, date: YDate.parse(date), note: "CHECK 1247",
+            }]);
+            return created[0];
+        }
+
+        it("stores the flag and trims the reference", () => {
+            const group = write_cheque({ reference: "  1247  " });
+
+            expect(group.expects_statement).to.be.true;
+            expect(group.reference).to.equal("1247");
+        });
+
+        it("normalizes a blank reference to null", () => {
+            expect(write_cheque({ reference: "   " }).reference).to.equal(null);
+            expect(write_cheque({ reference: "" }).reference).to.equal(null);
+            expect(write_cheque({ reference: null }).reference).to.equal(null);
+        });
+
+        it("defaults to not expecting a statement, with no reference", () => {
+            const group = TransactionGroup.create_single(db, {
+                date: YDate.parse("2026-07-01"),
+                description: "Card purchase",
+                source_fund_id: checking_fund.id,
+                target_fund_id: groceries_fund.id,
+                amount: 20,
+            });
+
+            expect(group.expects_statement).to.be.false;
+            expect(group.reference).to.equal(null);
+            expect(group.outstanding).to.be.false;
+        });
+
+        it("is outstanding while the cheque has not cleared", () => {
+            expect(write_cheque().outstanding).to.be.true;
+        });
+
+        it("is NOT outstanding when it expects nothing, linked or not", () => {
+            expect(write_cheque({ expects_statement: false }).outstanding).to.be.false;
+        });
+
+        it("stops being outstanding when the cheque clears -- with no write to the group", () => {
+            const group = write_cheque();
+            const item = cheque_clears();
+
+            const linked = TransactionGroup.link_statements(db, group, [ item.id ]);
+
+            expect(linked.outstanding).to.be.false;
+            // The stored intent is untouched: only the derived state moved
+            expect(linked.expects_statement).to.be.true;
+            expect(linked.reference).to.equal("1247");
+        });
+
+        it("becomes outstanding again if the item is unlinked", () => {
+            const group = write_cheque();
+            const item = cheque_clears();
+            TransactionGroup.link_statements(db, group, [ item.id ]);
+
+            BankStatementItem.for_id(db, item.id).unlink(db);
+
+            expect(TransactionGroup.for_id(db, group.id).outstanding).to.be.true;
+        });
+
+        it("survives the whole cheque story across a finalized month", () => {
+            // Written July 1st, while July is still open
+            const group = write_cheque({ date: "2026-07-01" });
+
+            // The books close on July and August before it is ever cashed
+            MonthFinalization.create(db, { month: YDate.parse("2026-08-15"), recursive: true });
+
+            const item = cheque_clears("CHK1247", "2026-09-15");
+            expect(TransactionGroup.for_id(db, group.id).outstanding).to.be.true;
+
+            // Linking moves no money, so the finalized month is no obstacle
+            const linked = TransactionGroup.link_statements(db, group, [ item.id ]);
+
+            expect(linked.outstanding).to.be.false;
+            // The money still left the fund in JULY, where it was written
+            expect(linked.date.toString()).to.equal("2026-07-01");
+            expect(linked.statements[0].date.toString()).to.equal("2026-09-15");
+        });
+
+        it("lets update toggle the flag and the reference independently", () => {
+            const group = write_cheque();
+
+            const cleared_flag = group.update(db, { expects_statement: false });
+            expect(cleared_flag.expects_statement).to.be.false;
+            expect(cleared_flag.reference).to.equal("1247");
+            expect(cleared_flag.outstanding).to.be.false;
+
+            const renumbered = cleared_flag.update(db, { reference: "1248" });
+            expect(renumbered.reference).to.equal("1248");
+            expect(renumbered.expects_statement).to.be.false;
+        });
+
+        it("leaves both fields alone on an unrelated update", () => {
+            const group = write_cheque();
+
+            const updated = group.update(db, { description: "Rent cheque (July)" });
+
+            expect(updated.description).to.equal("Rent cheque (July)");
+            expect(updated.expects_statement).to.be.true;
+            expect(updated.reference).to.equal("1247");
+        });
+
+        it("clears the reference when set to null or blank", () => {
+            const group = write_cheque();
+
+            expect(group.update(db, { reference: null }).reference).to.equal(null);
+            expect(write_cheque().update(db, { reference: "  " }).reference).to.equal(null);
+        });
+
+        it("carries a reference onto a group created from a cleared item", () => {
+            const item = cheque_clears();
+
+            const group = TransactionGroup.create_from_statements(db, {
+                statement_ids: [ item.id ],
+                reference: "1247",
+                transactions: [{
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 500,
+                    description: "Rent cheque",
+                }],
+            });
+
+            expect(group.reference).to.equal("1247");
+            // Born reconciled, so nothing is outstanding about it
+            expect(group.outstanding).to.be.false;
+        });
+
+        it("refuses to let an internal group expect a statement (db CHECK)", () => {
+            expect(() => TransactionGroup._create(db, {
+                date: YDate.parse("2026-07-01"),
+                description: "sneaky",
+                note: null,
+                expects_statement: true,
+                split: false,
+                eom_cleanup: false,
+                allocation: true,
+                transactions: [],
+            })).to.throw(/CHECK constraint failed/);
+        });
+
+        describe("filters", () => {
+            let cheque, cleared, plain;
+
+            beforeEach(() => {
+                cheque = write_cheque({ description: "Uncashed cheque", reference: "1247" });
+
+                cleared = write_cheque({ description: "Cashed cheque", reference: "1246" });
+                TransactionGroup.link_statements(
+                    db, cleared, [ cheque_clears("CHK1246", "2026-07-20").id ]);
+
+                plain = TransactionGroup.create_single(db, {
+                    date: YDate.parse("2026-07-03"),
+                    description: "Card purchase",
+                    source_fund_id: checking_fund.id,
+                    target_fund_id: groceries_fund.id,
+                    amount: 20,
+                });
+            });
+
+            it("filters on the stored intent", () => {
+                expect(TransactionGroup.from_db(db, { expects_statement: true })
+                    .map(g => g.description)).to.have.members([ "Uncashed cheque", "Cashed cheque" ]);
+                expect(TransactionGroup.from_db(db, { expects_statement: false })
+                    .map(g => g.description)).to.deep.equal([ "Card purchase" ]);
+            });
+
+            it("filters on the derived outstanding state", () => {
+                expect(TransactionGroup.from_db(db, { outstanding: true })
+                    .map(g => g.description)).to.deep.equal([ "Uncashed cheque" ]);
+                // The negation is a disjunction: a cleared cheque AND a group
+                // that never expected anything both count as not-outstanding
+                expect(TransactionGroup.from_db(db, { outstanding: false })
+                    .map(g => g.description)).to.have.members([ "Cashed cheque", "Card purchase" ]);
+            });
+
+            it("matches outstanding exactly as expects_statement + has_statements does", () => {
+                expect(TransactionGroup.from_db(db, { outstanding: true }).map(g => g.id))
+                    .to.deep.equal(
+                        TransactionGroup.from_db(db, { expects_statement: true, has_statements: false })
+                            .map(g => g.id));
+            });
+
+            it("looks a group up by exact reference", () => {
+                expect(TransactionGroup.from_db(db, { reference: "1247" })
+                    .map(g => g.description)).to.deep.equal([ "Uncashed cheque" ]);
+                expect(TransactionGroup.from_db(db, { reference: "  1247  " })
+                    .map(g => g.description)).to.deep.equal([ "Uncashed cheque" ]);
+                expect(TransactionGroup.from_db(db, { reference: "9999" })).to.have.lengthOf(0);
+            });
+
+            it("matches a reference regardless of case", () => {
+                const wire = write_cheque({ description: "Wire", reference: "AB-99x" });
+                expect(TransactionGroup.from_db(db, { reference: "ab-99X" })
+                    .map(g => g.id)).to.deep.equal([ wire.id ]);
+            });
+
+            it("treats a blank reference as 'unreferenced', not 'no filter'", () => {
+                expect(TransactionGroup.from_db(db, { reference: "" })
+                    .map(g => g.description)).to.deep.equal([ "Card purchase" ]);
+            });
+
+            it("counts with the same filters", () => {
+                expect(TransactionGroup.count(db, { outstanding: true })).to.equal(1);
+                expect(TransactionGroup.count(db, { outstanding: false })).to.equal(2);
+                expect(TransactionGroup.count(db, { expects_statement: true })).to.equal(2);
+                expect(TransactionGroup.count(db, { reference: "1247" })).to.equal(1);
+            });
         });
     });
 

@@ -592,4 +592,159 @@ describe("Transactions API", () => {
             })).status).to.equal(404);
         });
     });
+
+    describe("outstanding tracking (expects_statement / reference)", () => {
+        const cheque_body = (overrides={}) => ({
+            date: "2026-07-01",
+            description: "Rent cheque",
+            expects_statement: true,
+            reference: "1247",
+            transactions: [{
+                source_fund_id: checking.id,
+                target_fund_id: groceries.id,
+                amount: 500,
+                description: "Rent cheque",
+            }],
+            ...overrides,
+        });
+
+        async function post_cheque(overrides={}) {
+            const { status, body } = await h.request("/api/transactions/transaction-groups", {
+                method: "POST", token: h.tokens.editor, body: cheque_body(overrides),
+            });
+            expect(status).to.equal(200);
+            return body.data;
+        }
+
+        function cheque_clears(key="CHK1247", date="2026-09-15") {
+            return BankStatementItem.import_many(h.db, [{
+                source: "Bank", key, amount: -500, date: YDate.parse(date), note: "CHECK 1247",
+            }]).created[0];
+        }
+
+        it("creates a group that expects a bank line, and says it is outstanding", async () => {
+            const group = await post_cheque();
+
+            expect(group.reference).to.equal("1247");
+            expect(group.status.expects_statement).to.be.true;
+            expect(group.status.outstanding).to.be.true;
+        });
+
+        it("defaults to expecting nothing", async () => {
+            const group = await post_cheque({ expects_statement: undefined, reference: undefined });
+
+            expect(group.status.expects_statement).to.be.false;
+            expect(group.status.outstanding).to.be.false;
+            expect(group.reference).to.equal(null);
+        });
+
+        it("400s on a non-boolean expects_statement", async () => {
+            const { status, body } = await h.request("/api/transactions/transaction-groups", {
+                method: "POST", token: h.tokens.editor, body: cheque_body({ expects_statement: "yes" }),
+            });
+            expect(status).to.equal(400);
+            expect(body.message).to.include("expects_statement");
+        });
+
+        it("stops reporting outstanding once the item is linked", async () => {
+            const group = await post_cheque();
+            const item = cheque_clears();
+
+            const linked = await h.request(`/api/statements/statement/${item.id}/link`, {
+                method: "POST", token: h.tokens.editor, body: { group_id: group.id },
+            });
+            expect(linked.status).to.equal(200);
+
+            const { body } = await h.request(`/api/transactions/transaction-group/${group.id}`, {
+                token: h.tokens.reader,
+            });
+            expect(body.status.outstanding).to.be.false;
+            expect(body.status.expects_statement).to.be.true;
+        });
+
+        it("filters the list by outstanding, expects_statement and reference", async () => {
+            await post_cheque();
+            await post_cheque({ description: "Card purchase", expects_statement: false, reference: null });
+
+            const q = async (query) => {
+                const { status, body, headers } = await h.request(
+                    "/api/transactions/transaction-groups?" + query, { token: h.tokens.reader });
+                expect(status).to.equal(200);
+                return { descriptions: body.map(g => g.description), total: headers.get("x-total-count") };
+            };
+
+            expect((await q("outstanding=true")).descriptions).to.deep.equal([ "Rent cheque" ]);
+            expect((await q("outstanding=false")).descriptions).to.deep.equal([ "Card purchase" ]);
+            expect((await q("expects_statement=true")).descriptions).to.deep.equal([ "Rent cheque" ]);
+            expect((await q("reference=1247")).descriptions).to.deep.equal([ "Rent cheque" ]);
+            expect((await q("reference=9999")).descriptions).to.deep.equal([]);
+            // X-Total-Count tracks the same filter
+            expect((await q("outstanding=true")).total).to.equal("1");
+        });
+
+        it("patches the flag and the reference in place", async () => {
+            const group = await post_cheque();
+
+            const { status, body } = await h.request(`/api/transactions/transaction-group/${group.id}`, {
+                method: "PATCH", token: h.tokens.editor,
+                body: { expects_statement: false, reference: "1248" },
+            });
+
+            expect(status).to.equal(200);
+            expect(body.data.status.expects_statement).to.be.false;
+            expect(body.data.status.outstanding).to.be.false;
+            expect(body.data.reference).to.equal("1248");
+        });
+
+        it("patches without disturbing the other fields", async () => {
+            const group = await post_cheque();
+
+            const { body } = await h.request(`/api/transactions/transaction-group/${group.id}`, {
+                method: "PATCH", token: h.tokens.editor, body: { description: "Rent cheque (July)" },
+            });
+
+            expect(body.data.description).to.equal("Rent cheque (July)");
+            expect(body.data.status.expects_statement).to.be.true;
+            expect(body.data.reference).to.equal("1247");
+        });
+
+        it("carries a reference through the reconcile-from-statement path", async () => {
+            const item = cheque_clears();
+
+            const { status, body } = await h.request("/api/transactions/transaction-groups/from-statements", {
+                method: "POST", token: h.tokens.editor,
+                body: {
+                    statement_ids: [ item.id ],
+                    reference: "1247",
+                    transactions: [{
+                        source_fund_id: checking.id,
+                        target_fund_id: groceries.id,
+                        amount: 500,
+                        description: "Rent cheque",
+                    }],
+                },
+            });
+
+            expect(status).to.equal(200);
+            expect(body.data.reference).to.equal("1247");
+            expect(body.data.status.outstanding).to.be.false;
+        });
+
+        it("409s when PATCHing an allocation group (no expects_statement backdoor)", async () => {
+            Allocation.set(h.db, { month: YDate.parse("2026-06-01"), fund_id: groceries.id, amount: 100 });
+            const alloc_group = TransactionGroup.from_db(h.db, { allocation: true })[0];
+
+            const { status } = await h.request(`/api/transactions/transaction-group/${alloc_group.id}`, {
+                method: "PATCH", token: h.tokens.editor, body: { expects_statement: true },
+            });
+            expect(status).to.equal(409);
+        });
+
+        it("requires editor rights to set either field", async () => {
+            const { status } = await h.request("/api/transactions/transaction-groups", {
+                method: "POST", token: h.tokens.reader, body: cheque_body(),
+            });
+            expect(status).to.equal(403);
+        });
+    });
 });

@@ -25,6 +25,7 @@ const {
 const SELECT_COLUMNS = [
     "funds.id AS id",
     "funds.name AS name",
+    "funds.description AS description",
     "funds.parent_id AS parent_id",
     "funds.start_date AS start_date",
     "funds.start_balance AS start_balance",
@@ -77,6 +78,7 @@ module.exports = class Fund extends Base {
         create: `
             INSERT INTO funds (
                 name,
+                description,
                 parent_id,
                 start_date,
                 start_balance,
@@ -86,6 +88,7 @@ module.exports = class Fund extends Base {
                 color
             ) VALUES (
                 @name,
+                @description,
                 @parent_id,
                 @start_date,
                 @start_balance,
@@ -250,6 +253,7 @@ module.exports = class Fund extends Base {
         update: `
             UPDATE funds
             SET name = @name,
+                description = @description,
                 parent_id = @parent_id,
                 start_date = @start_date,
                 start_balance = @start_balance,
@@ -275,6 +279,7 @@ module.exports = class Fund extends Base {
     constructor({
         id,
         name,
+        description,
         parent_id,
         start_date,
         start_balance,
@@ -292,6 +297,7 @@ module.exports = class Fund extends Base {
 
         this.id = id;
         this.name = name;
+        this.description = description;
         this.parent_id = parent_id;
         this.tracked = tracked;
         this.start_date = start_date;
@@ -342,6 +348,7 @@ module.exports = class Fund extends Base {
         properties: {
             id: { type: 'integer', minimum: 1 },
             name: { type: 'string' },
+            description: { type: 'string', nullable: true, description: "Free-form prose: what the fund is for and the intentions behind it (null = none)" },
             parent_id: { type: 'integer', minimum: 1, nullable: true, description: "null for root funds" },
             start: {
                 description: "Where tracking began; null for untracked funds",
@@ -371,13 +378,14 @@ module.exports = class Fund extends Base {
             deprecated: { type: 'string', format: 'date', nullable: true, description: "The fund's LAST ACTIVE day; null while the fund is active. A deprecated fund is frozen: its balance is zero from this date on and no transaction of any kind may involve it." },
             created_at: { type: 'string', format: 'date-time' }
         },
-        required: [ 'id', 'name', 'parent_id', 'start', 'cache', 'status', 'color', 'deprecated', 'created_at' ]
+        required: [ 'id', 'name', 'description', 'parent_id', 'start', 'cache', 'status', 'color', 'deprecated', 'created_at' ]
     };
 
     to_api() {
         return {
             id: this.id,
             name: this.name,
+            description: this.description,
             parent_id: this.parent_id,
 
             // All cached values are { date, forward_balance } pairs: the balance
@@ -429,6 +437,7 @@ module.exports = class Fund extends Base {
         return new this({
             id: row.id,
             name: row.name,
+            description: row.description,
             parent_id: row.parent_id,
             start_date,
             start_balance,
@@ -632,6 +641,7 @@ module.exports = class Fund extends Base {
 
     static _create(db, {
         name,
+        description,
         parent_id,
         start_date,
         start_balance,
@@ -674,6 +684,7 @@ module.exports = class Fund extends Base {
         const stmt = this.get_stmt(db, "create");
         const result = stmt.run({
             name,
+            description,
             parent_id,
             start_date: ydate2stmt(start_date),
             start_balance: currency2stmt(start_balance),
@@ -729,6 +740,7 @@ module.exports = class Fund extends Base {
 
     static create(db, {
         name,
+        description = null,
         parent_id = null,
         tracked,
         start_date = null, // YDate or null
@@ -772,6 +784,7 @@ module.exports = class Fund extends Base {
         const transaction =  this.build_transaction(db, "create", this._create.bind(this));
         return transaction(db, {
             name,
+            description,
             parent_id,
             start_date: tracked ? start_date : null,
             start_balance: tracked ? start_balance : null,
@@ -907,6 +920,7 @@ module.exports = class Fund extends Base {
         // Resolve the final values (undefined means "unchanged")
         const next = {
             name: changes.name !== undefined ? changes.name : fund.name,
+            description: changes.description !== undefined ? changes.description : fund.description,
             parent_id: changes.parent_id !== undefined ? changes.parent_id : fund.parent_id,
             start_date: changes.start_date !== undefined ? changes.start_date : fund.start_date,
             start_balance: changes.start_balance !== undefined ? changes.start_balance : fund.start_balance,
@@ -1012,6 +1026,7 @@ module.exports = class Fund extends Base {
         this.get_stmt(db, "update").run({
             id: fund.id,
             name: next.name,
+            description: next.description,
             parent_id: next.parent_id,
             start_date: ydate2stmt(next.start_date),
             start_balance: currency2stmt(next.start_balance),
@@ -1119,6 +1134,7 @@ module.exports = class Fund extends Base {
 
     update(db, {
         name,
+        description,
         parent_id,
         start_date,
         start_balance,
@@ -1133,6 +1149,7 @@ module.exports = class Fund extends Base {
             db, "update", this.constructor._update.bind(this.constructor));
         return transaction(db, this, {
             name,
+            description,
             parent_id,
             start_date,
             start_balance,

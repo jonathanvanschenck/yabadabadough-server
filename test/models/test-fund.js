@@ -35,6 +35,22 @@ describe("models/Fund.js", () => {
             expect(fund.monthly).to.equal(false);
         });
 
+        it("defaults description to null, stores it when given, and round-trips through to_api", () => {
+            const bare = Fund.create(db, { name: "bare", tracked: false });
+            expect(bare.description).to.equal(null);
+            expect(bare.to_api().description).to.equal(null);
+
+            const described = Fund.create(db, {
+                name: "described",
+                tracked: false,
+                description: "Long-term savings for the next car — target $15k by 2028.",
+            });
+            expect(described.description).to.equal("Long-term savings for the next car — target $15k by 2028.");
+            expect(described.to_api().description).to.equal("Long-term savings for the next car — target $15k by 2028.");
+            expect(Fund.for_id(db, described.id).description)
+                .to.equal("Long-term savings for the next car — target $15k by 2028.");
+        });
+
         it("can create tracked non-monthly", () => {
             const fund = Fund.create(db, {
                 name: "test",
@@ -422,15 +438,29 @@ describe("models/Fund.js", () => {
             });
         });
 
-        it("updates safe fields (name, color) freely", () => {
+        it("updates safe fields (name, color, description) freely", () => {
             MonthFinalization.create(db, { month: YDate.parse("2026-01-15") });
 
             const updated = Fund.for_id(db, fund.id).update(db, {
                 name: "renamed",
                 color: "rose",
+                description: "The what and why of this fund",
             });
             expect(updated.name).to.equal("renamed");
             expect(updated.color).to.equal("rose");
+            expect(updated.description).to.equal("The what and why of this fund");
+        });
+
+        it("clears the description with null and leaves it alone when omitted", () => {
+            fund = fund.update(db, { description: "temporary" });
+            expect(fund.description).to.equal("temporary");
+
+            // Unrelated update: description untouched
+            fund = fund.update(db, { name: "still described" });
+            expect(fund.description).to.equal("temporary");
+
+            fund = fund.update(db, { description: null });
+            expect(fund.description).to.equal(null);
         });
 
         it("rejects colors outside the palette registry", () => {

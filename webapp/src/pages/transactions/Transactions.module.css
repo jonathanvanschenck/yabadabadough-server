@@ -512,12 +512,14 @@ td.colHover {
     color: var(--font-faint);
 }
 
-.negative {
-    color: var(--u-danger-text);
-}
-
-.zero {
-    color: var(--font-faint);
+/* The icon-only outstanding mark sits BETWEEN the description and the row's
+ * ghost buttons, so it needs a gap on both sides -- the icon carries none of
+ * its own without a label beside it. The right side is smaller because the
+ * ghost button that follows contributes its own 0.25rem of padding, which
+ * evens the two visual gaps out. */
+.outstandingMark {
+    margin-left: 0.5rem;
+    margin-right: 0.25rem;
 }
 
 /* Sub-rows of an expanded group */
@@ -569,6 +571,33 @@ td.colHover {
 
 .cleanupRow td {
     color: var(--font-muted);
+}
+
+/* A group still waiting on its bank line: the money has already left the
+ * envelope, but the bank has not confirmed it. An accent down the date cell
+ * marks the run of them at a glance without competing with the row-hover and
+ * column-hover highlights (which repaint backgrounds, so a background tint
+ * here would be clobbered). `inset` rather than border-left keeps the sticky
+ * column's box -- and therefore the column offsets -- exactly as they were. */
+.outstandingRow td.stickyCol1,
+.outstandingRowStale td.stickyCol1 {
+    box-shadow: inset 0.2rem 0 0 0 var(--u-warn-text);
+}
+
+/* Older than most banks will honour: worth chasing, not waiting on */
+.outstandingRowStale td.stickyCol1 {
+    box-shadow: inset 0.2rem 0 0 0 var(--u-danger-text);
+}
+
+/* The date itself carries the same tone, so the signal survives a horizontal
+ * scroll that pushes the accent off-screen on narrow viewports */
+.outstandingRow td.stickyCol1 span,
+.outstandingRowStale td.stickyCol1 span {
+    color: var(--u-warn-text);
+}
+
+.outstandingRowStale td.stickyCol1 span {
+    color: var(--u-danger-text);
 }
 
 /* ---- Shared subtle icon-only button ---- */

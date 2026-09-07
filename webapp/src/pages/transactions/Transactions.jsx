@@ -22,11 +22,17 @@ import {
     UnfinalizeMonthModal
 } from '../../components/SpecialModals.jsx';
 import { useAuthRoles } from '../../contexts/AuthContext.jsx';
-import { FinalizedBadge, FundLabel } from '../../components/Badges.jsx';
+import { FinalizedBadge, FundLabel, OutstandingBadge } from '../../components/Badges.jsx';
+import { Money } from '../../components/Money.jsx';
 import { HoverPopover } from '../../components/HoverPopover.jsx';
 import { ProvisionalBanner, ProvisionalValue } from '../../components/Provisional.jsx';
 import Spinner from '../../components/Spinner.jsx';
-import { formatDollars, previousMonthSom } from '../../components/domain.js';
+import {
+    formatDollars,
+    previousMonthSom,
+    groupIsOutstanding,
+    outstandingIsStale
+} from '../../components/domain.js';
 import { fundColorVar } from '../../hooks/fundColors.js';
 import {
     monthBoundsOf,
@@ -116,16 +122,12 @@ function OutsideBreakdown({ breakdown, total }) {
                     { fund
                         ? <FundLabel fund={fund} />
                         : <span className={styles.breakdownUnknown}>Fund #{fundId}</span> }
-                    <span className={`tabular-nums ${amount < 0 ? styles.negative : ''}`}>
-                        {formatDollars(amount)}
-                    </span>
+                    <Money value={amount} />
                 </div>
             ))}
             <div className={`${styles.breakdownRow} ${styles.breakdownNet}`}>
                 <span>Net</span>
-                <span className={`tabular-nums ${total < 0 ? styles.negative : ''}`}>
-                    {formatDollars(total)}
-                </span>
+                <Money value={total} />
             </div>
         </div>
     );
@@ -185,14 +187,8 @@ function AmountCell({
                     ? <span className={styles.omittedMark} title="Shown on the expanded transaction rows below">⋯</span>
                     : <>
                         { provisionalSom
-                            ? <ProvisionalValue som={provisionalSom}>
-                                <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                                    {formatDollars(value)}
-                                </span>
-                            </ProvisionalValue>
-                            : <span className={value < 0 ? styles.negative : (value === 0 ? styles.zero : '')}>
-                                {formatDollars(value)}
-                            </span>
+                            ? <ProvisionalValue som={provisionalSom}><Money value={value} /></ProvisionalValue>
+                            : <Money value={value} />
                         }
                         { isTotalCell &&
                             <span className={styles.breakdownSlot}>
@@ -256,6 +252,11 @@ function BalanceRow({ label, title, map, columns, hoveredFundId, rowClassName = 
 function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hoveredFundId, isExpanded, onToggleExpand, onShowNote, onDeleteGroup, isMonthFinalized = false, isEditor = false, rowClassName = '' }) {
     const netMap = netAmountsByFund(group.transactions);
     const isSpecial = group.status.allocation || group.status.eom_cleanup;
+    // Computed here rather than passed in, so it applies wherever a group row
+    // is rendered. Stale outstanding items escalate to the danger accent.
+    const outstandingClass = !groupIsOutstanding(group) ? ''
+        : outstandingIsStale(group) ? styles.outstandingRowStale
+        : styles.outstandingRow;
     const deleteDisabledReason = !isEditor
         ? 'Editor role required to delete transaction groups'
         : isSpecial
@@ -264,7 +265,7 @@ function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hovere
         ? 'This month is finalized — unfinalize it to delete groups'
         : null;
     return (<>
-        <tr className={`${styles.bodyRow} ${rowClassName}`}>
+        <tr className={`${styles.bodyRow} ${rowClassName} ${outstandingClass}`}>
             <td className={`${styles.dateCell} ${styles.stickyCol1}`}>
                 <GhostButton
                     icon={isExpanded ? 'fa-angle-down' : 'fa-angle-right'}
@@ -281,6 +282,9 @@ function GroupRows({ group, columns, trackedIds, fundsById, selectedKeys, hovere
                 >
                     {group.description}
                 </NavLink>
+                {/* Icon-only: the month grid is dense, and the badge's title
+                  * carries the "waiting since / how long" detail on hover */}
+                <OutstandingBadge group={group} label="" className={styles.outstandingMark} />
                 { hasNote(group.note) &&
                     <GhostButton
                         icon="fa-circle-info"
@@ -1074,7 +1078,7 @@ export default function Page() {
 
             { hasSelection &&
                 <div className={styles.selectionReadout} data-selection-readout>
-                    <span className={styles.selectionSum}>{formatDollars(selectionSum)}</span>
+                    <Money value={selectionSum} className={styles.selectionSum} faintZero={false} />
                     <span className={styles.selectionMeta}>
                         { selectionCount === 0
                             ? 'no values selected'

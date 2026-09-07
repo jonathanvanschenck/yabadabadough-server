@@ -389,6 +389,10 @@ export function DateInput({
             style={{ top: position.top, left: position.left }}
             role="dialog"
             aria-label="Choose date"
+            // Portaled to document.body, so it sits OUTSIDE any modal that
+            // opened it -- this marks it as still "inside" for focus purposes
+            // (see hooks/ModalFocus.jsx)
+            data-focus-overlay=""
         >
             <div className={styles.dpHeader}>
                 <button
@@ -599,6 +603,7 @@ export function Selector({
     isFrozen = true,
     inputDisabled = false,
     inputTitle = "",
+    validityMessage,
 
     isRequired = false,
     isChanged = false,
@@ -606,6 +611,18 @@ export function Selector({
     ...rest
 }) {
     const valueStr = value ? value.toString() : '';
+    const selectRef = useRef(null);
+
+    // Same custom-validity plumbing as TextInput/TextArea: a <select> can carry
+    // :invalid too, and without this the caller's validityMessage was accepted
+    // by LabeledSelector and then silently dropped.
+    useEffect(() => {
+        if (!validityMessage) {
+            selectRef.current?.setCustomValidity('');
+        } else {
+            selectRef.current?.setCustomValidity(validityMessage);
+        }
+    }, [validityMessage, isFrozen /* Refresh when frozen changes */]);
 
     // Handle clear button click
     const handleClear = () => {
@@ -632,11 +649,12 @@ export function Selector({
     ) : (
         <div className={styles.selectorContainer}>
             <select
+                ref={selectRef}
                 className={`${styles.selector} ${isChanged ? styles.changed : ''} ${isRequired ? styles.required : ''}`}
                 value={valueStr}
                 onChange={(e) => onChange(e.target.value || null)}
                 disabled={inputDisabled}
-                title={inputTitle}
+                title={validityMessage || inputTitle}
                 {...rest}
             >
                 <option value="" disabled hidden>{placeholder}</option>
@@ -856,6 +874,7 @@ export function SearchableSelector({
     isPending = false,
     isError = false,
     error = null,
+    validityMessage,
     maxHeightDropdown = '300px',
 }) {
     // When a create action is offered it occupies index 0 of the dropdown's
@@ -1174,9 +1193,11 @@ export function SearchableSelector({
         if (!isOpen || isPending) return null;
 
         return (
-            <div 
+            <div
                 ref={dropdownRef}
                 className={`${styles.searchableSelectorDropdownPortal} ${dropdownPosition.flipped ? styles.flipped : ''}`}
+                // Portaled to document.body: see hooks/ModalFocus.jsx
+                data-focus-overlay=""
                 style={{
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,
@@ -1256,8 +1277,12 @@ export function SearchableSelector({
     return (
         <div className={styles.searchableSelectorContainer}>
             <div className={styles.searchableSelectorTriggerWrapper} ref={triggerRef}>
-                <div 
-                    className={`${styles.searchableSelectorTrigger} ${isChanged ? styles.changed : ''} ${isRequired ? styles.required : ''} ${isPending ? styles.pending : ''}`}
+                {/* Not a form control, so there is no native :invalid to hang
+                  * the styling off -- it takes a class, exactly like the date
+                  * picker's trigger. Callers were already passing
+                  * validityMessage here and having it dropped on the floor. */}
+                <div
+                    className={`${styles.searchableSelectorTrigger} ${isChanged ? styles.changed : ''} ${isRequired ? styles.required : ''} ${isPending ? styles.pending : ''} ${validityMessage ? styles.invalid : ''}`}
                     onClick={handleToggle}
                     onKeyDown={handleKeyDown}
                     tabIndex={0}
@@ -1265,6 +1290,8 @@ export function SearchableSelector({
                     aria-expanded={isOpen}
                     aria-haspopup="listbox"
                     aria-disabled={isPending}
+                    aria-invalid={validityMessage ? true : undefined}
+                    title={validityMessage || undefined}
                 >
                     <div className={styles.searchableSelectorValue}>
                         {getDisplayText()}
