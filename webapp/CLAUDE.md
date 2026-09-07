@@ -179,6 +179,18 @@ the searchable-selector dropdown — are visually inside the modal but DOM-wise 
 they are tagged `data-focus-overlay` and the trap stands down while focus is inside one. Any
 new portaled overlay that can hold focus MUST carry that attribute.
 
+`validityMessage` is the one invalid-state channel, and EVERY input must honour it. Native
+controls (`TextInput`/`NumberInput`/`SingleFileInput` on `.textInput`, `TextArea`, `Selector`
+— and so `BooleanInput`, which delegates to it) push it through `setCustomValidity`, so the
+styling hangs off `:invalid`; the two that are not form controls (`DateInput`'s trigger and
+`SearchableSelector`, a `div[role=combobox]`) take an `.invalid` CLASS plus `aria-invalid`
+instead. In both cases the message doubles as the control's `title`. The danger ring carries
+`!important` (it must beat `.required`/`.changed`, themselves `!important`), which also beat
+the plain `:focus` rule — so every invalid rule is paired with an `:invalid:focus`/`:hover`
+variant that LAYERS the two shadows rather than replacing one with the other. A control that
+accepts `validityMessage` and does not render it is worse than one that rejects it: callers
+were passing it to the fund selector for a long time while it was silently dropped on the floor.
+
 **Always check `src/components/` before writing new UI** — buttons, links, modals,
 menus, badges, tables, inputs, spinners, cards, and toasts exist and must be reused. New
 UI goes here as a general reusable component, not a page-local one-off. Two tiers:
@@ -191,7 +203,7 @@ UI goes here as a general reusable component, not a page-local one-off. Two tier
    entity-aware selector wrapping `LabeledSearchableSelector` + a list query).
 
 Prop idioms: inputs take `label`, `value`, `onChange(value)` (value, not event),
-`isFrozen`, `isChanged`, `allowNull`/`nullPlaceholder`; `IconButton` takes `text`,
+`isFrozen`, `isChanged`, `allowNull`/`nullPlaceholder`, `validityMessage`; `IconButton` takes `text`,
 `icon`, `onClick`, `disabled`, `isPending`/`pendingText`; components pass through
 `className`/`style` and `forwardRef` when pages scroll to them. Destructive actions
 always go through `ConfirmationModal` (`onConfirm` returns a promise via `mutateAsync`).
