@@ -262,3 +262,10 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* The two upload formats sit side by side in the top bar */
+.topBarActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}

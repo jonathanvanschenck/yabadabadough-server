@@ -497,6 +497,16 @@ TransactionGroup, `finalized_months_since` in Fund).
   `TransactionGroup.delete_statement_item(db, item, { with_group = true })`. Deletion lives on
   TransactionGroup (the with_group arm deletes a group in the same sqlite transaction, and the
   require direction is strictly TG → BSI); `item.delete()` is a throwing stub pointing there
+- **Import front-ends** (webapp-side; the API takes items and does not care where they came
+  from): CSV with per-bank column-mapping profiles, and OFX/QFX. Both land on
+  `POST /statements/import`. OFX is the one to prefer where a bank offers both — a CSV export
+  is a report and gets redesigned (OSCU has already moved every column and renamed its id
+  once), while `FITID` is specified to be a stable per-transaction id. Conveniently OSCU's
+  `FITID` is the same string as its current CSV "Transaction ID" column, so the two formats
+  dedupe against each other. An OFX file carries MANY accounts, so the webapp detects them and
+  matches each against the existing `sources` list by account-number last-4 rather than
+  inventing a label — a fresh label would re-import, as pending, everything the user already
+  reconciled. See `webapp/CLAUDE.md` for the parser and matching details.
 - **Deletion hazard (by design, documented on the method)**: deleting is for undoing bad
   imports, NOT for hiding items (use `ignored`). `with_group` destroys the group's real
   transactions, and any deleted item REAPPEARS as pending on the next re-sync (its dedupe row

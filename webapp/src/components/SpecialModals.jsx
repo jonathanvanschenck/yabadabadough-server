@@ -35,6 +35,13 @@ import { OutstandingBadge } from './Badges.jsx';
 import { Money } from './Money.jsx';
 import { STATEMENT_PROFILES, GENERIC_PROFILE } from './statementProfiles.js';
 import {
+    parseOFX,
+    decodeOFXBytes,
+    suggestOFXSource,
+    ofxAccountLabel,
+    OFXParseError
+} from './ofx.js';
+import {
     useGetFundsQuery,
     useGetTransactionGroupsQuery,
     useGetLatestMonthFinalizationQuery,
@@ -50,6 +57,7 @@ import {
     useDeleteTransactionGroupMutation,
     usePatchTransactionMutation,
     usePostImportStatementsMutation,
+    useGetStatementSourcesQuery,
     usePatchStatementMutation,
     usePostStatementLinkMutation,
     usePostStatementUnlinkMutation,
@@ -2002,6 +2010,329 @@ export function ImportStatementsCSVModal({ isOpen, setIsOpen, initialSource = nu
                         || submitError != null
                     }
                     text="Import"
+                    ariaLabel="Import statement items"
+                    onClick={handleSubmit}
+                />
+            </CardActionFooter>
+
+            { submitError &&
+                <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
+            }
+        </CardModal>
+    );
+}
+
+/**
+ * OFX/QFX import: the format-stable sibling of ImportStatementsCSVModal.
+ *
+ * The flows differ in shape, not just in parser, which is why this is its own
+ * modal rather than a third entry in that one's format picklist. A CSV export
+ * is one account, so the source can be (and is) chosen before the file is even
+ * picked. An OFX export is a LIST of accounts, so there is nothing to choose
+ * until the file has been read -- the file comes first, and the sources are
+ * asked for per detected account afterwards.
+ */
+export function ImportStatementsOFXModal({ isOpen, setIsOpen }) {
+
+    const [ file, setFile ] = useState(null);
+    const [ parsed, setParsed ] = useState(null);
+    const [ parseError, setParseError ] = useState(null);
+    // One entry per parsed account, index-aligned with parsed.accounts
+    const [ accountStates, setAccountStates ] = useState([]);
+    const [ importResult, setImportResult ] = useState(null);
+    const [ submitError, setSubmitError ] = useState(null);
+
+    // The labels already in use are what the detected accounts get matched
+    // against, so an account the user has been importing by CSV keeps the name
+    // they gave it -- see suggestOFXSource for why that matters.
+    const { data: existingSources } = useGetStatementSourcesQuery();
+
+    const reset = useCallback(() => {
+        setFile(null);
+        setParsed(null);
+        setParseError(null);
+        setAccountStates([]);
+        setImportResult(null);
+        setSubmitError(null);
+    }, []);
+
+    useEffect(() => {
+        if (isOpen) reset();
+    }, [isOpen, reset]);
+
+    const readFile = useCallback((picked) => {
+        setFile(picked);
+        setParsed(null);
+        setParseError(null);
+        setAccountStates([]);
+        setImportResult(null);
+        setSubmitError(null);
+
+        if ( !picked ) return;
+
+        const reader = new FileReader();
+        // Read bytes, not text: the file names its own charset in its header
+        // and OSCU's is windows-1252, which UTF-8 decoding would corrupt.
+        reader.readAsArrayBuffer(picked);
+        reader.onload = ({ target }) => {
+            let result;
+            try {
+                result = parseOFX(decodeOFXBytes(target.result));
+            } catch ( err ) {
+                if ( err instanceof OFXParseError ) setParseError({ message: err.message, details: err.details });
+                else setParseError({ message: "Could not read this OFX file.", details: err.message });
+                return;
+            }
+
+            setParsed(result);
+            setAccountStates(result.accounts.map(account => {
+                const { source, matched } = suggestOFXSource(account, existingSources ?? [], {
+                    // Some banks put a real name in <FI><ORG>; OSCU puts a
+                    // number there, which makes a worse label than none.
+                    prefix: /[a-z]/i.test(result.org ?? '') ? result.org : ''
+                });
+                return {
+                    // An account with nothing in the window is normal, not an
+                    // error -- just nothing to import, so leave it off.
+                    include: account.transactions.length > 0,
+                    source,
+                    matched
+                };
+            }));
+        };
+        reader.onerror = ({ target }) => {
+            setParseError({ message: "Error reading the file.", details: target.error?.message });
+        };
+    }, [existingSources]);
+
+    const updateAccount = (index, patch) => {
+        setAccountStates(prev => prev.map((a, i) => i === index ? { ...a, ...patch } : a));
+        setSubmitError(null);
+        setImportResult(null);
+    };
+
+    const accounts = useMemo(() => parsed?.accounts ?? [], [parsed]);
+
+    // Everything the footer needs to know, and everything worth warning about
+    const { items, problems, blockers } = useMemo(() => {
+        const items = [];
+        const problems = [];
+        const blockers = [];
+
+        const included = accounts
+            .map((account, i) => ({ account, state: accountStates[i], i }))
+            .filter(({ state }) => state?.include);
+
+        for ( const { account, state } of included ) {
+            const source = state.source?.trim();
+            if ( !source ) {
+                blockers.push(`${ofxAccountLabel(account)} needs a source name.`);
+                continue;
+            }
+            for ( const t of account.transactions ) {
+                const row = { source, key: t.key, date: t.date, amount: t.amount, note: t.note ?? null };
+                const problem = statementImportRowProblem(row);
+                if ( problem ) problems.push({ account, key: t.key, problem });
+                items.push(row);
+            }
+        }
+
+        // Two accounts under one label would merge two banks' histories into
+        // one dedupe namespace -- and (source, key) is what keeps a re-import
+        // from duplicating. Refuse rather than warn.
+        const sources = included.map(({ state }) => state.source?.trim()).filter(Boolean);
+        const duplicated = [ ...new Set(sources.filter((s, i) => sources.indexOf(s) !== i)) ];
+        for ( const dup of duplicated ) {
+            blockers.push(`Two accounts are both set to import as "${dup}". Give each account its own source name.`);
+        }
+
+        if ( included.length && !items.length ) blockers.push("The selected accounts have no transactions to import.");
+
+        return { items, problems, blockers };
+    }, [accounts, accountStates]);
+
+    const {
+        mutate: importMutate,
+        isPending: importIsPending
+    } = usePostImportStatementsMutation();
+
+    const handleSubmit = useCallback(() => {
+        importMutate(
+            { formData: { items } },
+            {
+                onSuccess: (result) => setImportResult(result.data),
+                onError: (err) => setSubmitError({
+                    message: err.message,
+                    details: err.details?.message
+                })
+            }
+        );
+    }, [items, importMutate]);
+
+    return (
+        <CardModal
+            title="Import Bank Statement Items (OFX)"
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            size="lg"
+        >
+            <CardSection title="What to upload">
+                <p className={styles.modalHint}>
+                    An <strong>OFX</strong> or <strong>QFX</strong> download from your
+                    bank — the format Quicken and friends use. Prefer it over CSV where
+                    your bank offers both: the fields are specified rather than laid out
+                    for a human, so an export that works today keeps working after the
+                    bank redesigns its statement page. One file can carry several
+                    accounts; each is detected below and imported under its own source.
+                </p>
+                <p className={styles.modalHint}>
+                    Imports are idempotent per (source, key): re-importing an
+                    overlapping export never duplicates or updates existing items,
+                    so their ignored/reconciled state survives re-syncs. That only
+                    holds if each account keeps the <strong>same source name</strong> it
+                    was imported under before — which is what the matching below is for.
+                </p>
+                <LabeledSingleFileInput
+                    value={file}
+                    label="OFX File"
+                    accept=".ofx,.qfx,.qbo,application/x-ofx,text/plain"
+                    onChange={readFile}
+                    isFrozen={false}
+                    data-autofocus={true}
+                />
+                { parseError &&
+                    <CardErrorSection errorMessage={parseError.message} errorMessageDetails={parseError.details} />
+                }
+            </CardSection>
+
+            { parsed &&
+                <CardSection title={`Accounts in this file (${accounts.length})`}>
+                    { accountStates.some(a => a.matched) &&
+                        <p className={styles.modalHint}>
+                            Accounts marked <strong>matched</strong> were recognized by
+                            their last four digits against a source you have imported
+                            under before, and are set to keep that name. Anything else
+                            got a suggested name — check it against the source you
+                            already use for that account before importing.
+                        </p>
+                    }
+                    <div className={styles.ofxAccountList}>
+                        { accounts.map((account, i) => {
+                            const state = accountStates[i] ?? {};
+                            const count = account.transactions.length;
+                            const bad = problems.filter(p => p.account === account);
+                            return (
+                                <div key={`${account.acctId}-${i}`} className={styles.ofxAccount}>
+                                    <div className={styles.ofxAccountHeader}>
+                                        <LabeledBooleanInput
+                                            label={ofxAccountLabel(account)}
+                                            value={!!state.include}
+                                            isFrozen={count === 0}
+                                            onChange={(value) => updateAccount(i, { include: value })}
+                                            inputTitle={count === 0
+                                                ? "This account has no transactions in the exported window"
+                                                : "Import this account's transactions"}
+                                        />
+                                        <span className={styles.ofxAccountMeta}>
+                                            {count} transaction{count === 1 ? '' : 's'}
+                                            { account.start && account.end && ` · ${account.start} to ${account.end}` }
+                                            { account.balance != null && <> · balance <Money value={account.balance} faintZero={false} /></> }
+                                        </span>
+                                    </div>
+
+                                    { count > 0 &&
+                                        <>
+                                            <StatementSourceSelector
+                                                label={state.matched ? "Source (matched)" : "Source"}
+                                                value={state.source}
+                                                isRequired={true}
+                                                isFrozen={!state.include}
+                                                allowNull={true}
+                                                onChange={(value) => updateAccount(i, { source: value, matched: false })}
+                                            />
+                                            { state.include && bad.length > 0 &&
+                                                <Banner dense className={styles.modalWarning}>
+                                                    {bad.length} transaction{bad.length === 1 ? '' : 's'} in this
+                                                    account cannot be imported (first problem: {bad[0].problem}).
+                                                </Banner>
+                                            }
+                                            { state.include &&
+                                                <div className={styles.importPreviewScroll}>
+                                                    <table className={styles.importPreviewTable}>
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Date</th>
+                                                                <th>Amount</th>
+                                                                <th>Note</th>
+                                                                <th>Key</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            { account.transactions.slice(0, IMPORT_PREVIEW_ROWS).map((t, j) => {
+                                                                const problem = statementImportRowProblem({
+                                                                    source: 'x', key: t.key, date: t.date, amount: t.amount
+                                                                });
+                                                                return (
+                                                                    <tr
+                                                                        key={t.key || j}
+                                                                        className={problem ? styles.importPreviewBadRow : ''}
+                                                                        title={problem ?? undefined}
+                                                                    >
+                                                                        <td className="tabular-nums">{t.date || '—'}</td>
+                                                                        <td><Money value={t.amount} /></td>
+                                                                        <td className={styles.importPreviewNote}>{t.note ?? ''}</td>
+                                                                        <td className={styles.ofxKeyCell}>{t.key || '—'}</td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            }
+                                            { state.include && count > IMPORT_PREVIEW_ROWS &&
+                                                <p className={styles.modalHint}>
+                                                    … and {count - IMPORT_PREVIEW_ROWS} more transaction{count - IMPORT_PREVIEW_ROWS === 1 ? '' : 's'}.
+                                                </p>
+                                            }
+                                        </>
+                                    }
+                                    { count === 0 &&
+                                        <p className={styles.modalHint}>
+                                            Nothing to import — the export covers no transactions for this account.
+                                        </p>
+                                    }
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    { blockers.map((blocker, i) => (
+                        <Banner key={i} dense variant="danger" className={styles.modalWarning}>{blocker}</Banner>
+                    ))}
+                </CardSection>
+            }
+
+            { importResult &&
+                <CardSection title="Result">
+                    <p className={styles.importSuccess}>
+                        <FontAwesomeIcon icon="fa-solid fa-circle-check" style={{ marginRight: '0.5rem' }} />
+                        Imported {importResult.created?.length ?? 0} new item{(importResult.created?.length ?? 0) === 1 ? '' : 's'};
+                        skipped {importResult.skipped?.length ?? 0} already-known item{(importResult.skipped?.length ?? 0) === 1 ? '' : 's'} (left untouched).
+                    </p>
+                </CardSection>
+            }
+
+            <CardActionFooter>
+                <SpinnerButton
+                    isPending={importIsPending}
+                    disabled={
+                        !items.length
+                        || problems.length > 0
+                        || blockers.length > 0
+                        || importResult != null
+                        || submitError != null
+                    }
+                    text={items.length ? `Import ${items.length} item${items.length === 1 ? '' : 's'}` : "Import"}
                     ariaLabel="Import statement items"
                     onClick={handleSubmit}
                 />

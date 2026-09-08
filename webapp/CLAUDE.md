@@ -208,6 +208,60 @@ Prop idioms: inputs take `label`, `value`, `onChange(value)` (value, not event),
 `className`/`style` and `forwardRef` when pages scroll to them. Destructive actions
 always go through `ConfirmationModal` (`onConfirm` returns a promise via `mutateAsync`).
 
+## Statement import (`components/statementProfiles.js`, `components/ofx.js`)
+
+Two parallel front-ends onto one endpoint. Both end at `POST /statements/import`
+with the same `{ source, key, amount, date, note }` items, and the server is
+format-agnostic — everything below is webapp-side.
+
+**The invariant both formats serve**: items dedupe on `(source, key)`, and a
+re-import is the normal case, not the exception. A key that changes shape, or a
+source label that differs by one character from last time, does not error — it
+silently re-lists lines the user already reconciled, as pending, ready to be
+double-counted. Every design choice in these two files is downstream of that.
+
+| | CSV (`ImportStatementsCSVModal`) | OFX/QFX (`ImportStatementsOFXModal`) |
+| --- | --- | --- |
+| Shape | one account per file | many accounts per file |
+| Source | chosen up front, one for the file | per detected account, after parsing |
+| Columns | mapped by the user, profile-assisted | fixed by the spec |
+| Stability | a bank report, and reports get redesigned | a specified format |
+
+- **CSV profiles** adapt one bank's export to the generic column mapper: a
+  profile owns preamble skipping, derived columns (coalescing split
+  debit/credit into one signed amount) and a `defaultMapping` that pins columns
+  to fields. `parse()` may return `derivedColumns`/`defaultMapping` for THAT
+  file, which is how the OSCU profile reads both vintages of an export whose
+  layout changed without making the user pick the right one from a list. A
+  mapping value of `false` pins a column to NO field — needed because the mapper
+  writes one key per column and the LAST writer wins, so an always-empty
+  "Effective Date" to the right of the real date silently clobbers it.
+- **The CSV tokenizer is quote-aware** (`parseCSVRecords`): quoted commas, `""`
+  escapes, quoted newlines, CRLF/CR. It has to be — OSCU's current export quotes
+  every field and puts commas inside them. Records carry the line they started
+  on so an error points at a findable line even after a quoted newline.
+- **OFX is SGML, not XML**, for the 1.x files banks actually emit: leaf elements
+  usually have no closing tag (`<TRNAMT>75.47` ends at the next `<`) but the
+  same file may close some anyway. `parseSGML` handles both by closing an
+  element as soon as a tag opens after it has collected text, and every lookup
+  searches descendants rather than children so residual mis-nesting cannot
+  matter. It decodes via the charset in the file's own header (OSCU: 1252).
+- **OFX account → source matching** (`suggestOFXSource`) is the feature that
+  keeps dedupe intact across the two formats. It matches a detected account
+  against the labels already in `GET /statements/sources` by the last four
+  digits of the account id, and only when EXACTLY ONE existing label matches —
+  the cost of a wrong guess is duplicated history, so ambiguity falls back to a
+  generated name the user can correct. It cannot be derived: OSCU's CSV preamble
+  carried an account nickname ("Value Checking") that the OFX export does not
+  have at all, but "…0090" survives in both.
+- OFX dates take the literal `YYYYMMDD` the bank stamped rather than converting
+  the instant, so a transaction never crosses a day boundary based on who is
+  looking, and OFX and CSV imports of the same line agree.
+- Two accounts resolving to one source is REFUSED, not warned about: it would
+  merge two banks into one dedupe namespace.
+- No test runner exists in `webapp/`. Both parsers are pure ESM with no React
+  imports and are exercised directly with `node` — keep them that way.
+
 ## Pages (`src/pages/`)
 
 One directory per route: `pages/<snake_case>/<PascalCase>.jsx` + `.module.css`, default

@@ -30,6 +30,7 @@ import {
 import { FloatingKeyboardHelp } from '../../components/KeyboardHelp.jsx';
 import {
     ImportStatementsCSVModal,
+    ImportStatementsOFXModal,
     ReconcileStatementsModal,
     LinkStatementModal,
     UnlinkStatementModal,
@@ -743,6 +744,7 @@ export default function Page() {
     const [ pageSize, setPageSize ] = useState(25);
 
     const [ isImportOpen, setIsImportOpen ] = useState(false);
+    const [ isImportOFXOpen, setIsImportOFXOpen ] = useState(false);
     // One open modal at a time: { kind: 'reconcile'|'link'|'edit'|'delete', statement }
     const [ actionTarget, setActionTarget ] = useState(null);
     const [ togglingId, setTogglingId ] = useState(null);
@@ -825,7 +827,7 @@ export default function Page() {
     const [ selectedId, setSelectedId ] = useState(null);
     const searchWrapRef = useRef(null);
 
-    const anyModalOpen = isImportOpen || actionTarget != null || isShortcutsOpen;
+    const anyModalOpen = isImportOpen || isImportOFXOpen || actionTarget != null || isShortcutsOpen;
     const hotkeysActive = !anyModalOpen;
 
     const selectedIndex = useMemo(
@@ -922,13 +924,25 @@ export default function Page() {
         <div className={styles.page}>
             <div className={styles.topBar}>
                 <h1>Bank Statements</h1>
-                <IconButton
-                    text="Upload statement"
-                    icon="fa-file-arrow-up"
-                    ariaLabel="Upload a bank statement CSV"
-                    disabled={!isEditor}
-                    onClick={() => setIsImportOpen(true)}
-                />
+                <div className={styles.topBarActions}>
+                    { /* OFX first: it is the format to reach for when the bank
+                         offers both, since its fields are specified rather than
+                         laid out for a human to read. */ }
+                    <IconButton
+                        text="Upload OFX"
+                        icon="fa-file-import"
+                        ariaLabel="Upload a bank statement OFX or QFX file"
+                        disabled={!isEditor}
+                        onClick={() => setIsImportOFXOpen(true)}
+                    />
+                    <IconButton
+                        text="Upload CSV"
+                        icon="fa-file-arrow-up"
+                        ariaLabel="Upload a bank statement CSV"
+                        disabled={!isEditor}
+                        onClick={() => setIsImportOpen(true)}
+                    />
+                </div>
             </div>
 
             <div className={styles.filterBar}>
@@ -1044,6 +1058,10 @@ export default function Page() {
             <ImportStatementsCSVModal
                 isOpen={isImportOpen}
                 setIsOpen={setIsImportOpen}
+            />
+            <ImportStatementsOFXModal
+                isOpen={isImportOFXOpen}
+                setIsOpen={setIsImportOFXOpen}
             />
             <ReconcileStatementsModal
                 isOpen={targetKind === 'reconcile'}
