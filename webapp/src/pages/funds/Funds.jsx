@@ -6,7 +6,7 @@ import { usePostFundMutation, useGetFundsQuery } from '../../hooks/Queries.jsx';
 import SearchableTable from '../../components/SearchableTable.jsx';
 import { CardModal } from '../../components/Modal.jsx';
 import { CardSection, CardAutoGrid, CardActionFooter, CardErrorSection } from '../../components/Card.jsx';
-import { LabeledTextInput, LabeledDateInput, LabeledNumberInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
+import { LabeledTextInput, LabeledTextArea, LabeledDateInput, LabeledNumberInput, LabeledBooleanInput } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, LabeledFundColorPicker } from '../../components/SpecialInputs.jsx';
 import { SpinnerButton, IconButton } from '../../components/Buttons.jsx';
 import { FundTypeBadge, FundLabel } from '../../components/Badges.jsx';
@@ -165,6 +165,7 @@ function FundsTable({ showAll, showDeprecated }) {
 
 const EMPTY_FORM = {
     name: null,
+    description: null,
     parent_id: null,
     tracked: true,
     start_date: null,
@@ -218,6 +219,7 @@ function CreateNew() {
             {
                 formData: {
                     name: data.name,
+                    description: data.description,
                     parent_id: data.parent_id,
                     tracked: data.tracked,
                     start_date: data.tracked ? data.start_date : null,
@@ -303,6 +305,19 @@ function CreateNew() {
                             inputTitle="Monthly funds reset into their nearest pool ancestor at end of month"
                         />
                     </CardAutoGrid>
+                </CardSection>
+
+                <CardSection title="Description">
+                    <LabeledTextArea
+                        label=""
+                        isFrozen={false}
+                        value={data.description}
+                        minHeight="4rem"
+                        allowNull={true}
+                        nullPlaceholder="(none) — what is this fund for, and what are the intentions behind it?"
+                        // Empty string means "cleared": store null, matching the API
+                        onChange={(value) => handleChange('description', value || null)}
+                    />
                 </CardSection>
 
                 { data.tracked &&
