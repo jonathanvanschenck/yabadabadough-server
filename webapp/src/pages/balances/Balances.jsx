@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router';
+import { NavLink, useSearchParams } from 'react-router';
 import dayjs from 'dayjs';
 
 import {
@@ -174,7 +174,9 @@ export default function Page() {
                                                 + (fund.status.pool ? ` ${styles.poolCell}` : '')}
                                             style={{ ...tint, paddingLeft: `${0.5 + depth * 1.1}rem` }}
                                         >
-                                            <FundLabel fund={fund} />
+                                            <NavLink to={`/fund/${fund.id}`} className={styles.fundLink}>
+                                                <FundLabel fund={fund} />
+                                            </NavLink>
                                             { fund.status.pool &&
                                                 <FundTypeIcon
                                                     status={fund.status}
