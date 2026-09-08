@@ -254,3 +254,88 @@ export function statementStateOf(statement) {
     if ( statement.ignored ) return "ignored";
     return "pending";
 }
+
+// --- Funds created on the fly while reconciling ----------------------------
+// The first round of imports after setting up a budget is painful: the
+// TRACKED funds exist, but the payees (the untracked counterparty of nearly
+// every bank line) do not, and stopping to create each one in another page
+// breaks the burn-down rhythm. So the reconcile forms can hold a fund that
+// does not exist yet and create it at confirm time. These helpers are the
+// shared vocabulary for that.
+
+/**
+ * The name a counterparty fund would take from a bank line's note. Two
+ * trims, both conservative enough to leave an unfamiliar note untouched:
+ *  - the OFX importer joins NAME and MEMO with an em-dash separator; the
+ *    NAME half is the payee, the MEMO half the bank's elaboration
+ *  - card lines carry a merchant-category code and the purchase date after
+ *    the merchant ("SAFEWAY #1765 5411 (2026-07-11) CORVALLIS OR 2380…");
+ *    everything from that code on is the bank's, not the payee's
+ * The result is a starting point the user can edit, not a promise.
+ */
+export function suggestFundNameFromNote(note) {
+    const text = (note ?? '').trim();
+    if ( !text ) return null;
+    const head = text
+        .split(' — ')[0]
+        .replace(/\s+\d{4}\s+\(\d{4}-\d{2}-\d{2}\).*$/, '');
+    return head.replace(/\s+/g, ' ').trim() || null;
+}
+
+/**
+ * The existing fund a proposed name would collide with, or null. Fund names
+ * are UNIQUE server-side; the comparison here is case-insensitive as well so
+ * that "Costco" is reused rather than shadowed by "COSTCO".
+ */
+export function findFundByName(funds, name) {
+    const wanted = (name ?? '').trim().toLowerCase();
+    if ( !wanted || !funds ) return null;
+    return funds.find(f => f.name.trim().toLowerCase() === wanted) ?? null;
+}
+
+/**
+ * The existing fund a bank line's note most plausibly names, or null: an
+ * exact (case-insensitive) match on the suggested name first, else the
+ * longest UNTRACKED, non-deprecated fund whose name opens the note at a word
+ * boundary ("WINCO FOODS #3 …" → "Winco"). Untracked only, deliberately: the
+ * counterparty of a bank line is essentially always a payee, and the tracked
+ * budget funds are exactly the ones a loose match must never be allowed to
+ * grab ("GAS STATION 12" is not the "Gas" envelope).
+ */
+export function findFundForNote(funds, note) {
+    if ( !funds ) return null;
+    const name = suggestFundNameFromNote(note);
+    if ( !name ) return null;
+    const exact = findFundByName(funds, name);
+    if ( exact ) return exact;
+    const haystack = name.toLowerCase();
+    let best = null;
+    for ( const f of funds ) {
+        if ( f.status?.tracked || f.deprecated != null ) continue;
+        const needle = f.name.trim().toLowerCase();
+        if ( needle.length < 3 || !haystack.startsWith(needle) ) continue;
+        const next = haystack[needle.length];
+        if ( next != null && /[a-z0-9]/.test(next) ) continue;
+        if ( best == null || needle.length > best.name.trim().length ) best = f;
+    }
+    return best;
+}
+
+/**
+ * The POST /funds body for a fund created from a reconcile form: a plain
+ * untracked, non-pool, parentless fund -- what a payee almost always is.
+ * Anything else is a deliberate act and belongs in the full create form.
+ */
+export function newCounterpartyFundSpec(name) {
+    return {
+        name: name.trim(),
+        description: null,
+        parent_id: null,
+        tracked: false,
+        monthly: false,
+        pool: false,
+        start_date: null,
+        start_balance: null,
+        color: null,
+    };
+}

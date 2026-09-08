@@ -269,3 +269,60 @@
     flex-wrap: wrap;
     gap: 0.5rem;
 }
+
+/* The auto-fill switch sits with the page actions: a plain checkbox, since
+ * it is a mode rather than a value in a form. */
+.autoFundToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--font-secondary-color);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    margin-right: 0.5rem;
+}
+
+.autoFundToggle input {
+    accent-color: var(--accent-color);
+    cursor: pointer;
+}
+
+/* --- A fund staged for creation under the inline reconcile ------------ */
+/* Dashed accent border: something that will exist, not something that does. */
+.stagedFund {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px dashed var(--accent-color);
+    background: var(--accent-muted-color);
+}
+
+.stagedFundHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.stagedFundWhy {
+    color: var(--font-secondary-color);
+}
+
+.stagedFundMeta {
+    color: var(--font-muted);
+    font-size: 0.8rem;
+}
+
+/* A flex row (whitespace text nodes would collapse), so the separator is a
+ * real child and the spacing is the gap plus a leading margin. */
+.inlineReconcileCreates {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    margin-left: 0.3rem;
+}

@@ -1071,7 +1071,10 @@ export function SearchableSelector({
     // Get display text for current value
     const getDisplayText = () => {
 
-        if (value && valueDisplayName) {
+        // A caller-supplied display name wins even with no value: that is
+        // how a selector shows something it holds that is not (yet) one of
+        // its options -- a fund staged for creation, say.
+        if (valueDisplayName) {
             return valueDisplayName;
         }
         
@@ -1245,11 +1248,11 @@ export function SearchableSelector({
                                 Error loading options: {error?.message || 'Unknown error'}
                             </div>
                         ) : filteredOptions.length === 0 ? (
-                            !hasCreate && (
-                                <div className={styles.searchableSelectorNoResults}>
-                                    {searchTerm ? 'No matching options found' : 'No options available'}
-                                </div>
-                            )
+                            <div className={styles.searchableSelectorNoResults}>
+                                { searchTerm
+                                    ? (hasCreate ? 'No matching options — create one above?' : 'No matching options found')
+                                    : 'No options available' }
+                            </div>
                         ) : (
                             filteredOptions.map((key, filteredIndex) => {
                                 const originalIndex = optionKeys.indexOf(key);

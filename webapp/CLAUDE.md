@@ -262,6 +262,48 @@ double-counted. Every design choice in these two files is downstream of that.
 - No test runner exists in `webapp/`. Both parsers are pure ESM with no React
   imports and are exercised directly with `node` — keep them that way.
 
+### Funds created while reconciling (`pages/statements/`, `components/domain.js`)
+
+The first import after setting up a budget is where the statements page hurt most:
+the TRACKED funds exist, the payees (the untracked counterparty of nearly every bank
+line) do not, and leaving the queue to create each one broke the burn-down rhythm. So
+a reconcile form can hold a fund that does not exist yet.
+
+- **Each side of the inline reconcile is `null | { id } | { create: name }`.** A staged
+  fund is created at CONFIRM time, not when picked: an abandoned card leaves no orphan,
+  and the name stays editable (the `StagedFundNotice` under the fund row) until then.
+  Confirm resolves each side to an id — creating via `POST /funds` with
+  `newCounterpartyFundSpec()` (untracked, no pool, no parent; anything else is a
+  deliberate act for the full form) — and writes the created id back into the form
+  BEFORE posting the group, so a failure later in the sequence leaves a retryable form
+  rather than a second copy of the fund.
+- **Fund names are UNIQUE server-side.** `findFundByName()` is the case-insensitive
+  guard: a staged name that names a real fund becomes that fund — at stage time, when
+  the funds list changes (another card's confirm just created "Costco"; the socket
+  invalidation refetches; every card still staging "Costco" flips to it), and once more
+  at confirm. That effect is keyed on the funds LIST, never on the typed name, so
+  typing "Costco Gas" is not hijacked as it passes through "Costco".
+- **"Auto-fill funds from names"** (a persisted page switch, `localStorage`
+  `statements.autoFundFromNames`, off by default) fills the counterparty side — the
+  source of an income line, the target of a payment — from the bank note. Priority is
+  fixed: a history prefill wins outright (the hook now also reports readiness, and the
+  auto-fill waits for it); then `findFundForNote()` — exact name, else the longest
+  UNTRACKED non-deprecated fund whose name opens the note at a word boundary
+  ("WINCO FOODS #3 …" → "Winco"); untracked only, so a loose match can never grab a
+  budget envelope ("GAS STATION 12" is not "Gas"); else stage
+  `suggestFundNameFromNote()`'s cleaned name. Turning the switch off retracts what it
+  filled unless the user changed it since.
+- `suggestFundNameFromNote()` makes exactly two trims, both conservative: the OFX
+  importer's ` — ` NAME/MEMO join (keep NAME), and the card-line tail ` <MCC> (<date>) …`
+  (drop it). An unfamiliar note passes through untouched — it is a starting point the
+  user edits, not a promise.
+- `FundSearchableSelector` takes `pendingName` to show a staged fund in its trigger
+  (`NewFundBadge`); `SearchableSelector` now honors `valueDisplayName` with no value for
+  the same reason. The selector's create row is unchanged — what a caller does with
+  `onCreateNew` is its business: the inline card stages, the modals
+  (`ReconcileStatementsModal` now included) open the nested `CreateFundModal` and
+  create on the spot.
+
 ## Pages (`src/pages/`)
 
 One directory per route: `pages/<snake_case>/<PascalCase>.jsx` + `.module.css`, default

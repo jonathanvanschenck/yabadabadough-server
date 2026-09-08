@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router';
 import dayjs from 'dayjs';
 
 import {
+    useGetFundsQuery,
     useGetStatementsPageQuery,
     useGetTransactionGroupsQuery,
     usePatchStatementMutation,
+    usePostFundMutation,
     usePostStatementLinkMutation,
     usePostTransactionGroupFromStatementsMutation
 } from '../../hooks/Queries.jsx';
@@ -19,13 +21,17 @@ import {
     LabeledDateRangeInput,
     LabeledTextInput
 } from '../../components/Inputs.jsx';
-import { FundSearchableSelector } from '../../components/SpecialInputs.jsx';
+import { FundSearchableSelector, NewFundBadge } from '../../components/SpecialInputs.jsx';
 import { StatementStateBadge } from '../../components/Badges.jsx';
 import { Money } from '../../components/Money.jsx';
 import {
     statementStateOf,
     amountsMatch,
-    transactionGroupTotal
+    transactionGroupTotal,
+    suggestFundNameFromNote,
+    findFundByName,
+    findFundForNote,
+    newCounterpartyFundSpec
 } from '../../components/domain.js';
 import { FloatingKeyboardHelp } from '../../components/KeyboardHelp.jsx';
 import {
@@ -155,6 +161,11 @@ function commonPrefixLength(a, b) {
  * the last year's reconciling groups (their hydrated `statements` carry the
  * bank notes to match against). Best match = longest token-prefix score,
  * ties broken by most recent statement date.
+ *
+ * Returns `[ map, isReady ]`: the map is empty both while history is still
+ * loading and when there is genuinely no match, and the lower-priority
+ * name-based auto-fill must tell those apart (it may only step in once
+ * history has had its say).
  */
 function useReconcilePrefills(pendingItems, enabled) {
     // The since-bound is a coarse cache-friendly cutoff, not a semantic date,
@@ -173,7 +184,9 @@ function useReconcilePrefills(pendingItems, enabled) {
         { enabled: enabled && pendingItems.length > 0 }
     );
 
-    return useMemo(() => {
+    const isReady = !enabled || pendingItems.length === 0 || groupsQ.isSuccess || groupsQ.isError;
+
+    const map = useMemo(() => {
         const map = new Map();
         const history = [];
         for ( const g of groupsQ.data ?? [] ) {
@@ -213,6 +226,87 @@ function useReconcilePrefills(pendingItems, enabled) {
         }
         return map;
     }, [groupsQ.data, pendingItems]);
+
+    return [ map, isReady ];
+}
+
+// --- Funds created on the fly ---------------------------------------------
+// Each side of the inline reconcile holds one of:
+//   null                 nothing chosen yet
+//   { id: number }       an existing fund
+//   { create: string }   a fund to CREATE, by this name, when the card is
+//                        confirmed (see newCounterpartyFundSpec in domain.js
+//                        for what it will be: untracked, no pool, no parent)
+// Creating at confirm time rather than on pick means an abandoned card
+// leaves no orphan fund behind, and the name stays editable until then.
+
+const AUTO_FUND_STORAGE_KEY = 'statements.autoFundFromNames';
+
+/** The "auto-fill funds from names" switch, persisted so it survives the
+ *  page reloads of a long import session. Off by default: once the payee
+ *  funds exist, the history prefill does the same job with better answers. */
+function usePersistedAutoFund() {
+    const [ enabled, setEnabled ] = useState(() => {
+        try {
+            return localStorage.getItem(AUTO_FUND_STORAGE_KEY) === 'true';
+        } catch {
+            return false;
+        }
+    });
+    useEffect(() => {
+        try {
+            localStorage.setItem(AUTO_FUND_STORAGE_KEY, enabled ? 'true' : 'false');
+        } catch {
+            // Storage unavailable (private mode, quota): the switch still
+            // works for this page load.
+        }
+    }, [enabled]);
+    return [ enabled, setEnabled ];
+}
+
+const sideId = (side) => side?.id ?? null;
+const sideName = (side) => side?.create ?? null;
+const sidesEqual = (a, b) =>
+    a === b || (a != null && b != null && a.id === b.id && a.create === b.create);
+
+/**
+ * The notice under a reconcile form for one side that will be a NEW fund:
+ * says so plainly, lets the name be edited (a bank note is rarely the name
+ * you want on a fund) and offers a way out. There is deliberately no
+ * tracked/pool/parent control here: a payee fund is none of those, and the
+ * exceptions belong in the full create form on the funds page.
+ */
+function StagedFundNotice({ role, name, autoFilled, onChangeName, onDiscard, validityMessage }) {
+    return (
+        <div className={styles.stagedFund}>
+            <div className={styles.stagedFundHeader}>
+                <span>
+                    Confirming will <strong>create a new fund</strong> as the {role}
+                    { autoFilled && <span className={styles.stagedFundWhy}> (named from the bank line)</span> }:
+                </span>
+                <TightIconButton
+                    icon="fa-times"
+                    ariaLabel={`Don't create a new ${role} fund`}
+                    title="Don't create this fund (pick an existing one instead)"
+                    onClick={onDiscard}
+                />
+            </div>
+            <LabeledTextInput
+                label="New fund name"
+                value={name}
+                isFrozen={false}
+                isRequired={true}
+                allowNull={false}
+                emptyStringPlaceholder="Enter a name for the new fund"
+                onChange={(v) => onChangeName(v ?? '')}
+                validityMessage={validityMessage}
+                onKeyDown={(e) => { if ( e.key === 'Escape' ) e.currentTarget.blur(); }}
+            />
+            <div className={styles.stagedFundMeta}>
+                Untracked, no parent — the usual shape for a payee. Anything else can be changed on its fund page afterwards.
+            </div>
+        </div>
+    );
 }
 
 // --- Keyboard queue triage ------------------------------------------------
@@ -251,7 +345,7 @@ const SHORTCUT_GROUPS = [
         title: 'Selected pending card',
         shortcuts: [
             { keys: [ 'Enter' ], description: 'Confirm the inline reconcile (once both funds and a description are set; also works from the description field)' },
-            { keys: [ 'S', 'T', 'D' ], description: 'Jump into the Source / Target / Description fields — S and T open the fund search (type, then Enter to pick), D selects the description text; Esc returns to the card' },
+            { keys: [ 'S', 'T', 'D' ], description: 'Jump into the Source / Target / Description fields — S and T open the fund search (type, then Enter to pick; with no match, Enter stages a new fund by that name, created when you confirm), D selects the description text; Esc returns to the card' },
             { keys: [ 'L' ], description: 'Link the first "likely match" suggestion' },
             { keys: [ [ 'Shift', 'L' ] ], description: 'Open the full link picker — search every group, including ones the suggester did not surface' },
             { keys: [ 'R' ], description: 'Advanced reconcile (split / transfer / custom date)' },
@@ -390,15 +484,27 @@ function SuggestedLinks({ statement, suggestions, hotkeysActive = false }) {
  * (the Stage 4 defaulting rule), so the common single-transaction reconcile
  * never needs the modal. Split/transfer/custom-date reconciles stay in
  * ReconcileStatementsModal, reachable from the card's secondary actions.
+ *
+ * Either fund may be one that does not exist yet (see "Funds created on the
+ * fly" above): typed into the selector's "Create new fund" row, or -- with
+ * the page's auto-fill switch on -- taken from the bank line's name for the
+ * counterparty side (the source of an income line, the target of a payment).
+ * Confirm creates those funds first, then the group; a fund that got created
+ * before a later step failed is swapped into the form as an existing fund, so
+ * retrying never creates it twice.
  */
-function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = false }) {
-    const [ sourceId, setSourceId ] = useState(null);
-    const [ targetId, setTargetId ] = useState(null);
+function InlinePendingReconcile({ statement, prefill = null, prefillReady = false, autoFund = false, hotkeysActive = false }) {
+    const [ source, setSource ] = useState(null);
+    const [ target, setTarget ] = useState(null);
     // Seed the description from the item's note (its key as a fallback), mirroring
     // the modal's group-description default.
     const [ description, setDescription ] = useState(statement.note ?? statement.key ?? '');
     const [ submitError, setSubmitError ] = useState(null);
     const [ prefillUsed, setPrefillUsed ] = useState(false);
+
+    // Same list (and cache entry) the two selectors read; needed here to
+    // resolve a staged name against the funds that already exist.
+    const { data: funds } = useGetFundsQuery();
 
     // Apply the history prefill ONCE when it arrives (the history query
     // resolves after the card mounts), and only onto an untouched form:
@@ -406,16 +512,65 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
     // description while it still holds its seeded default.
     useEffect(() => {
         if ( prefill == null || prefillUsed ) return;
-        if ( sourceId != null || targetId != null ) return;
-        setSourceId(prefill.sourceId);
-        setTargetId(prefill.targetId);
+        if ( source != null || target != null ) return;
+        setSource({ id: prefill.sourceId });
+        setTarget({ id: prefill.targetId });
         setDescription(prev =>
             prev === (statement.note ?? statement.key ?? '') && prefill.description
                 ? prefill.description
                 : prev
         );
         setPrefillUsed(true);
-    }, [prefill, prefillUsed, sourceId, targetId, statement.note, statement.key]);
+    }, [prefill, prefillUsed, source, target, statement.note, statement.key]);
+
+    // Name-based auto-fill of the counterparty side. Runs once, and only after
+    // history has had its say (a past reconcile beats a guess from the name):
+    // an existing fund the note names is selected (see findFundForNote),
+    // otherwise a fund is staged under the note's cleaned-up name. Turning
+    // the switch off retracts what it filled, provided the user has not
+    // changed it since.
+    const autoRole = statement.amount > 0 ? 'source' : 'target';
+    const autoSide = autoRole === 'source' ? source : target;
+    const setAutoSide = autoRole === 'source' ? setSource : setTarget;
+    const autoSeedDoneRef = useRef(false);
+    const [ autoApplied, setAutoApplied ] = useState(null);
+    useEffect(() => {
+        if ( !autoFund ) {
+            if ( autoApplied != null ) {
+                setAutoSide(prev => sidesEqual(prev, autoApplied) ? null : prev);
+                setAutoApplied(null);
+            }
+            autoSeedDoneRef.current = false;
+            return;
+        }
+        if ( autoSeedDoneRef.current || !prefillReady || prefill != null || funds == null ) return;
+        autoSeedDoneRef.current = true;
+        if ( autoSide != null ) return;
+        const note = statement.note ?? statement.key;
+        const existing = findFundForNote(funds, note);
+        const name = suggestFundNameFromNote(note);
+        if ( !existing && !name ) return;
+        const value = existing ? { id: existing.id } : { create: name };
+        setAutoSide(value);
+        setAutoApplied(value);
+    }, [autoFund, prefillReady, prefill, funds, autoSide, setAutoSide, autoApplied, statement.note, statement.key]);
+
+    // A staged name that now names a real fund (created from another card,
+    // or by someone else) becomes that fund: the server would refuse the
+    // duplicate name anyway, and reusing the fund is what the user wants.
+    // Keyed on the funds LIST changing, not on the name, so typing a name
+    // that passes through an existing one ("Costco" on the way to "Costco
+    // Gas") is not hijacked mid-keystroke.
+    useEffect(() => {
+        if ( funds == null ) return;
+        const resolve = (prev) => {
+            if ( prev?.create == null ) return prev;
+            const existing = findFundByName(funds, prev.create);
+            return existing ? { id: existing.id } : prev;
+        };
+        setSource(resolve);
+        setTarget(resolve);
+    }, [funds]);
 
     const amount = Math.abs(statement.amount);
 
@@ -427,20 +582,60 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
     const targetWrapRef = useRef(null);
     const descriptionWrapRef = useRef(null);
 
+    // Staging from the selector's create row: the typed search is the name,
+    // falling back to the bank line's name when the row was picked with an
+    // empty search.
+    const stage = (setSide) => (searchTerm) => {
+        const name = searchTerm?.trim() || suggestFundNameFromNote(statement.note ?? statement.key) || '';
+        const existing = findFundByName(funds, name);
+        setSide(existing ? { id: existing.id } : { create: name });
+        setSubmitError(null);
+    };
+    const renameStaged = (setSide) => (name) => {
+        setSide(prev => prev?.create != null ? { create: name } : prev);
+        setSubmitError(null);
+    };
+
     const descOk = !!description?.trim();
-    const fundsOk = sourceId != null && targetId != null && sourceId !== targetId;
+    const sourceNameOk = source?.create == null || !!source.create.trim();
+    const targetNameOk = target?.create == null || !!target.create.trim();
+    const sameFund = source != null && target != null && (
+        (sideId(source) != null && sideId(source) === sideId(target))
+        || (sideName(source) != null && sideName(target) != null
+            && sideName(source).trim().toLowerCase() === sideName(target).trim().toLowerCase())
+    );
+    const fundsOk = source != null && target != null && sourceNameOk && targetNameOk && !sameFund;
     const canSubmit = descOk && fundsOk;
 
-    const {
-        mutate: postMutate,
-        isPending: postIsPending
-    } = usePostTransactionGroupFromStatementsMutation();
+    const { mutateAsync: postFundAsync } = usePostFundMutation();
+    const { mutateAsync: postGroupAsync } = usePostTransactionGroupFromStatementsMutation();
+    // One flag for the whole confirm sequence (up to two fund creates, then
+    // the group), so the button spins from first request to last.
+    const [ isSubmitting, setIsSubmitting ] = useState(false);
 
-    const handleSubmit = useCallback(() => {
-        if ( !canSubmit ) return;
-        const desc = description.trim();
-        postMutate(
-            {
+    const handleSubmit = useCallback(async () => {
+        if ( !canSubmit || isSubmitting ) return;
+        setIsSubmitting(true);
+        // Turn a side into a fund id, creating the fund if it is staged. The
+        // created fund is written back into the form at once, so a failure
+        // later in the sequence leaves a retryable form, not a duplicate.
+        const resolve = async (side, setSide) => {
+            if ( side.id != null ) return side.id;
+            const existing = findFundByName(funds, side.create);
+            if ( existing ) {
+                setSide({ id: existing.id });
+                return existing.id;
+            }
+            const result = await postFundAsync({ formData: newCounterpartyFundSpec(side.create) });
+            const id = result?.data?.id;
+            setSide({ id });
+            return id;
+        };
+        try {
+            const sourceId = await resolve(source, setSource);
+            const targetId = await resolve(target, setTarget);
+            const desc = description.trim();
+            await postGroupAsync({
                 formData: {
                     statement_ids: [ statement.id ],
                     description: desc,
@@ -454,17 +649,18 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
                         note: null
                     } ]
                 }
-            },
-            {
-                // On success the item leaves the pending list (becomes reconciled),
-                // so this card simply re-renders in its new state.
-                onError: (err) => setSubmitError({
-                    message: err.message,
-                    details: err.details?.message
-                })
-            }
-        );
-    }, [ canSubmit, description, statement.id, sourceId, targetId, amount, postMutate ]);
+            });
+            // On success the item leaves the pending list (becomes reconciled),
+            // so this card simply re-renders in its new state.
+        } catch ( err ) {
+            setSubmitError({
+                message: err.message,
+                details: err.details?.message
+            });
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [ canSubmit, isSubmitting, funds, source, target, description, statement.id, amount, postFundAsync, postGroupAsync ]);
 
     // The card-selection hotkeys for this (the selected) card's form: Enter
     // confirms when submittable; S/T/D jump into the Source/Target/Description
@@ -476,7 +672,7 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
             if ( isTypingTarget(e.target) ) return;
             switch ( plainKey(e) ) {
                 case 'Enter':
-                    if ( !canSubmit || postIsPending || submitError != null ) return;
+                    if ( !canSubmit || isSubmitting || submitError != null ) return;
                     e.preventDefault();
                     handleSubmit();
                     break;
@@ -499,7 +695,12 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [hotkeysActive, canSubmit, postIsPending, submitError, handleSubmit]);
+    }, [hotkeysActive, canSubmit, isSubmitting, submitError, handleSubmit]);
+
+    const sameFundMessage = sameFund ? 'Source and target must differ.' : undefined;
+    const autoFilledSource = autoApplied != null && autoRole === 'source' && sidesEqual(source, autoApplied);
+    const autoFilledTarget = autoApplied != null && autoRole === 'target' && sidesEqual(target, autoApplied);
+    const autoFilledExisting = (autoFilledSource && source.id != null) || (autoFilledTarget && target.id != null);
 
     return (
         <div className={styles.inlineReconcile}>
@@ -507,28 +708,50 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
                 <div ref={sourceWrapRef}>
                     <FundSearchableSelector
                         label="From (source)"
-                        value={sourceId}
-                        onChange={(v) => { setSourceId(v); setSubmitError(null); }}
+                        value={sideId(source)}
+                        pendingName={sideName(source)}
+                        onChange={(v) => { setSource(v != null ? { id: v } : null); setSubmitError(null); }}
+                        onCreateNew={stage(setSource)}
                         isFrozen={false}
                         isRequired={true}
                         allowNull={false}
-                        validityMessage={
-                            fundsOk || sourceId == null ? undefined
-                            : (sourceId === targetId ? 'Source and target must differ.' : undefined)
-                        }
+                        validityMessage={sameFundMessage}
                     />
                 </div>
                 <div ref={targetWrapRef}>
                     <FundSearchableSelector
                         label="To (target)"
-                        value={targetId}
-                        onChange={(v) => { setTargetId(v); setSubmitError(null); }}
+                        value={sideId(target)}
+                        pendingName={sideName(target)}
+                        onChange={(v) => { setTarget(v != null ? { id: v } : null); setSubmitError(null); }}
+                        onCreateNew={stage(setTarget)}
                         isFrozen={false}
                         isRequired={true}
                         allowNull={false}
+                        validityMessage={sameFundMessage}
                     />
                 </div>
             </div>
+            { source?.create != null &&
+                <StagedFundNotice
+                    role="source"
+                    name={source.create}
+                    autoFilled={autoFilledSource}
+                    onChangeName={renameStaged(setSource)}
+                    onDiscard={() => { setSource(null); setSubmitError(null); }}
+                    validityMessage={!sourceNameOk ? 'Name is required.' : sameFundMessage}
+                />
+            }
+            { target?.create != null &&
+                <StagedFundNotice
+                    role="target"
+                    name={target.create}
+                    autoFilled={autoFilledTarget}
+                    onChangeName={renameStaged(setTarget)}
+                    onDiscard={() => { setTarget(null); setSubmitError(null); }}
+                    validityMessage={!targetNameOk ? 'Name is required.' : sameFundMessage}
+                />
+            }
             <div ref={descriptionWrapRef}>
                 <LabeledTextInput
                     label="Description"
@@ -545,7 +768,7 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
                             e.currentTarget.blur();
                             return;
                         }
-                        if ( e.key !== 'Enter' || !canSubmit || postIsPending || submitError != null ) return;
+                        if ( e.key !== 'Enter' || !canSubmit || isSubmitting || submitError != null ) return;
                         e.preventDefault();
                         handleSubmit();
                     }}
@@ -556,12 +779,25 @@ function InlinePendingReconcile({ statement, prefill = null, hotkeysActive = fal
                     Funds prefilled from &ldquo;{prefill.description}&rdquo; ({prefill.date}) — a past reconcile with a matching note.
                 </div>
             }
+            { autoFilledExisting &&
+                <div className={styles.prefillHint}>
+                    {autoRole === 'source' ? 'Source' : 'Target'} auto-filled: an existing fund matches the bank line&apos;s name.
+                </div>
+            }
             <div className={styles.inlineReconcileFooter}>
                 <span className={styles.inlineReconcileAmount}>
                     Reconciles <strong><Money value={amount} /></strong>
+                    { (source?.create != null || target?.create != null) &&
+                        <span className={styles.inlineReconcileCreates}>
+                            <span>· creates</span>
+                            { source?.create != null && <NewFundBadge name={source.create} /> }
+                            { source?.create != null && target?.create != null && <span>and</span> }
+                            { target?.create != null && <NewFundBadge name={target.create} /> }
+                        </span>
+                    }
                 </span>
                 <SpinnerButton
-                    isPending={postIsPending}
+                    isPending={isSubmitting}
                     disabled={!canSubmit || submitError != null}
                     text="Confirm"
                     ariaLabel="Confirm reconcile"
@@ -665,7 +901,7 @@ function CardActions({ statement, isEditor, togglingId, onToggleIgnored, onActio
 }
 
 function StatementCard({
-    statement, suggestions, prefill, isEditor, togglingId,
+    statement, suggestions, prefill, prefillReady, autoFund, isEditor, togglingId,
     isSelected, hotkeysActive, onSelect, onToggleIgnored, onAction
 }) {
     const state = statementStateOf(statement);
@@ -707,6 +943,8 @@ function StatementCard({
                 <InlinePendingReconcile
                     statement={statement}
                     prefill={prefill}
+                    prefillReady={prefillReady}
+                    autoFund={autoFund}
                     hotkeysActive={isSelected && hotkeysActive}
                 />
             </>}
@@ -774,7 +1012,10 @@ export default function Page() {
         [items]
     );
     const suggestionsByItemId = useLinkSuggestions(pendingItems, isEditor);
-    const prefillsByItemId = useReconcilePrefills(pendingItems, isEditor);
+    const [ prefillsByItemId, prefillsReady ] = useReconcilePrefills(pendingItems, isEditor);
+    // Name-based fund auto-fill for the inline reconcile (see "Funds created
+    // on the fly" above the card component).
+    const [ autoFund, setAutoFund ] = usePersistedAutoFund();
 
     const {
         mutate: patchMutate
@@ -925,6 +1166,19 @@ export default function Page() {
             <div className={styles.topBar}>
                 <h1>Bank Statements</h1>
                 <div className={styles.topBarActions}>
+                    { isEditor &&
+                        <label
+                            className={styles.autoFundToggle}
+                            title="On every pending card, fill the payee side (the source of an income line, the target of a payment) from the bank line's name — selecting the fund if one exists by that name, otherwise creating it when you confirm. A past reconcile with a matching note still wins."
+                        >
+                            <input
+                                type="checkbox"
+                                checked={autoFund}
+                                onChange={(e) => setAutoFund(e.target.checked)}
+                            />
+                            Auto-fill funds from names
+                        </label>
+                    }
                     { /* OFX first: it is the format to reach for when the bank
                          offers both, since its fields are specified rather than
                          laid out for a human to read. */ }
@@ -1023,6 +1277,8 @@ export default function Page() {
                                             statement={s}
                                             suggestions={suggestionsByItemId.get(s.id)}
                                             prefill={prefillsByItemId.get(s.id)}
+                                            prefillReady={prefillsReady}
+                                            autoFund={autoFund}
                                             isEditor={isEditor}
                                             togglingId={togglingId}
                                             isSelected={s.id === selectedId}

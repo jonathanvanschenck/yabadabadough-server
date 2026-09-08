@@ -65,3 +65,28 @@
     border-color: var(--font-primary-color);
     box-shadow: 0 0 0 2px var(--font-primary-color);
 }
+
+/* A fund staged for creation (see NewFundBadge) */
+.newFund {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    min-width: 0;
+    color: var(--accent-color);
+}
+
+.newFundName {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.newFundTag {
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.05rem 0.35rem;
+    border-radius: 0.5rem;
+    border: 1px solid currentColor;
+}

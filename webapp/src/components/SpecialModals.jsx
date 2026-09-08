@@ -2573,6 +2573,9 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
     const [ data, setData ] = useState(defaultData);
     const [ lines, setLines ] = useState(defaultLines);
     const [ submitError, setSubmitError ] = useState(null);
+    // A pending "create a new fund" request from one of the line selectors:
+    // { lineKey, field, name }. Non-null while the nested CreateFundModal is up.
+    const [ createFundReq, setCreateFundReq ] = useState(null);
 
     // Key the reset on the item ids, not the array identity: callers may
     // rebuild the statements array every render
@@ -2581,7 +2584,21 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
         setData(defaultData());
         setLines(defaultLines());
         setSubmitError(null);
+        setCreateFundReq(null);
     }, [statementsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // A fund was just created from a line selector: drop its id into the line &
+    // field that asked for it (the nested modal closes itself on success).
+    const handleFundCreated = useCallback((fund) => {
+        if (fund && createFundReq) {
+            setLines(prev => prev.map(l =>
+                l._key === createFundReq.lineKey
+                    ? { ...l, [createFundReq.field]: fund.id }
+                    : l
+            ));
+        }
+        setCreateFundReq(null);
+    }, [createFundReq]);
 
     useEffect(() => {
         if (isOpen) reset();
@@ -2685,7 +2702,11 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
             </CardSection>
 
             <CardSection title="Transactions">
-                <TransactionLinesEditor lines={lines} setLines={setLines} />
+                <TransactionLinesEditor
+                    lines={lines}
+                    setLines={setLines}
+                    onRequestCreateFund={(lineKey, field, name) => setCreateFundReq({ lineKey, field, name })}
+                />
             </CardSection>
 
             <CardActionFooter>
@@ -2705,6 +2726,19 @@ export function ReconcileStatementsModal({ isOpen, setIsOpen, statements = [] })
             { submitError &&
                 <CardErrorSection errorMessage={submitError.message} errorMessageDetails={submitError.details} />
             }
+
+            {/* Nested create-fund flow, stacked over this modal -- the same
+              * one the create-group modal offers. The fund is created on the
+              * spot here (unlike the inline card, which stages it): the full
+              * form is the place for a fund that is NOT a plain payee. */}
+            <CreateFundModal
+                isOpen={createFundReq != null}
+                setIsOpen={(open) => { if (!open) setCreateFundReq(null); }}
+                initialName={createFundReq?.name || null}
+                initialTracked={false}
+                onCreated={handleFundCreated}
+                level={2}
+            />
         </CardModal>
     );
 }
