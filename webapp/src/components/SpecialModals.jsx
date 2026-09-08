@@ -1598,9 +1598,16 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
         reader.onload = function({ target }) {
             // The profile owns raw-file parsing (preamble skipping, etc.) and
             // throws CSVParseError with a { message, details } on a bad shape.
-            let headers, rows, suggestedSource;
+            // It may also hand back derivedColumns/defaultMapping for THIS file,
+            // which win over the profile's static ones -- that is how one profile
+            // reads several vintages of the same bank's export.
+            let headers, rows, suggestedSource, fileDerived, fileMapping;
             try {
-                ({ headers, rows, suggestedSource } = profile.parse(target.result));
+                ({
+                    headers, rows, suggestedSource,
+                    derivedColumns: fileDerived,
+                    defaultMapping: fileMapping,
+                } = profile.parse(target.result));
             } catch ( err ) {
                 setCSVParserError({ message: err.message, details: err.details });
                 setParsedCSVData(null);
@@ -1610,7 +1617,7 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
 
             // Append any profile-derived columns (e.g. a signed amount coalesced
             // from split debit/credit) so they become mappable like real columns.
-            const derived = profile.derivedColumns ?? [];
+            const derived = fileDerived ?? profile.derivedColumns ?? [];
             if ( derived.length ) {
                 headers = [ ...headers, ...derived.map(d => d.name) ];
                 rows = rows.map(row => {
@@ -1623,13 +1630,19 @@ function CSVImporter({ onProcessedData, transformers = [], requiredKeys = [], fi
             if ( suggestedSource && onSuggestedSource ) onSuggestedSource(suggestedSource);
 
             setParsedCSVData({ headers, rows });
-            const defaultMapping = profile.defaultMapping ?? {};
+            const defaultMapping = fileMapping ?? profile.defaultMapping ?? {};
             setCSVToJsonMap(headers.map((h,i) => {
                 if ( !h.trim() ) return null;
                 let key = null;
-                // A profile-pinned mapping wins over header auto-matching.
-                if ( defaultMapping[h] != null && optionKeys.includes(defaultMapping[h]) ) {
-                    key = defaultMapping[h];
+                const pinned = defaultMapping[h];
+                // A profile-pinned mapping wins over header auto-matching, in
+                // both directions: `false` pins a column to NO field, which is
+                // the only way to stop it auto-matching onto a key some earlier
+                // column already filled in correctly (last writer wins below).
+                if ( pinned === false ) {
+                    key = null;
+                } else if ( pinned != null && optionKeys.includes(pinned) ) {
+                    key = pinned;
                 } else {
                     for ( const [ matcherKey, matcherFunc ] of Object.entries( autoMatchersByKey ) ) {
                         if ( matcherFunc(h) ) {

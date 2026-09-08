@@ -169,6 +169,13 @@
     text-overflow: ellipsis;
 }
 
+/* The name links to the fund's page. The global `a` padding would shift the
+ * name off the depth indent this cell computes, so drop the horizontal half
+ * and keep the vertical (it only grows the hover target, not the layout). */
+.fundLink {
+    padding: 0.25rem 0;
+}
+
 /* Pool funds are the source/sink their descendants draw from: mark the row
  * with a left accent rail (an inset box-shadow, so it composes over the
  * inline fund-color background) alongside the vault icon. */
