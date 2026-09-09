@@ -19,7 +19,8 @@ import { IconButton, TightIconButton, SpinnerButton } from '../../components/But
 import {
     LabeledSelector,
     LabeledDateRangeInput,
-    LabeledTextInput
+    LabeledTextInput,
+    DatePeek
 } from '../../components/Inputs.jsx';
 import { FundSearchableSelector, NewFundBadge } from '../../components/SpecialInputs.jsx';
 import { StatementStateBadge } from '../../components/Badges.jsx';
@@ -269,46 +270,6 @@ const sideName = (side) => side?.create ?? null;
 const sidesEqual = (a, b) =>
     a === b || (a != null && b != null && a.id === b.id && a.create === b.create);
 
-/**
- * The notice under a reconcile form for one side that will be a NEW fund:
- * says so plainly, lets the name be edited (a bank note is rarely the name
- * you want on a fund) and offers a way out. There is deliberately no
- * tracked/pool/parent control here: a payee fund is none of those, and the
- * exceptions belong in the full create form on the funds page.
- */
-function StagedFundNotice({ role, name, autoFilled, onChangeName, onDiscard, validityMessage }) {
-    return (
-        <div className={styles.stagedFund}>
-            <div className={styles.stagedFundHeader}>
-                <span>
-                    Confirming will <strong>create a new fund</strong> as the {role}
-                    { autoFilled && <span className={styles.stagedFundWhy}> (named from the bank line)</span> }:
-                </span>
-                <TightIconButton
-                    icon="fa-times"
-                    ariaLabel={`Don't create a new ${role} fund`}
-                    title="Don't create this fund (pick an existing one instead)"
-                    onClick={onDiscard}
-                />
-            </div>
-            <LabeledTextInput
-                label="New fund name"
-                value={name}
-                isFrozen={false}
-                isRequired={true}
-                allowNull={false}
-                emptyStringPlaceholder="Enter a name for the new fund"
-                onChange={(v) => onChangeName(v ?? '')}
-                validityMessage={validityMessage}
-                onKeyDown={(e) => { if ( e.key === 'Escape' ) e.currentTarget.blur(); }}
-            />
-            <div className={styles.stagedFundMeta}>
-                Untracked, no parent — the usual shape for a payee. Anything else can be changed on its fund page afterwards.
-            </div>
-        </div>
-    );
-}
-
 // --- Keyboard queue triage ------------------------------------------------
 // The page is a burn-down queue, so it gets vi-style keys: J/K (or arrows)
 // walk the cards, and single letters act on the selected card. Handlers
@@ -322,7 +283,10 @@ function isTypingTarget(el) {
     return el.tagName === 'INPUT'
         || el.tagName === 'TEXTAREA'
         || el.tagName === 'SELECT'
-        || el.isContentEditable;
+        || el.isContentEditable
+        // Inside a portaled popover (calendar grid, dropdown): its own keys
+        // (arrows walk the days) must not also walk the cards.
+        || el.closest('[data-focus-overlay]') != null;
 }
 
 function plainKey(e) {
@@ -591,10 +555,6 @@ function InlinePendingReconcile({ statement, prefill = null, prefillReady = fals
         setSide(existing ? { id: existing.id } : { create: name });
         setSubmitError(null);
     };
-    const renameStaged = (setSide) => (name) => {
-        setSide(prev => prev?.create != null ? { create: name } : prev);
-        setSubmitError(null);
-    };
 
     const descOk = !!description?.trim();
     const sourceNameOk = source?.create == null || !!source.create.trim();
@@ -701,6 +661,7 @@ function InlinePendingReconcile({ statement, prefill = null, prefillReady = fals
     const autoFilledSource = autoApplied != null && autoRole === 'source' && sidesEqual(source, autoApplied);
     const autoFilledTarget = autoApplied != null && autoRole === 'target' && sidesEqual(target, autoApplied);
     const autoFilledExisting = (autoFilledSource && source.id != null) || (autoFilledTarget && target.id != null);
+    const autoFilledStaged = (autoFilledSource && source.create != null) || (autoFilledTarget && target.create != null);
 
     return (
         <div className={styles.inlineReconcile}>
@@ -715,7 +676,7 @@ function InlinePendingReconcile({ statement, prefill = null, prefillReady = fals
                         isFrozen={false}
                         isRequired={true}
                         allowNull={false}
-                        validityMessage={sameFundMessage}
+                        validityMessage={!sourceNameOk ? 'Name is required.' : sameFundMessage}
                     />
                 </div>
                 <div ref={targetWrapRef}>
@@ -728,30 +689,10 @@ function InlinePendingReconcile({ statement, prefill = null, prefillReady = fals
                         isFrozen={false}
                         isRequired={true}
                         allowNull={false}
-                        validityMessage={sameFundMessage}
+                        validityMessage={!targetNameOk ? 'Name is required.' : sameFundMessage}
                     />
                 </div>
             </div>
-            { source?.create != null &&
-                <StagedFundNotice
-                    role="source"
-                    name={source.create}
-                    autoFilled={autoFilledSource}
-                    onChangeName={renameStaged(setSource)}
-                    onDiscard={() => { setSource(null); setSubmitError(null); }}
-                    validityMessage={!sourceNameOk ? 'Name is required.' : sameFundMessage}
-                />
-            }
-            { target?.create != null &&
-                <StagedFundNotice
-                    role="target"
-                    name={target.create}
-                    autoFilled={autoFilledTarget}
-                    onChangeName={renameStaged(setTarget)}
-                    onDiscard={() => { setTarget(null); setSubmitError(null); }}
-                    validityMessage={!targetNameOk ? 'Name is required.' : sameFundMessage}
-                />
-            }
             <div ref={descriptionWrapRef}>
                 <LabeledTextInput
                     label="Description"
@@ -782,6 +723,11 @@ function InlinePendingReconcile({ statement, prefill = null, prefillReady = fals
             { autoFilledExisting &&
                 <div className={styles.prefillHint}>
                     {autoRole === 'source' ? 'Source' : 'Target'} auto-filled: an existing fund matches the bank line&apos;s name.
+                </div>
+            }
+            { autoFilledStaged &&
+                <div className={styles.prefillHint}>
+                    {autoRole === 'source' ? 'Source' : 'Target'} auto-filled: no fund matches the bank line&apos;s name, so confirming creates one.
                 </div>
             }
             <div className={styles.inlineReconcileFooter}>
@@ -922,7 +868,7 @@ function StatementCard({
             <div className={styles.cardHeader}>
                 <div className={styles.cardMeta}>
                     <StatementStateBadge statement={statement} />
-                    <span className={`tabular-nums ${styles.cardDate}`}>{statement.date}</span>
+                    <DatePeek value={statement.date} className={`tabular-nums ${styles.cardDate}`} />
                     <span className={styles.cardSource}>{statement.source}</span>
                 </div>
                 <Money value={statement.amount} className={styles.cardAmount} faintZero={false} />

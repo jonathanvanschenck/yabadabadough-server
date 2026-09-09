@@ -138,9 +138,12 @@ export function FundSearchableSelector({
  * fund that is. Used wherever a form holds a staged fund (the selector
  * trigger, and the "will create" notices under a reconcile form).
  */
-export function NewFundBadge({ name, className }) {
+export const NEW_FUND_TITLE = 'Created when you confirm, as an untracked fund with no parent (the usual shape for a payee). '
+    + 'To rename it, reopen the selector and type a different name; anything else can be changed on its fund page afterwards.';
+
+export function NewFundBadge({ name, className, title = NEW_FUND_TITLE }) {
     return (
-        <span className={[ styles.newFund, className ].filter(Boolean).join(' ')} title="This fund will be created when you confirm">
+        <span className={[ styles.newFund, className ].filter(Boolean).join(' ')} title={title}>
             <FontAwesomeIcon icon="fa-solid fa-square-plus" />
             <span className={styles.newFundName}>{name}</span>
             <span className={styles.newFundTag}>new</span>

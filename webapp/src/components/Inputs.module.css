@@ -740,6 +740,48 @@
     opacity: 0.5;
 }
 
+/* Read-only calendar (DatePeek): days can be walked but not chosen. */
+.dpDayInert {
+    cursor: default;
+}
+
+.dpDayInert:not(.dpDaySelected):hover {
+    background: transparent;
+}
+
+/* DatePeek trigger: text-styled, so it takes the caller's typography and
+ * only reveals itself as a control on hover/focus. */
+.dpPeek {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.dpPeek:hover {
+    text-decoration: underline dotted;
+}
+
+.dpPeek:focus {
+    outline: none;
+}
+
+.dpPeek:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.dpPeekIcon {
+    font-size: 0.85em;
+    color: var(--font-muted);
+}
+
 .dpFooter {
     display: flex;
     justify-content: space-between;

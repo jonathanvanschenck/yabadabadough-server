@@ -179,6 +179,13 @@ the searchable-selector dropdown — are visually inside the modal but DOM-wise 
 they are tagged `data-focus-overlay` and the trap stands down while focus is inside one. Any
 new portaled overlay that can hold focus MUST carry that attribute.
 
+The calendar itself is one component, `CalendarPopover` (private to `Inputs.jsx`), that
+`DateInput` and `DatePeek` both portal; `useCalendarToggle` is the shared open/close/Escape/
+outside-click state. `DatePeek` is the read-only face — a date rendered as text (it inherits
+the caller's typography) that opens the calendar to place the date in its month, walk around,
+and jump back; it never calls back with a value. Reach for it wherever a date is displayed
+but not edited (the statement cards), rather than a frozen `DateInput`.
+
 `validityMessage` is the one invalid-state channel, and EVERY input must honour it. Native
 controls (`TextInput`/`NumberInput`/`SingleFileInput` on `.textInput`, `TextArea`, `Selector`
 — and so `BooleanInput`, which delegates to it) push it through `setCustomValidity`, so the
@@ -270,8 +277,11 @@ line) do not, and leaving the queue to create each one broke the burn-down rhyth
 a reconcile form can hold a fund that does not exist yet.
 
 - **Each side of the inline reconcile is `null | { id } | { create: name }`.** A staged
-  fund is created at CONFIRM time, not when picked: an abandoned card leaves no orphan,
-  and the name stays editable (the `StagedFundNotice` under the fund row) until then.
+  fund is created at CONFIRM time, not when picked: an abandoned card leaves no orphan.
+  Its only UI is the `NewFundBadge` in the selector trigger and the footer's "creates …"
+  (the fund's shape and how to rename live in the badge tooltip, `NEW_FUND_TITLE`); to
+  rename, reopen the selector and type again — a separate edit panel was tried and was
+  more card than the payee deserved.
   Confirm resolves each side to an id — creating via `POST /funds` with
   `newCounterpartyFundSpec()` (untracked, no pool, no parent; anything else is a
   deliberate act for the full form) — and writes the created id back into the form
