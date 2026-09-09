@@ -1,7 +1,12 @@
 
 .container {
-    width: 100vw;
+    width: 100%;
+    /* iOS Safari's 100vh is the viewport with the toolbars HIDDEN, so with
+     * body scrolling off the bottom of the app (nav logout, the last table
+     * rows) sat under the toolbar with no way to reach it. dvh is the
+     * viewport as actually shown; vh stays as the fallback. */
     height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: row;
 }

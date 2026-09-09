@@ -417,14 +417,19 @@ td.colHover {
     text-overflow: ellipsis;
     vertical-align: bottom;
     white-space: nowrap;
-    /* the global `a` rule pads links for click targets -- too airy in here */
-    padding: 0;
+    /* The global `a` padding is too airy for the grid, but zero jams the
+     * hover ring against the text: a little horizontal padding, pulled back
+     * with a negative margin so the text stays put and the cell keeps its
+     * width. Vertical padding stays at zero -- the rows are tight, and a
+     * ring that spills into the neighbours looks broken. */
+    padding: 0 0.3rem;
+    margin: 0 -0.3rem;
     text-align: left;
 }
 
 .descTextIndent {
     max-width: 9.75rem;
-    margin-left: 1rem;
+    margin-left: 0.7rem; /* 1rem indent, less the padding above */
     color: var(--font-muted);
 }
 

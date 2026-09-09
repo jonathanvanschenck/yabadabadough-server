@@ -170,10 +170,13 @@
 }
 
 /* The name links to the fund's page. The global `a` padding would shift the
- * name off the depth indent this cell computes, so drop the horizontal half
- * and keep the vertical (it only grows the hover target, not the layout). */
+ * name off the depth indent this cell computes, so the horizontal padding
+ * is pulled back with a negative margin (the hover ring gets room, the text
+ * does not move), and the vertical padding is kept inside the cell's own
+ * 0.2rem -- any more and the ring bleeds into the rows above and below. */
 .fundLink {
-    padding: 0.25rem 0;
+    padding: 0.1rem 0.25rem;
+    margin: 0 -0.25rem;
 }
 
 /* Pool funds are the source/sink their descendants draw from: mark the row

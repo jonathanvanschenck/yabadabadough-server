@@ -235,3 +235,43 @@
     gap: 0.5rem;
     white-space: nowrap;
 }
+
+/* OFX import: one block per account detected in the file. The blocks are the
+ * modal's content rather than a list beside it, so each is boxed to keep its
+ * source picker and preview visibly attached to its own account. */
+.ofxAccountList {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.ofxAccount {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+}
+
+.ofxAccountHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+}
+
+.ofxAccountMeta {
+    color: var(--font-secondary-color);
+    font-size: 0.9rem;
+}
+
+/* FITIDs are long and uninteresting until one is wrong; let the column shrink
+ * rather than push the note out of the preview. */
+.ofxKeyCell {
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--font-secondary-color);
+}

@@ -805,7 +805,7 @@ export function AuthContextProvider({ children }) {
 function NotReaderFallback({ logout, auth }) {
     const identifier = auth?.identifier || "???";
     return (
-        <div style={{ width: "100%", height: "100vh", display: "flex", flexDirection:"column", justifyContent: "center", alignItems: "center", padding: "1rem", fontSize: "1.5rem" }}>
+        <div className={styles.notReaderFallback}>
             <Card>
                 <div style={{ maxWidth: "40rem" }}>
                     <CardSection title="Access Denied">

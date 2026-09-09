@@ -179,6 +179,13 @@ the searchable-selector dropdown — are visually inside the modal but DOM-wise 
 they are tagged `data-focus-overlay` and the trap stands down while focus is inside one. Any
 new portaled overlay that can hold focus MUST carry that attribute.
 
+The calendar itself is one component, `CalendarPopover` (private to `Inputs.jsx`), that
+`DateInput` and `DatePeek` both portal; `useCalendarToggle` is the shared open/close/Escape/
+outside-click state. `DatePeek` is the read-only face — a date rendered as text (it inherits
+the caller's typography) that opens the calendar to place the date in its month, walk around,
+and jump back; it never calls back with a value. Reach for it wherever a date is displayed
+but not edited (the statement cards), rather than a frozen `DateInput`.
+
 `validityMessage` is the one invalid-state channel, and EVERY input must honour it. Native
 controls (`TextInput`/`NumberInput`/`SingleFileInput` on `.textInput`, `TextArea`, `Selector`
 — and so `BooleanInput`, which delegates to it) push it through `setCustomValidity`, so the
@@ -207,6 +214,105 @@ Prop idioms: inputs take `label`, `value`, `onChange(value)` (value, not event),
 `icon`, `onClick`, `disabled`, `isPending`/`pendingText`; components pass through
 `className`/`style` and `forwardRef` when pages scroll to them. Destructive actions
 always go through `ConfirmationModal` (`onConfirm` returns a promise via `mutateAsync`).
+
+## Statement import (`components/statementProfiles.js`, `components/ofx.js`)
+
+Two parallel front-ends onto one endpoint. Both end at `POST /statements/import`
+with the same `{ source, key, amount, date, note }` items, and the server is
+format-agnostic — everything below is webapp-side.
+
+**The invariant both formats serve**: items dedupe on `(source, key)`, and a
+re-import is the normal case, not the exception. A key that changes shape, or a
+source label that differs by one character from last time, does not error — it
+silently re-lists lines the user already reconciled, as pending, ready to be
+double-counted. Every design choice in these two files is downstream of that.
+
+| | CSV (`ImportStatementsCSVModal`) | OFX/QFX (`ImportStatementsOFXModal`) |
+| --- | --- | --- |
+| Shape | one account per file | many accounts per file |
+| Source | chosen up front, one for the file | per detected account, after parsing |
+| Columns | mapped by the user, profile-assisted | fixed by the spec |
+| Stability | a bank report, and reports get redesigned | a specified format |
+
+- **CSV profiles** adapt one bank's export to the generic column mapper: a
+  profile owns preamble skipping, derived columns (coalescing split
+  debit/credit into one signed amount) and a `defaultMapping` that pins columns
+  to fields. `parse()` may return `derivedColumns`/`defaultMapping` for THAT
+  file, which is how the OSCU profile reads both vintages of an export whose
+  layout changed without making the user pick the right one from a list. A
+  mapping value of `false` pins a column to NO field — needed because the mapper
+  writes one key per column and the LAST writer wins, so an always-empty
+  "Effective Date" to the right of the real date silently clobbers it.
+- **The CSV tokenizer is quote-aware** (`parseCSVRecords`): quoted commas, `""`
+  escapes, quoted newlines, CRLF/CR. It has to be — OSCU's current export quotes
+  every field and puts commas inside them. Records carry the line they started
+  on so an error points at a findable line even after a quoted newline.
+- **OFX is SGML, not XML**, for the 1.x files banks actually emit: leaf elements
+  usually have no closing tag (`<TRNAMT>75.47` ends at the next `<`) but the
+  same file may close some anyway. `parseSGML` handles both by closing an
+  element as soon as a tag opens after it has collected text, and every lookup
+  searches descendants rather than children so residual mis-nesting cannot
+  matter. It decodes via the charset in the file's own header (OSCU: 1252).
+- **OFX account → source matching** (`suggestOFXSource`) is the feature that
+  keeps dedupe intact across the two formats. It matches a detected account
+  against the labels already in `GET /statements/sources` by the last four
+  digits of the account id, and only when EXACTLY ONE existing label matches —
+  the cost of a wrong guess is duplicated history, so ambiguity falls back to a
+  generated name the user can correct. It cannot be derived: OSCU's CSV preamble
+  carried an account nickname ("Value Checking") that the OFX export does not
+  have at all, but "…0090" survives in both.
+- OFX dates take the literal `YYYYMMDD` the bank stamped rather than converting
+  the instant, so a transaction never crosses a day boundary based on who is
+  looking, and OFX and CSV imports of the same line agree.
+- Two accounts resolving to one source is REFUSED, not warned about: it would
+  merge two banks into one dedupe namespace.
+- No test runner exists in `webapp/`. Both parsers are pure ESM with no React
+  imports and are exercised directly with `node` — keep them that way.
+
+### Funds created while reconciling (`pages/statements/`, `components/domain.js`)
+
+The first import after setting up a budget is where the statements page hurt most:
+the TRACKED funds exist, the payees (the untracked counterparty of nearly every bank
+line) do not, and leaving the queue to create each one broke the burn-down rhythm. So
+a reconcile form can hold a fund that does not exist yet.
+
+- **Each side of the inline reconcile is `null | { id } | { create: name }`.** A staged
+  fund is created at CONFIRM time, not when picked: an abandoned card leaves no orphan.
+  Its only UI is the `NewFundBadge` in the selector trigger and the footer's "creates …"
+  (the fund's shape and how to rename live in the badge tooltip, `NEW_FUND_TITLE`); to
+  rename, reopen the selector and type again — a separate edit panel was tried and was
+  more card than the payee deserved.
+  Confirm resolves each side to an id — creating via `POST /funds` with
+  `newCounterpartyFundSpec()` (untracked, no pool, no parent; anything else is a
+  deliberate act for the full form) — and writes the created id back into the form
+  BEFORE posting the group, so a failure later in the sequence leaves a retryable form
+  rather than a second copy of the fund.
+- **Fund names are UNIQUE server-side.** `findFundByName()` is the case-insensitive
+  guard: a staged name that names a real fund becomes that fund — at stage time, when
+  the funds list changes (another card's confirm just created "Costco"; the socket
+  invalidation refetches; every card still staging "Costco" flips to it), and once more
+  at confirm. That effect is keyed on the funds LIST, never on the typed name, so
+  typing "Costco Gas" is not hijacked as it passes through "Costco".
+- **"Auto-fill funds from names"** (a persisted page switch, `localStorage`
+  `statements.autoFundFromNames`, off by default) fills the counterparty side — the
+  source of an income line, the target of a payment — from the bank note. Priority is
+  fixed: a history prefill wins outright (the hook now also reports readiness, and the
+  auto-fill waits for it); then `findFundForNote()` — exact name, else the longest
+  UNTRACKED non-deprecated fund whose name opens the note at a word boundary
+  ("WINCO FOODS #3 …" → "Winco"); untracked only, so a loose match can never grab a
+  budget envelope ("GAS STATION 12" is not "Gas"); else stage
+  `suggestFundNameFromNote()`'s cleaned name. Turning the switch off retracts what it
+  filled unless the user changed it since.
+- `suggestFundNameFromNote()` makes exactly two trims, both conservative: the OFX
+  importer's ` — ` NAME/MEMO join (keep NAME), and the card-line tail ` <MCC> (<date>) …`
+  (drop it). An unfamiliar note passes through untouched — it is a starting point the
+  user edits, not a promise.
+- `FundSearchableSelector` takes `pendingName` to show a staged fund in its trigger
+  (`NewFundBadge`); `SearchableSelector` now honors `valueDisplayName` with no value for
+  the same reason. The selector's create row is unchanged — what a caller does with
+  `onCreateNew` is its business: the inline card stages, the modals
+  (`ReconcileStatementsModal` now included) open the nested `CreateFundModal` and
+  create on the spot.
 
 ## Pages (`src/pages/`)
 

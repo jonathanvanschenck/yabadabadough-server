@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { useGetFundsQuery, useGetUsersQuery, useGetMonthFinalizationsQuery, useGetStatementSourcesQuery } from '../hooks/Queries.jsx';
 import { buildFundOptionTree } from './domain.js';
 import { LabeledSearchableSelector, LabeledSelector, LabeledTextInput } from './Inputs.jsx';
@@ -37,7 +38,11 @@ function flattenWithPaths(roots) {
  *
  * Passing `onCreateNew` (a `(searchTerm) => void` callback) surfaces a
  * "Create new fund" row at the top of the dropdown; it's off unless the caller
- * opts in (the caller owns the create-fund modal and the follow-up selection).
+ * opts in. What the caller does with it is its business: open the full create
+ * form, or STAGE the fund (hold the name and create it when the surrounding
+ * form is confirmed). For the staged case, `pendingName` is the held name; it
+ * renders in the trigger as a "new" badge in place of a selected fund, so
+ * the field never looks empty while it is in fact resolved.
  */
 export function FundSearchableSelector({
     value,
@@ -46,6 +51,7 @@ export function FundSearchableSelector({
     onChange,
     onCreateNew,
     createNewLabel = "Create new fund",
+    pendingName = null,
     tracked,
     monthly,
     pool,
@@ -101,11 +107,15 @@ export function FundSearchableSelector({
         ? (allFunds.find(f => f.id.toString() === value.toString()) || originalFund || null)
         : (originalFund || null);
 
+    const valueDisplayName = _currentFund
+        ? <FundTypeBadge status={_currentFund.status} label={_currentFund.name} color={_currentFund.color} />
+        : (value == null && pendingName ? <NewFundBadge name={pendingName} /> : null);
+
     return (
         <LabeledSearchableSelector
             label={label}
             value={value ? value.toString() : ''}
-            valueDisplayName={_currentFund ? <FundTypeBadge status={_currentFund.status} label={_currentFund.name} color={_currentFund.color} /> : null}
+            valueDisplayName={valueDisplayName}
             optionKeys={fundKeys}
             optionDisplayNames={fundDisplayNames}
             optionSearchTexts={fundSearchTexts}
@@ -119,6 +129,25 @@ export function FundSearchableSelector({
             searchPlaceholder="Search fund names ..."
             {...rest}
         />
+    );
+}
+
+/**
+ * A fund that does not exist yet: the name it will take plus a "new" tag, in
+ * the accent color so it reads as an action still to happen rather than a
+ * fund that is. Used wherever a form holds a staged fund (the selector
+ * trigger, and the "will create" notices under a reconcile form).
+ */
+export const NEW_FUND_TITLE = 'Created when you confirm, as an untracked fund with no parent (the usual shape for a payee). '
+    + 'To rename it, reopen the selector and type a different name; anything else can be changed on its fund page afterwards.';
+
+export function NewFundBadge({ name, className, title = NEW_FUND_TITLE }) {
+    return (
+        <span className={[ styles.newFund, className ].filter(Boolean).join(' ')} title={title}>
+            <FontAwesomeIcon icon="fa-solid fa-square-plus" />
+            <span className={styles.newFundName}>{name}</span>
+            <span className={styles.newFundTag}>new</span>
+        </span>
     );
 }
 

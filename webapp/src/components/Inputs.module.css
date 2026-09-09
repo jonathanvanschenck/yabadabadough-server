@@ -740,6 +740,53 @@
     opacity: 0.5;
 }
 
+/* Read-only calendar (DatePeek): days can be walked but not chosen. */
+.dpDayInert {
+    cursor: default;
+}
+
+.dpDayInert:not(.dpDaySelected):hover {
+    background: transparent;
+}
+
+/* DatePeek trigger: text-styled, so it takes the caller's typography and
+ * only reveals itself as a control on hover/focus. */
+.dpPeek {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: 0;
+    /* Padding gives the hover ring breathing room around the text; the
+     * matching negative margin keeps the text exactly where plain text
+     * would sit, so the control adds nothing to the layout. */
+    padding: 0.1rem 0.4rem;
+    margin: -0.1rem -0.4rem;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+/* The same quiet ring links get, not the global button glow (which is
+ * currentColor and reads as a real button). */
+.dpPeek:hover:not(:disabled) {
+    box-shadow: 0 0 1px 1px var(--font-muted);
+}
+
+.dpPeek:focus {
+    outline: none;
+}
+
+.dpPeek:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.dpPeekIcon {
+    font-size: 0.85em;
+    color: var(--font-muted);
+}
+
 .dpFooter {
     display: flex;
     justify-content: space-between;
