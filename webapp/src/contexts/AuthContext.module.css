@@ -98,5 +98,16 @@
     align-items: center;
 }
 
-
-
+/* Full-viewport centering for the "not a reader" screen. */
+.notReaderFallback {
+    width: 100%;
+    height: 100vh;
+    height: 100dvh; /* visible viewport on iOS Safari (vh is the fallback) */
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    font-size: 1.5rem;
+}

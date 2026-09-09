@@ -757,16 +757,21 @@
     gap: 0.3rem;
     background: none;
     border: 0;
-    padding: 0;
-    margin: 0;
+    /* Padding gives the hover ring breathing room around the text; the
+     * matching negative margin keeps the text exactly where plain text
+     * would sit, so the control adds nothing to the layout. */
+    padding: 0.1rem 0.4rem;
+    margin: -0.1rem -0.4rem;
     font: inherit;
     color: inherit;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 6px;
 }
 
-.dpPeek:hover {
-    text-decoration: underline dotted;
+/* The same quiet ring links get, not the global button glow (which is
+ * currentColor and reads as a real button). */
+.dpPeek:hover:not(:disabled) {
+    box-shadow: 0 0 1px 1px var(--font-muted);
 }
 
 .dpPeek:focus {
