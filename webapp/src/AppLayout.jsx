@@ -4,10 +4,13 @@ import { Outlet, useNavigate, NavLink, useLocation } from 'react-router'
 
 import './Icons.jsx'
 
-import logo from '/svg/logo.svg'
+import logoDark from '/svg/logo.svg'
+import logoLight from '/svg/logo-light.svg'
 import styles from './AppLayout.module.css'
 
 import { AuthContextProvider, useAuth, useLogout, useEscalation } from './contexts/AuthContext.jsx'
+import { ThemeContextProvider, useTheme } from './contexts/ThemeContext.jsx'
+import { ThemeToggle } from './components/ThemeToggle.jsx'
 import { VersionGate } from './components/VersionGate.jsx'
 import { LogContextProvider, useLogger } from './contexts/LogContext.jsx'
 import {
@@ -24,15 +27,18 @@ const queryClient = new QueryClient()
 function AppLayout() {
     return (
         <LogContextProvider>
-            <QueryClientProvider client={queryClient}>
-                <AuthContextProvider>
-                    <SocketIOContextProvider>
-                        <VersionGate>
-                            <App />
-                        </VersionGate>
-                    </SocketIOContextProvider>
-                </AuthContextProvider>
-            </QueryClientProvider>
+            {/* Theme sits outside auth so the login/setup modals are themed too */}
+            <ThemeContextProvider>
+                <QueryClientProvider client={queryClient}>
+                    <AuthContextProvider>
+                        <SocketIOContextProvider>
+                            <VersionGate>
+                                <App />
+                            </VersionGate>
+                        </SocketIOContextProvider>
+                    </AuthContextProvider>
+                </QueryClientProvider>
+            </ThemeContextProvider>
         </LogContextProvider>
     );
 }
@@ -68,6 +74,8 @@ function App() {
     const navigate = useNavigate();
     const location = useLocation();
     const { socket } = useSocket();
+    // The logo is an <img> (currentColor can't reach it), so it swaps per theme
+    const { resolved: theme } = useTheme();
 
     const log = useLogger("App");
 
@@ -95,7 +103,7 @@ function App() {
         <div className={ styles.container }>
             <div className={ styles.navBar }>
                 <div className={ styles.iconContainer }>
-                    <img src={ logo }/>
+                    <img src={ theme === 'light' ? logoLight : logoDark } alt="Yabadaba Dough"/>
                 </div>
                 <div className={ styles.navBarLinks }>
                     <NavLink to="/">Home</NavLink>
@@ -123,6 +131,7 @@ function App() {
                 >
                     logout
                 </button>
+                <ThemeToggle className={ styles.themeToggle } />
                 <div className={ styles.versionLabel }>v{ __APP_VERSION__ }</div>
             </div>
             <div className={ styles.mainContents }>

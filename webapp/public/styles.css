@@ -1,4 +1,16 @@
+/* ---- Theme ----
+ * Two palettes, both "Warm Stone": the DARK coffee-brown one below on :root is
+ * the base, and the LIGHT parchment one further down overrides it under
+ * :root[data-theme="light"]. `data-theme` is always a RESOLVED value ("light"
+ * or "dark", never "system"): the inline script in index.html sets it before
+ * first paint and ThemeContext keeps it in sync with the stored preference /
+ * OS setting afterwards. So CSS never needs a prefers-color-scheme query --
+ * every color token below has exactly one dark and one light definition.
+ * Token NAMES are theme-neutral; the comments describe roles, so "on the
+ * surface" means on whichever surface the active theme paints. */
 :root {
+    color-scheme: dark;
+
     /* ---- Surfaces (Warm Stone: coffee-brown, layered: page < body < card < elevated) ---- */
     --bg-primary-color: #0f0c08;    /* deepest plane (page edges, toast text) */
     --bg-secondary-color: #16120d;  /* app/body background (coffee-brown) */
@@ -24,7 +36,7 @@
     /* ---- Status / utility roles ----
      * Four semantic roles (success/warn/danger/info), each a full ramp:
      *   <role>        fill (buttons)      <role>-hover  fill hover
-     *   <role>-ink    text ON the fill    <role>-text   text/icon on dark
+     *   <role>-ink    text ON the fill    <role>-text   text/icon on the surface
      *   <role>-bg     alert surface       <role>-border alert-surface border
      *   <role>-wash   translucent field tint (change / validity washes)
      * DANGER takes LIGHT ink (its fill is the darkest); the other three take
@@ -66,14 +78,14 @@
      * so existing consumers stay consistent with the new ramps. */
     --bg-ok-color: var(--u-success);       /* bright green fill / glow */
     --bg-danger-color: var(--u-danger);    /* red fill */
-    --font-ok-color: var(--u-success-text);    /* status as small text on dark */
+    --font-ok-color: var(--u-success-text);    /* status as small text on the surface */
     --font-danger-color: var(--u-danger-text);
     --font-warn-color: var(--u-warn-text);
 
     /* ---- Neutral overlays (centralized so every surface pulls one value) ---- */
     --scrim-color: rgba(0, 0, 0, 0.4);       /* modal backdrops */
     --shadow-color: rgba(0, 0, 0, 0.4);      /* drop shadows / elevation */
-    --glow-color: rgba(255, 255, 255, 0.08); /* soft light halo on dark cards */
+    --glow-color: rgba(255, 255, 255, 0.08); /* soft halo / header wash (a shade in light mode) */
 
     /* ---- Type ---- */
     --font-display: 'Newsreader', Georgia, serif;   /* titles / headlines */
@@ -83,10 +95,11 @@
     /* ---- Fund colors (user-selectable entity palette) ----
      * 10 hues, evenly spaced around the OKLCH wheel. Each slug carries FOUR
      * tone-matched variants (same formula per hue H) for the Warm Stone surfaces:
-     *   --fund-<slug>        main  : L=0.30 — dark row background
-     *   --fund-<slug>-muted  muted : L=0.255 — dark alt-row background
-     *   --fund-<slug>-text   text  : L=0.86 C=0.10 — readable label on dark
+     *   --fund-<slug>        main  : L=0.30 — tinted row background
+     *   --fund-<slug>-muted  muted : L=0.255 — tinted alt-row background
+     *   --fund-<slug>-text   text  : L=0.86 C=0.10 — readable label on the surface
      *   --fund-<slug>-dot    dot   : L=0.80 C=0.13 — bright fill for dots/swatches/marks
+     * (those L values are the dark formula; the light block flips them.)
      * Store the SLUG (e.g. "teal") on the fund, not the color, so the rendered
      * palette can be retuned without touching stored data. The webapp selects a
      * variant via fundColorVar(slug, variant) (default 'dot').
@@ -112,12 +125,89 @@
      * resolves null through fundColorVar() to these. Same four-variant shape. */
     --fund-default:       oklch(0.29 0.018 75);  /* main / row bg */
     --fund-default-muted: oklch(0.25 0.015 75);  /* alt row */
-    --fund-default-text:  oklch(0.85 0.03 75);   /* text on dark */
+    --fund-default-text:  oklch(0.85 0.03 75);   /* text on the surface */
     --fund-default-dot:   oklch(0.72 0.035 75);  /* picker / legend dot */
 
     /* Aliases used by some component modules */
     --font-color: var(--font-primary-color);
     --font-primary: var(--font-primary-color);
+}
+
+/* ---- Light theme (Warm Stone: parchment) ----
+ * Overrides ONLY color tokens; type + aliases inherit from :root. Keep this
+ * block token-for-token parallel with the dark base: a color added above
+ * without a line here silently renders its dark value on parchment. */
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    /* ---- Surfaces (layered: page < body < card < elevated) ---- */
+    --bg-primary-color: #e9e1d3;    /* deepest plane (page edges, toast text) */
+    --bg-secondary-color: #f4efe6;  /* app/body background (parchment) */
+    --fg-primary-color: #fbf8f2;    /* card / panel surface */
+    --bg-elevated-color: #ffffff;   /* modals, popouts, hover surfaces */
+    --bg-hover-color: #ede6d9;      /* row/hover wash (a shade, since elevated is white) */
+    --border-color: #ddd3c3;        /* hairline borders / dividers */
+    --input-border-color: #cfc3ae;  /* button / input outlines (a touch warmer) */
+
+    /* ---- Text ---- */
+    --font-primary-color: #1f1a12;
+    --font-secondary-color: #5e4f3c; /* warm stone: quiet companion for headings / emphasis */
+    --font-terciary-color: #a4561a;  /* burnt amber: attention / callouts (plain amber is <3:1 on parchment) */
+    --font-muted: #6f6553;
+    --font-faint: #8a7f6c;           /* labels, timestamps */
+
+    /* ---- Interactive accent ---- fills keep the brand amber (dark ink stays
+     * readable on it); only amber-as-TEXT darkens, via --font-terciary-color. */
+    --accent-color: #d97f2e;
+    --accent-ink-color: #241802;
+    --accent-muted-color: rgba(217, 127, 46, 0.20); /* washes read fainter on parchment: +4% */
+    --stone-color: #7d6b52;
+
+    /* ---- Status / utility roles ---- same per-hue formula, flipped:
+     * -text drops to L=0.45, -bg rises to L=0.94, -border to L=0.80; the fills
+     * and their ink are self-contained and unchanged. */
+    --u-success-text:   oklch(0.45 0.13 150);
+    --u-success-bg:     oklch(0.94 0.04 150);
+    --u-success-border: oklch(0.80 0.08 150);
+
+    --u-warn-text:   oklch(0.45 0.13 85);
+    --u-warn-bg:     oklch(0.94 0.04 85);
+    --u-warn-border: oklch(0.80 0.08 85);
+
+    --u-danger-text:   oklch(0.45 0.16 25);
+    --u-danger-bg:     oklch(0.94 0.04 25);
+    --u-danger-border: oklch(0.80 0.09 25);
+
+    --u-info-text:   oklch(0.45 0.13 235);
+    --u-info-bg:     oklch(0.94 0.04 235);
+    --u-info-border: oklch(0.80 0.08 235);
+
+    /* ---- Neutral overlays ---- */
+    --scrim-color: rgba(40, 30, 15, 0.35);   /* modal backdrops (warm, lighter) */
+    --shadow-color: rgba(40, 30, 15, 0.18);  /* drop shadows / elevation */
+    --glow-color: rgba(40, 30, 15, 0.05);    /* the "halo" becomes a faint shade */
+
+    /* ---- Fund colors ---- same hues, formula flipped for parchment:
+     *   main  : L=0.93  C=0.030 -- pale tinted row background
+     *   muted : L=0.955 C=0.022 -- paler alt-row background
+     *   text  : L=0.42  C=0.11  -- readable label (>= 11:1 on main/muted)
+     *   dot   : L=0.58  C=0.15  -- vivid fill for dots/swatches/marks
+     */
+    --fund-ember:   oklch(0.93 0.03 30);    --fund-ember-muted:   oklch(0.955 0.022 30);   --fund-ember-text:   oklch(0.42 0.11 30);    --fund-ember-dot:   oklch(0.58 0.15 30);
+    --fund-amber:   oklch(0.93 0.03 65);    --fund-amber-muted:   oklch(0.955 0.022 65);   --fund-amber-text:   oklch(0.42 0.11 65);    --fund-amber-dot:   oklch(0.58 0.15 65);
+    --fund-citron:  oklch(0.93 0.03 110);   --fund-citron-muted:  oklch(0.955 0.022 110);  --fund-citron-text:  oklch(0.42 0.11 110);   --fund-citron-dot:  oklch(0.58 0.15 110);
+    --fund-fern:    oklch(0.93 0.03 150);   --fund-fern-muted:    oklch(0.955 0.022 150);  --fund-fern-text:    oklch(0.42 0.11 150);   --fund-fern-dot:    oklch(0.58 0.15 150);
+    --fund-teal:    oklch(0.93 0.03 190);   --fund-teal-muted:    oklch(0.955 0.022 190);  --fund-teal-text:    oklch(0.42 0.11 190);   --fund-teal-dot:    oklch(0.58 0.15 190);
+    --fund-sky:     oklch(0.93 0.03 230);   --fund-sky-muted:     oklch(0.955 0.022 230);  --fund-sky-text:     oklch(0.42 0.11 230);   --fund-sky-dot:     oklch(0.58 0.15 230);
+    --fund-indigo:  oklch(0.93 0.03 275);   --fund-indigo-muted:  oklch(0.955 0.022 275);  --fund-indigo-text:  oklch(0.42 0.11 275);   --fund-indigo-dot:   oklch(0.58 0.15 275);
+    --fund-purple:  oklch(0.93 0.03 305);   --fund-purple-muted:  oklch(0.955 0.022 305);  --fund-purple-text:  oklch(0.42 0.11 305);   --fund-purple-dot:   oklch(0.58 0.15 305);
+    --fund-magenta: oklch(0.93 0.03 330);   --fund-magenta-muted: oklch(0.955 0.022 330);  --fund-magenta-text: oklch(0.42 0.11 330);   --fund-magenta-dot:  oklch(0.58 0.15 330);
+    --fund-rose:    oklch(0.93 0.03 8);     --fund-rose-muted:    oklch(0.955 0.022 8);    --fund-rose-text:    oklch(0.42 0.11 8);     --fund-rose-dot:     oklch(0.58 0.15 8);
+
+    --fund-default:       oklch(0.93 0.012 75);  /* main / row bg */
+    --fund-default-muted: oklch(0.955 0.009 75); /* alt row */
+    --fund-default-text:  oklch(0.42 0.03 75);   /* text on the surface */
+    --fund-default-dot:   oklch(0.60 0.04 75);   /* picker / legend dot */
 }
 body {
     font-family: var(--font-body);
@@ -151,7 +241,13 @@ input:hover:enabled{
     box-shadow: 0 0 3px 2px; /* Inherit color from text */
 }
 
-input[type="email"],[type="password"],[type="text"] {
+/* Baseline for the class-less text-ish inputs (the login/setup forms). Wrapped
+ * in :where() so it carries ZERO specificity: the old
+ * `input[type="email"], [type="password"], [type="text"]` list was uneven --
+ * `input[type="email"]` (0,1,1) out-ranked the component modules' `.textInput`
+ * (0,1,0) and forced its padding onto every email field, while the two bare
+ * attribute selectors merely tied and lost on source order. */
+input:where([type="email"], [type="password"], [type="text"]) {
     border-radius: 10px;
     padding: 0.25rem 0.5rem;
 }

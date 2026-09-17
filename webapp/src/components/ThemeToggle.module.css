@@ -1,0 +1,34 @@
+/* Segmented icon radio group. One shared outline around the three options
+ * (each option drops the base `button` border/glow) so the control reads as
+ * a single widget, with the selected segment filled in the muted accent. */
+.group {
+    display: inline-flex;
+    align-self: center;
+    border: 1px solid var(--input-border-color);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.option {
+    border: none;
+    border-radius: 0;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--font-muted);
+    transition: color 0.2s, background-color 0.2s;
+}
+.option + .option {
+    border-left: 1px solid var(--input-border-color);
+}
+.option:hover:not(:disabled) {
+    box-shadow: none; /* no per-segment glow; the group is the widget */
+    color: var(--font-primary-color);
+    background-color: var(--bg-hover-color);
+}
+
+.selected,
+.selected:hover:not(:disabled) {
+    color: var(--accent-color);
+    background-color: var(--accent-muted-color);
+}

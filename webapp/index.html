@@ -8,6 +8,24 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png" />
     <meta name="author" content="Jonathan D. B. Van Schenck">
     <meta name="viewport" content="width=device-width, initial-scale=0.5" />
+    <!-- Mobile browser chrome tint, per resolved theme (matches --bg-secondary-color) -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#16120d" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4efe6" />
+    <!-- Resolve the color theme BEFORE the stylesheet loads so the first paint
+         is already the right one (React mounts far too late to avoid a flash of
+         the dark base). This deliberately duplicates the storage key, the
+         allowed values, and the "system" resolution from
+         src/contexts/ThemeContext.jsx -- keep the two in lockstep. -->
+    <script>
+      (function () {
+        var pref = null;
+        try { pref = localStorage.getItem("ydd:theme"); } catch (_) { /* storage blocked: fall through to system */ }
+        if (pref !== "light" && pref !== "dark") {
+          pref = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = pref;
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500;600&display=swap" />

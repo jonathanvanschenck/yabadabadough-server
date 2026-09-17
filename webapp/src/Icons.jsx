@@ -49,7 +49,11 @@ import {
     faKey,
     faEye,
     faBoxArchive,
-    faKeyboard
+    faKeyboard,
+    // Color theme toggle (ThemeToggle.jsx): light / dark / follow-system
+    faSun,
+    faMoon,
+    faCircleHalfStroke
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -107,6 +111,9 @@ library.add(
     faEye,
     faBoxArchive,
     faKeyboard,
+    faSun,
+    faMoon,
+    faCircleHalfStroke,
 
     faCircle,
     faCircleDot

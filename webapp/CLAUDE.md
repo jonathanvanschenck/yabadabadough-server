@@ -62,7 +62,17 @@ DOM — no puppeteer harness in-repo. Dev-server + attach workflow:
 - CSS modules co-located with every component (`Foo.jsx` + `Foo.module.css`). Inline
   styles only for state-driven one-offs. Prefer `rem` over `px`. Theme lives in
   `public/styles.css` as `:root` custom properties — always `var(--...)`, never
-  hardcoded colors. Fonts are the "Warm Stone" trio loaded from Google Fonts in
+  hardcoded colors. **Two palettes, one token set**: the dark (coffee-brown) values on
+  `:root` are the base and `:root[data-theme="light"]` overrides every COLOR token with
+  the parchment palette (type + aliases inherit). Every new color token needs a line in
+  BOTH blocks — a token defined only on `:root` silently renders its dark value on
+  parchment. `data-theme` is always a resolved `light`/`dark` (never `system`), so CSS
+  never queries `prefers-color-scheme`; token names and comments are theme-neutral
+  ("on the surface", not "on dark"). Both blocks set `color-scheme` so native controls,
+  scrollbars and date pickers follow. Assets that CSS can't reach get a per-theme
+  variant: `public/svg/logo.svg` (dark) / `logo-light.svg`, swapped by `AppLayout` from
+  `useTheme().resolved`; `logo-badge.svg` and the favicons carry their own dark badge
+  and are theme-independent. Fonts are the "Warm Stone" trio loaded from Google Fonts in
   `index.html`: Newsreader (`--font-display`, headlines), Source Serif 4
   (`--font-body`, UI/body), JetBrains Mono (`--font-mono`, numbers/dates via
   `.tabular-nums`). Semantic status/utility colors are the `--u-<role>[-variant]`
@@ -70,8 +80,9 @@ DOM — no puppeteer harness in-repo. Dev-server + attach workflow:
   `--font-*-color` names are aliases onto them. Neutral overlays go through
   `--scrim-color`/`--shadow-color`/`--glow-color`.
 - Fund colors are the `--fund-<slug>` custom properties in `public/styles.css` (10
-  OKLCH hues, each with four tone-matched variants — `dot`/`text`/`main`/`muted`
-  for the dark surfaces). Funds persist the SLUG, not the hex: the slug list is the
+  OKLCH hues, each with four tone-matched variants — `dot`/`text`/`main`/`muted` —
+  defined once per theme with the lightness formula flipped, so a `-text` label sits on
+  a `main` row at ≥ 11:1 in both). Funds persist the SLUG, not the hex: the slug list is the
   server's `lib/fund_colors.mjs` registry (API-validated + db CHECK), re-exported
   here via `src/hooks/fundColors.js` along with `fundColorVar(slug, variant)`.
   There is NO auto-assignment — a fund with no color stores null and renders with
@@ -90,8 +101,9 @@ card; section headers render an `AnchorLink`.
 ## Contexts (`src/contexts/`)
 
 Provider stack in `AppLayout`, outermost first: `LogContextProvider` →
-`QueryClientProvider` (single module-level client) → `AuthContextProvider` →
-`SocketIOContextProvider` → `VersionGate` → domain contexts → app chrome + `<Outlet/>`.
+`ThemeContextProvider` → `QueryClientProvider` (single module-level client) →
+`AuthContextProvider` → `SocketIOContextProvider` → `VersionGate` → domain contexts →
+app chrome + `<Outlet/>`.
 
 - One file per context, exporting the `XxxContextProvider` plus `useXxx()` hooks;
   consumers never call `useContext` directly, and every hook throws a descriptive error
@@ -100,6 +112,15 @@ Provider stack in `AppLayout`, outermost first: `LogContextProvider` →
   300ms minimum display (anti-flicker).
 - Split contexts by change-rate; persist user choices to `localStorage` in the provider.
 - `useLogger(namespace)` (LogContext) instead of bare `console.*` in components.
+- **ThemeContext** owns the color-mode preference (`light` | `dark` | `system`, default
+  `system`, persisted per-browser under `localStorage` `ydd:theme` — absent means
+  `system`) and writes the RESOLVED theme to `<html data-theme>`, following the OS via a
+  `matchMedia` listener while on `system`. `useTheme()` → `{ preference, resolved,
+  setPreference }`; `<ThemeToggle>` (sidebar) is the only writer. It sits OUTSIDE auth so
+  the login/setup modals are themed. `index.html` carries an inline `<head>` script that
+  repeats the read + resolution before the stylesheet loads (React mounts far too late
+  to avoid a flash of the dark base) — the storage key, value set and resolution rule
+  are duplicated there deliberately and MUST stay in lockstep with the context.
 - **AuthContext** owns all auth and the fetch wrappers everyone uses: cookie-based JWT,
   `POST /api/auth/authenticate` on mount, renders `LoginModal` itself — or `SetupModal`
   when the mount-time `GET /api/auth/mode` reports `setup_required` (a server whose database
